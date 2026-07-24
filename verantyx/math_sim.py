@@ -303,13 +303,17 @@ def solve_equation(
 # ---------------------------------------------------------------------------
 
 def math_ask(query: str) -> Dict[str, Any]:
-    """"what is 2 + 3" / "(2+3)*4" / "x + 3 = 7" を型付きで解く."""
+    """"what is 2 + 3" / "(2+3)*4" / "x + 3 = 7" / "1+1=" を型付きで解く."""
     q = (query or "").strip().lower()
     q = re.sub(r"^(what\s+is|compute|solve)\s+", "", q).rstrip("?").strip()
     if "=" in q and "x" in q:
         out = solve_equation(q)
         out["mode"] = "equation"
         return out
+    # 電卓風の末尾 "=" ("1+1=", "1+1 = ") は式であって方程式ではない —
+    # x が無ければ左辺だけを評価する (右辺が省略された calculator 記法)
+    if q.endswith("="):
+        q = q[:-1].strip()
     out = eval_expr(q)
     out["mode"] = "expression"
     return out

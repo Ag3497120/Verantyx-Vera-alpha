@@ -121,6 +121,25 @@ def math_exactness_sweep_fork(n: int = 200, seed: int = 7) -> Dict[str, Any]:
     }
 
 
+def math_calculator_trailing_equals_fork() -> Dict[str, Any]:
+    """Calculator-style trailing "=" ("1+1=") must compute, not fall through
+    to knowledge search — regression for a live bug found in chat."""
+    a = math_ask("1+1=")
+    b = math_ask("1 + 1 = ")
+    eq = math_ask("x + 3 = 7")  # equation route must still work (has "x")
+    ok = (
+        a["verdict"] == "ANSWER" and a["value"] == 2
+        and b["verdict"] == "ANSWER" and b["value"] == 2
+        and eq["mode"] == "equation" and eq["x"] == 4
+    )
+    return {
+        "experiment": "math_sim",
+        "fork": "MATH_CALCULATOR_TRAILING_EQUALS",
+        "pass": bool(ok),
+        "result": {"a": a.get("value"), "b": b.get("value"), "eq_x": eq.get("x")},
+    }
+
+
 def math_ask_route_fork() -> Dict[str, Any]:
     """自然文入口: what is / solve のルーティングと非数式の拒否."""
     e = math_ask("what is (2 + 3) * 4")
@@ -149,5 +168,6 @@ def all_math_sim_forks() -> List[Dict[str, Any]]:
         math_matryoshka_eval_fork(),
         math_equation_typed_fork(),
         math_exactness_sweep_fork(),
+        math_calculator_trailing_equals_fork(),
         math_ask_route_fork(),
     ]
