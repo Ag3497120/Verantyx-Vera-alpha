@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verantyx-vera"
+version = "0.1.0a1"
+description = "Verantyx Vera α — deterministic cross-structure knowledge & reasoning engine (no LM, typed refusal)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Verantyx" }]
+keywords = ["knowledge-graph", "symbolic", "deterministic", "mcp", "hallucination-free"]
+
+[project.optional-dependencies]
+hf = ["datasets"]
+mcp = ["mcp[cli]"]
+
+[project.scripts]
+vera = "verantyx.cli:main"
+
+[tool.setuptools]
+packages = ["verantyx"]
