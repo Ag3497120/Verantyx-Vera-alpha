@@ -11,7 +11,8 @@ UNKNOWN のまま (捏造しない)。
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .consensus import (
     ConsensusConfig,
@@ -26,6 +27,13 @@ from .face_roles import FACET_FACES
 from .lex_filters import PROPER_SUFFIX, display_sym
 
 MAX_ARMS = len(AXES)
+
+# "contest:2026h1" (structured key:value core) — the generic tokenizer
+# strips ":" before this ever reaches decompose(), which is why a hand-
+# structured record couldn't be found by a natural-language question even
+# though recall(exact_name) worked. Scanned against the RAW query text,
+# before tokenization, so the colon survives.
+_NAMESPACED_ID = re.compile(r"[a-z0-9_]+(?::[a-z0-9_]+)+", re.I)
 
 
 class _MassView:
@@ -58,6 +66,15 @@ def candidates_for_query(
 
     scored: List[Tuple[int, float, str]] = []
     seen: set = set()
+    # 名前空間付きID ("contest:2026h1") をクエリの生テキストから直接拾う —
+    # 最優先 (rank -1): これは曖昧さのない exact レコード参照なので、
+    # 語のオーバーラップよりも先に候補にする
+    for m in _NAMESPACED_ID.finditer(query or ""):
+        key = m.group(0).casefold()
+        for v in (key, key + PROPER_SUFFIX):
+            if store.has(v) and v not in seen:
+                seen.add(v)
+                scored.append((-1, -store.mass(v), v))
     # 隣接内容語の複合 ("sun tzu" → sun_tzu#p) を最優先で引く
     for i in range(len(ordered) - 1):
         joined = f"{ordered[i]}_{ordered[i + 1]}"
@@ -217,17 +234,24 @@ def _apply_coverage_gate(out: Dict[str, Any], query: str) -> None:
     if out.get("verdict") != "ANSWER" or not out.get("core"):
         return
     from .en_decompose import tokenize
+    from .lex_filters import norm_words
 
     qset, _head = query_content(query)
-    covered = set(out["core"].split())
+    # namespaced core ("contest:2026h1") の構成語をここでも展開する —
+    # そうしないと自分自身の core 名の一部が「未被覆」と誤報告される
+    covered: Set[str] = set()
+    for tok in out["core"].split():
+        covered |= norm_words(tok)
     for tok in out.get("text", "").split():
-        covered.add(tok)
+        covered |= norm_words(tok)
     uncovered = sorted(qset - covered)
     out["uncovered_terms"] = uncovered
     if not uncovered:
         return
     raw_toks = tokenize(query)
-    core_words = set(out["core"].split())
+    core_words: Set[str] = set()
+    for tok in out["core"].split():
+        core_words |= norm_words(tok)
     for i, t in enumerate(raw_toks):
         if t in core_words:
             neighbors = {

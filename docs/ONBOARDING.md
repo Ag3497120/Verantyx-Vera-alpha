@@ -71,6 +71,12 @@ st.contradictions("server:prod-1")   # → db key "os" holds two values, with so
 st.save("infra.json")
 ```
 
+Structured `key:value` records are reachable both ways: exact lookup
+(`store.top_facets("server:prod-1")`) **and** natural-language questions
+that include the record's name (`ask("what is server:prod-1")`) — the
+query parser preserves `word:word` identifiers instead of losing the colon
+to tokenization.
+
 ## 3. Verify what went in
 
 ```bash

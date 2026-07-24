@@ -236,6 +236,35 @@ def sense_cluster_selects_fork() -> Dict[str, Any]:
     }
 
 
+def namespaced_key_nl_query_fork() -> Dict[str, Any]:
+    """構造化 key:value レコード ("contest:2026h1") が recall だけでなく
+    自然文の質問でも引ける — 以前は colon がトークナイザで落ちるため
+    UNKNOWN_NO_EVIDENCE になっていた回帰."""
+    st = CrossStore()
+    st.add("contest:2026h1", [
+        "deadline:2026-09-11", "mandatory:insert", "mandatory:select",
+        "prohibited:javascript_validation",
+    ])
+    hit = consensus_over_store(st, "what is contest:2026h1")
+    no_prefix = consensus_over_store(st, "contest:2026h1")
+    unknown_id = consensus_over_store(st, "what is foo:bar")
+    ok = (
+        hit["verdict"] == "ANSWER"
+        and hit["core"] == "contest:2026h1"
+        and hit.get("uncovered_terms") == []
+        and "deadline:2026-09-11" in hit["text"]
+        and no_prefix["verdict"] == "ANSWER"
+        and unknown_id["verdict"] == "UNKNOWN_NO_EVIDENCE"
+    )
+    return {
+        "experiment": "pour",
+        "fork": "NAMESPACED_KEY_NL_QUERY",
+        "pass": bool(ok),
+        "result": {"text": hit.get("text"), "uncovered": hit.get("uncovered_terms"),
+                   "unknown_verdict": unknown_id["verdict"]},
+    }
+
+
 def pour_corpus_pilot_fork(
     *, source: str = "auto", max_rows: int = 400, max_sentences: int = 400
 ) -> Dict[str, Any]:
@@ -281,5 +310,6 @@ def all_pour_forks() -> List[Dict[str, Any]]:
         cap_twopass_proper_fork(),
         partial_query_gate_fork(),
         sense_cluster_selects_fork(),
+        namespaced_key_nl_query_fork(),
         pour_corpus_pilot_fork(),
     ]

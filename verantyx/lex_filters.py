@@ -49,9 +49,17 @@ _YEAR = re.compile(r"^\d{4}$")
 
 
 def norm_words(sym: str) -> Set[str]:
-    """Compound key → constituent words ("sun_tzu#p" → {sun, tzu})."""
+    """Compound/namespaced key → constituent words.
+
+    "sun_tzu#p" → {sun, tzu} (proper-noun compounding, underscore)
+    "contest:2026h1" → {contest, 2026h1} (structured key:value facet,
+    colon) — needed so a natural-language query ("what is contest:2026h1")
+    can ground against a hand-structured record the same way it grounds
+    against an ordinary word, instead of treating the whole namespaced
+    string as one indivisible token.
+    """
     base = sym[: -len(PROPER_SUFFIX)] if sym.endswith(PROPER_SUFFIX) else sym
-    return {w for w in base.split("_") if w}
+    return {w for w in re.split(r"[_:]", base) if w}
 
 
 def display_sym(sym: str) -> str:
