@@ -133,6 +133,16 @@ vera push-store --repo <user>/Verantyx-Vera-base-store   # upload (needs HF logi
 # in ~/.verantyx.json, `vera ask ...` fetches the base store on first use.
 ```
 
+**Live base store:** [`kofdai/Verantyx-Vera-base-store`](https://huggingface.co/datasets/kofdai/Verantyx-Vera-base-store)
+— 889k concept crosses / 9.78M facet links (WikiText-2/103, ag_news, DBpedia,
+SQuAD, IMDB). Set it once and any fresh checkout works with knowledge already
+inside:
+
+```bash
+vera setup    # or edit ~/.verantyx.json: "hf_store_repo": "kofdai/Verantyx-Vera-base-store"
+vera ask "what is football"    # auto-fetches the base store on first use
+```
+
 ## Languages
 
 The cross substrate is symbol-agnostic; segmentation is per-language:
