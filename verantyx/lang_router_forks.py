@@ -51,6 +51,28 @@ def lang_latin_generic_fork() -> Dict[str, Any]:
             "pass": bool(ok), "result": {"cores": sorted(st.crosses)}}
 
 
+def router_task_label_not_memorized_fork() -> Dict[str, Any]:
+    """Labeled academic problem (multi-line paste) must not self-pollute
+    the store as a fake fact — regression for a real bug found live: the
+    first-token-only check missed "Problem 1: ... prove or disprove ..."
+    because the first token is the label, not a question/imperative verb."""
+    proof_task = (
+        "Problem 1: Reflexivity and Axiom T\n"
+        "For a Kripke frame F = (W, R), prove or disprove the following:\n"
+        "It is equivalent that F ⊨ □p → p\n"
+        "and that R is reflexive."
+    )
+    st = CrossStore()
+    out = route(st, proof_task)
+    ok = (
+        is_question(proof_task)
+        and out.get("remembered") is None
+        and "problem" not in st.crosses
+    )
+    return {"experiment": "router", "fork": "ROUTER_TASK_LABEL_NOT_MEMORIZED",
+            "pass": bool(ok), "result": {"cores": sorted(st.crosses)}}
+
+
 def router_auto_memory_fork() -> Dict[str, Any]:
     """宣言文は記憶、疑問・命令は記憶しない (junk 自己汚染ガード)."""
     st = CrossStore()
@@ -106,6 +128,7 @@ def all_lang_router_forks() -> List[Dict[str, Any]]:
         lang_detect_fork(),
         lang_ja_ingest_ask_fork(),
         lang_latin_generic_fork(),
+        router_task_label_not_memorized_fork(),
         router_auto_memory_fork(),
         router_allocation_fork(),
     ]

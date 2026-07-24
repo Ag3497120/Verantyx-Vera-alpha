@@ -167,8 +167,22 @@ def ingest_text(
     return {"lang": lang, "n_sentences": n, "cores": cores}
 
 
+_TASK_LABEL = re.compile(
+    r"^\s*(problem|exercise|question|task|q|puzzle)\s*\d*\s*[:.\)]", re.I
+)
+# Cue words that mark "asking to do something" regardless of position —
+# needed once multi-line paste is supported: a labeled academic problem
+# ("Problem 1: ... prove or disprove ...") defeats a first-word-only check,
+# since the first token is the label ("problem"), not the verb.
+_TASK_CUE_WORDS = {
+    "prove", "disprove", "derive", "verify", "compute", "calculate",
+    "determine", "evaluate", "solve", "show", "demonstrate",
+}
+
+
 def is_question(text: str, lang: str = "auto") -> bool:
-    """Declarative vs interrogative — gate for auto-memory in chat."""
+    """Declarative vs interrogative/imperative/task — gate for auto-memory
+    in chat (a task must never be mistaken for a fact to remember)."""
     t = (text or "").strip()
     if lang == "auto":
         lang = detect(t)
@@ -176,6 +190,11 @@ def is_question(text: str, lang: str = "auto") -> bool:
         return True
     if lang == "ja":
         return any(m in t for m in _JA_QUESTION)
+    if _TASK_LABEL.match(t):
+        return True
+    words = set(t.casefold().split())
+    if words & _TASK_CUE_WORDS:
+        return True
     head = t.casefold().split()[:1]
     # interrogatives AND request/imperative heads: neither is a fact to
     # remember ("tell me something" must not become a knowledge cross)
