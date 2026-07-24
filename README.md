@@ -257,6 +257,22 @@ sync = SqliteSync(st, "big.db"); st.add(...); sync.flush()   # delta writes
 Reference store poured with the same pipeline: WikiText-2 + WikiText-103 +
 ag_news + DBpedia + SQuAD + IMDB ≈ **889k cores / 9.78M facet links**.
 
+## Passive memory from AI output (quarantined, never auto-trusted)
+
+```bash
+vera propose-ai-facts "The staging DB runs postgres 14. It might also \
+support replication, I'm not sure." --source ai_output:claude
+# → quarantines "The staging DB runs postgres 14." only —
+#   the hedged sentence never becomes a candidate
+vera review-ai-facts     # arrow-key accept/reject each pending candidate
+```
+
+Nothing proposed here is queryable via `ask` until explicitly accepted —
+an LLM's own text (even its final answer) can be wrong or hedged, so it
+never writes directly into the trusted store. Same tools over MCP:
+`propose_ai_facts` / `list_pending_ai_facts` / `accept_ai_fact` /
+`reject_ai_fact`. Rationale: [docs/DESIGN.md](docs/DESIGN.md#passive-memory-from-ai-output-quarantined).
+
 ## Getting started as a builder
 
 New here? Read [docs/ONBOARDING.md](docs/ONBOARDING.md) — a zero-to-custom

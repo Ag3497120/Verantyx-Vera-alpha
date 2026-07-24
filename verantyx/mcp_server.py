@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .ai_ingest import AiFactQuarantine
 from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
 from .code_ingest import code_ask, ingest_python_repo
@@ -27,6 +28,8 @@ def serve(store_path: str) -> int:
 
     path = Path(store_path)
     store = CrossStore.load(path) if path.is_file() else CrossStore()
+    qpath = path.with_name(path.stem + ".ai_quarantine.json")
+    quarantine = AiFactQuarantine.load(qpath)
     mcp = FastMCP("verantyx-vera")
 
     def _save() -> None:
@@ -96,6 +99,58 @@ def serve(store_path: str) -> int:
     def stats() -> str:
         """Store statistics (cores, facet links, sentences ingested)."""
         return json.dumps(store.report(), ensure_ascii=False)
+
+    @mcp.tool()
+    def propose_ai_facts(text: str, source: str = "ai_output") -> str:
+        """Quarantine sentence-level fact candidates split out of an
+        assistant's FINAL reply text — never pass a thinking/chain-of-
+        thought block here. Hedge-worded ("might", "probably", "I think")
+        and meta-commentary ("let me check") sentences are dropped before
+        they even reach quarantine. Nothing proposed here is queryable via
+        ask() until a human calls accept_ai_fact — this tool can never by
+        itself put an unverified claim into the trusted store."""
+        added = quarantine.propose(text, source=source)
+        quarantine.save(qpath)
+        return json.dumps(
+            {"proposed": [e.text for e in added], "quarantine": str(qpath)},
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def list_pending_ai_facts() -> str:
+        """List AI-proposed facts awaiting human review (index, text,
+        source, timestamp). Use the index with accept_ai_fact /
+        reject_ai_fact."""
+        pend = quarantine.pending()
+        return json.dumps(
+            [{"index": i, **e.as_dict()} for i, e in enumerate(pend)],
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def accept_ai_fact(index: int) -> str:
+        """Promote one pending AI-proposed fact (by index from
+        list_pending_ai_facts) into the trusted, queryable store. This is
+        the ONLY path from quarantine into real memory — a deliberate,
+        explicit human action, never automatic."""
+        pend = quarantine.pending()
+        if not (0 <= index < len(pend)):
+            return json.dumps({"ok": False, "error": "index_out_of_range"})
+        key = quarantine.accept(pend[index], store)
+        quarantine.save(qpath)
+        store.save(path)
+        return json.dumps({"ok": True, "core": key}, ensure_ascii=False)
+
+    @mcp.tool()
+    def reject_ai_fact(index: int) -> str:
+        """Discard one pending AI-proposed fact (by index) — it is marked
+        rejected and never enters the trusted store."""
+        pend = quarantine.pending()
+        if not (0 <= index < len(pend)):
+            return json.dumps({"ok": False, "error": "index_out_of_range"})
+        ok = quarantine.reject(pend[index])
+        quarantine.save(qpath)
+        return json.dumps({"ok": ok}, ensure_ascii=False)
 
     mcp.run()
     return 0

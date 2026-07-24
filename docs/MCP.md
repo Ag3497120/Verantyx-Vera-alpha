@@ -43,6 +43,20 @@ claude mcp add vera -- vera --store ~/vera_memory.json mcp
 | `code_ingest(repo_path)` | AST-ingest a Python repo |
 | `code_query(query)` | who-calls / calls-of / impact analysis |
 | `stats()` | store size and provenance counters |
+| `propose_ai_facts(text, source)` | quarantine fact candidates split from an assistant's **final** reply (never thinking/CoT) — hedge/meta sentences filtered out |
+| `list_pending_ai_facts()` | list quarantined candidates awaiting human review |
+| `accept_ai_fact(index)` | promote one candidate into the trusted store — the only path in, always explicit |
+| `reject_ai_fact(index)` | discard one candidate |
+
+### Passive memory from an assistant's own output (quarantined)
+
+An agent can call `propose_ai_facts` with its own final answer text after
+each turn to passively build up candidate memories — without ever risking
+its own hallucinations landing in the trusted store as "verified" facts.
+Nothing proposed is queryable via `ask` until a human runs
+`list_pending_ai_facts` → `accept_ai_fact`. Design rationale, hedge-word
+filtering, and why *thinking* text is deliberately out of scope:
+[docs/DESIGN.md](DESIGN.md#passive-memory-from-ai-output-quarantined).
 
 ## Why pair an LLM with Vera
 

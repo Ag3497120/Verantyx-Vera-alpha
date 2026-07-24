@@ -91,6 +91,37 @@ of the original "one geometry" vision:
 - Not magic scale: quality tracks corpus quality; junk in produces
   *visible, deletable* junk — the honest failure mode.
 
+## Passive memory from AI output (quarantined)
+
+An assistant's own output can be fed back into Vera as candidate memory —
+useful in an agent/IDE loop where you don't want to type `remember`
+manually for every fact that comes up. This is deliberately **not** a
+direct write path, because an LLM's text (even final, non-thinking text)
+can be wrong, hedged, or exploratory, and the entire point of this project
+is that Vera never presents an unverified claim as fact. Passively
+absorbing an LLM's own guesses into a "verified, counted" store would
+launder hallucination into trusted memory — the one thing this project
+exists to prevent.
+
+So `verantyx.ai_ingest` never writes to the trusted `CrossStore` directly:
+
+1. Only an assistant's **final** reply text is accepted — never a
+   thinking/chain-of-thought block, which is provisional by nature and
+   often self-corrects mid-stream.
+2. Hedge-worded sentences ("might", "probably", "I think", "seems", "not
+   sure", …) are dropped before they reach quarantine — a sentence the
+   model itself is unsure of should not become a fact candidate.
+3. Meta-commentary about the assistant's own process ("let me check",
+   "I'll now run", "as an AI") is dropped — it isn't world knowledge.
+4. Everything else lands in `AiFactQuarantine`, a separate file from the
+   trusted store. Nothing there is queryable via `ask` until a human
+   explicitly promotes it (`vera review-ai-facts` / MCP's
+   `accept_ai_fact`) — the only path from quarantine into real memory.
+
+This mirrors the project's contradiction-detection philosophy: a fact isn't
+trusted just because *something* said it — it's trusted once a human (or,
+for user-taught facts, the act of teaching itself) has vouched for it.
+
 ## Roadmap markers
 
 Sharded/parallel pouring for 100M+ row corpora, richer information

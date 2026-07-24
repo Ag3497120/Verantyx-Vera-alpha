@@ -134,6 +134,61 @@ def cmd_stats(args) -> int:
     return 0
 
 
+def _quarantine_path(args) -> Path:
+    return Path(args.store).with_suffix("").with_name(
+        Path(args.store).stem + ".ai_quarantine.json"
+    )
+
+
+def cmd_propose_ai_facts(args) -> int:
+    """Feed an assistant's FINAL text (never a thinking block) into
+    quarantine — nothing here is queryable until accepted."""
+    from .ai_ingest import AiFactQuarantine
+
+    qpath = _quarantine_path(args)
+    q = AiFactQuarantine.load(qpath)
+    added = q.propose(args.text, source=args.source)
+    q.save(qpath)
+    _print({"proposed": [e.text for e in added], "quarantine": str(qpath)})
+    return 0
+
+
+def cmd_review_ai_facts(args) -> int:
+    from .ai_ingest import AiFactQuarantine
+    from .tui import select
+
+    qpath = _quarantine_path(args)
+    q = AiFactQuarantine.load(qpath)
+    pending = q.pending()
+    if not pending:
+        print("no pending AI-proposed facts")
+        return 0
+
+    if args.list:
+        _print([e.as_dict() for e in pending])
+        return 0
+
+    st = _load(args.store)
+    store_path = Path(args.store)
+    for entry in list(pending):  # snapshot: entries resolve as we go
+        choice = select(
+            f"[{entry.source}] {entry.text}",
+            ["Accept → remember in trusted store", "Reject", "Skip (decide later)"],
+            default=0,
+        )
+        if choice == 0:
+            key = q.accept(entry, st)
+            st.save(store_path)
+            print(f"  accepted → core={key}")
+        elif choice == 1:
+            q.reject(entry)
+            print("  rejected")
+        else:
+            break
+    q.save(qpath)
+    return 0
+
+
 def cmd_chat(args) -> int:
     from .config import VeraConfig
     from .router import route as harness_route
@@ -253,6 +308,7 @@ def cmd_lab(args) -> int:
     from .consensus_forks import all_consensus_forks
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
     from .agent_forks import all_agent_forks
+    from .ai_ingest_forks import all_ai_ingest_forks
     from .lang_router_forks import all_lang_router_forks
     from .math_sim_forks import all_math_sim_forks
     from .phase2_forks import all_phase2_forks
@@ -266,6 +322,7 @@ def cmd_lab(args) -> int:
         + all_lang_router_forks()
         + all_phase2_forks()
         + all_agent_forks()
+        + all_ai_ingest_forks()
     )
     forks = {e["fork"]: e["pass"] for e in experiments}
     all_pass = all(forks.values())
@@ -424,6 +481,22 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("stats", help="store statistics")
     p.set_defaults(fn=cmd_stats)
+
+    p = sub.add_parser(
+        "propose-ai-facts",
+        help="quarantine sentence candidates from an AI's FINAL text "
+             "(never thinking/chain-of-thought)",
+    )
+    p.add_argument("text")
+    p.add_argument("--source", default="ai_output")
+    p.set_defaults(fn=cmd_propose_ai_facts)
+
+    p = sub.add_parser(
+        "review-ai-facts",
+        help="review quarantined AI-proposed facts (arrow-key accept/reject)",
+    )
+    p.add_argument("--list", action="store_true", help="print pending, no prompts")
+    p.set_defaults(fn=cmd_review_ai_facts)
 
     p = sub.add_parser("chat", help="interactive REPL (lab | hybrid)")
     p.add_argument("--mode", choices=["lab", "hybrid"], default="lab",
