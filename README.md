@@ -94,6 +94,12 @@ utterance is remembered automatically; questions and imperatives are not
 (so "tell me something" never becomes a fake fact). Disable with
 `--no-auto-memory`.
 
+**Multi-line paste**: `vera chat` and `vera agent` capture a pasted block
+(traceback, multi-sentence note, JSON) as one message instead of splitting
+it line by line — plain `input()` submits on every embedded newline, which
+silently mangles pastes. This uses bracketed-paste mode and needs a real
+TTY; piped/non-interactive input falls back to reading one line at a time.
+
 ## First-run setup
 
 ```bash

@@ -129,6 +129,40 @@ def config_allocation_fork() -> Dict[str, Any]:
                        "refuse": refuse["source"], "free": free["source"]}}
 
 
+def multiline_paste_capture_fork() -> Dict[str, Any]:
+    """Bracketed-paste state machine: embedded CRLF → one string, CRLF
+    pairs collapse to one newline, backspace edits, Ctrl-C aborts.
+    Pure function — no real TTY needed, so this is a genuine test (unlike
+    the raw-mode I/O wrapper itself, which needs a live terminal)."""
+    from .tui import _consume_raw_input
+
+    paste_chars = (
+        list("\x1b[200~") + list("first line\r\nsecond line")
+        + list("\x1b[201~") + ["\r"]
+    )
+    it1 = iter(paste_chars)
+    pasted = _consume_raw_input(lambda: next(it1, ""), echo=False)
+
+    it2 = iter(list("ab") + ["\x7f", "c", "\r"])
+    backspaced = _consume_raw_input(lambda: next(it2, ""), echo=False)
+
+    it3 = iter(["a", "\x03"])
+    cancelled = _consume_raw_input(lambda: next(it3, ""), echo=False)
+
+    ok = (
+        pasted == "first line\nsecond line"
+        and backspaced == "ac"
+        and cancelled is None
+    )
+    return {
+        "experiment": "tui",
+        "fork": "MULTILINE_PASTE_CAPTURE",
+        "pass": bool(ok),
+        "result": {"pasted": pasted, "backspaced": backspaced,
+                   "cancelled": cancelled},
+    }
+
+
 def tui_fallback_fork() -> Dict[str, Any]:
     """Non-TTY select falls back to indexed input deterministically."""
     import io
@@ -156,4 +190,5 @@ def all_agent_forks() -> List[Dict[str, Any]]:
         agent_vera_direct_fork(),
         config_allocation_fork(),
         tui_fallback_fork(),
+        multiline_paste_capture_fork(),
     ]

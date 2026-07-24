@@ -158,16 +158,19 @@ def cmd_chat(args) -> int:
             print("[hybrid] Ollama not reachable at localhost:11434 — "
                   "falling back to lab mode (deterministic only)")
 
+    from .tui import read_input
+
     auto_mem = not args.no_auto_memory
     print("Verantyx Vera α — "
           f"mode={args.mode}, lang={args.lang}, auto-memory={'on' if auto_mem else 'off'}. "
-          "Commands: :remember <text>, :forget <core>, :stats, :quit")
+          "Commands: :remember <text>, :forget <core>, :stats, :quit "
+          "(multi-line paste is captured as one message)")
     while True:
-        try:
-            line = input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        raw = read_input("you> ")
+        if raw is None:
             print()
             break
+        line = raw.strip()
         if not line:
             continue
         if line in (":quit", ":q", "exit"):
@@ -357,14 +360,17 @@ def cmd_agent(args) -> int:
         _print(out.get("final", out))
         return 0
 
+    from .tui import read_input
+
     print("Verantyx agent mode. Type a task, or '!tool {\"arg\":..}' for a "
-          "manual tool call, ':quit' to exit.")
+          "manual tool call, ':quit' to exit. "
+          "(multi-line paste is captured as one task)")
     while True:
-        try:
-            line = input("task> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        raw = read_input("task> ")
+        if raw is None:
             print()
             break
+        line = raw.strip()
         if not line or line in (":quit", ":q"):
             break
         if line.startswith("!"):
