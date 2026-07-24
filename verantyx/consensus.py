@@ -322,13 +322,19 @@ def run_consensus(
     memory: Optional[Any] = None,
     initial_locks: Optional[Sequence[str]] = None,
     mutate: bool = False,
+    qset_override: Optional[Set[str]] = None,
 ) -> ConsensusResult:
     """Run the multi-frontier consensus search on one shell.
 
     Deterministic: same shell + query + config → same verdict, text, trace.
+    ``qset_override`` lets non-English decomposers (e.g. Japanese script
+    runs) supply the content-token set — the gates are language-agnostic.
     """
     cfg = cfg or ConsensusConfig()
-    qset, _head = query_content(query)
+    if qset_override is not None:
+        qset = set(qset_override)
+    else:
+        qset, _head = query_content(query)
     state = SearchState(
         shell=shell if mutate else copy_shell(shell),
         locks=set(initial_locks or ()),

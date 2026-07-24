@@ -242,6 +242,7 @@ def cmd_lab(args) -> int:
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
     from .lang_router_forks import all_lang_router_forks
     from .math_sim_forks import all_math_sim_forks
+    from .phase2_forks import all_phase2_forks
     from .pour_forks import all_pour_forks
 
     experiments = (
@@ -250,6 +251,7 @@ def cmd_lab(args) -> int:
         + all_math_sim_forks()
         + all_kripke_rewrite_forks()
         + all_lang_router_forks()
+        + all_phase2_forks()
     )
     forks = {e["fork"]: e["pass"] for e in experiments}
     all_pass = all(forks.values())

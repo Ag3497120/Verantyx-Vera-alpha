@@ -29,6 +29,11 @@ from .rewrite_kernel import (
 )
 from .kripke import KripkeModel, check as kripke_check, parse_formula
 from .code_ingest import calls_of, code_ask, impact, ingest_python_repo, who_calls
+from .consensus_store import ja_consensus_ask
+from .debug_consensus import locate_bug
+from .lang import detect as detect_lang, ingest_text, ja_ask
+from .router import route as harness_route
+from .store_sqlite import SqliteSync, load_sqlite, save_sqlite
 
 __version__ = "0.1.0a1"
 
@@ -65,5 +70,14 @@ __all__ = [
     "who_calls",
     "calls_of",
     "impact",
+    "locate_bug",
+    "ja_consensus_ask",
+    "ja_ask",
+    "ingest_text",
+    "detect_lang",
+    "harness_route",
+    "save_sqlite",
+    "load_sqlite",
+    "SqliteSync",
     "__version__",
 ]

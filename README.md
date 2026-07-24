@@ -142,7 +142,13 @@ vera code ask "impact of parse_term"   # BFS: what may break if it changes
 ```
 
 Unknown functions get `UNKNOWN_NO_EVIDENCE`, not a guess.
-See [docs/CODE_REASONING.md](docs/CODE_REASONING.md).
+
+**Bug localization by agreement** (`verantyx.debug_consensus.locate_bug`):
+traceback, recent-diff, and failing-test sections each nominate cause
+functions; a cause is asserted only when the sections agree — otherwise a
+typed UNKNOWN with the disagreement map. The `DEBUG_BEATS_BASELINES` fork
+shows the consensus resisting noise that fools a most-recently-changed
+baseline. See [docs/CODE_REASONING.md](docs/CODE_REASONING.md).
 
 ## MCP server (memory & knowledge tools for LLM agents)
 
@@ -164,9 +170,43 @@ Every capability is guarded by falsifiable "fork" tests — including the
 refusal behaviors:
 
 ```bash
-vera lab        # 35 forks: consensus gates, pouring, math, rewriting,
-                # Kripke, languages, router allocation
+vera lab        # 41 forks: consensus gates, pouring, math, rewriting, Kripke,
+                # languages, router allocation, debug consensus, memory
+                # provenance/contradiction, SQLite round-trip
 ```
+
+## Memory with provenance & contradiction detection
+
+```python
+from verantyx import CrossStore
+st = CrossStore(track_provenance=True)
+st.add("server:prod-1", ["os:ubuntu"], source="infra sheet 7/24")
+st.add("server:prod-1", ["os:debian"], source="slack 7/25")
+st.contradictions("server:prod-1")
+# → key "os" holds two values, each with counts, timestamps, and sources
+```
+
+`key:value` facets are exclusive per key: a conflicting fact is **reported as
+a contradiction with both sources**, never silently overwritten. This turns
+the memory from "doesn't hallucinate" into "notices when it is being lied to".
+
+## SQLite backend (scale & fast writes)
+
+```python
+from verantyx import save_sqlite, load_sqlite, SqliteSync
+save_sqlite(store, "big.db")            # distributable single file
+st = load_sqlite("big.db")              # or cores_like="fn:%" for a slice
+sync = SqliteSync(st, "big.db"); st.add(...); sync.flush()   # delta writes
+```
+
+Reference store poured with the same pipeline: WikiText-2 + WikiText-103 +
+ag_news + DBpedia + SQuAD + IMDB ≈ **889k cores / 9.78M facet links**.
+
+## Getting started as a builder
+
+New here? Read [docs/ONBOARDING.md](docs/ONBOARDING.md) — a zero-to-custom
+walkthrough (data-path choice, pouring best practices, verification, scale-up,
+extension points). Design rationale lives in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Architecture (one page)
 

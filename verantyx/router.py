@@ -48,7 +48,16 @@ def _vera_answer(store: CrossStore, query: str, lang: str) -> Dict[str, Any]:
         c["route"] = "code"
         return c
     if lang == "ja":
-        out = ja_ask(store, query)
+        from .consensus_store import ja_consensus_ask
+
+        out = ja_consensus_ask(store, query)
+        if out["verdict"].startswith("UNKNOWN") and out["verdict"] != "UNKNOWN_UNPARSED":
+            # consensus は語彙が薄いと厳しすぎることがある — 想起で再挑戦し、
+            # それでも無ければ型付き拒否のまま
+            fallback = ja_ask(store, query)
+            if fallback["verdict"] == "ANSWER":
+                fallback["route"] = "knowledge_ja_recall"
+                return fallback
         out["route"] = "knowledge_ja"
         return out
     out = consensus_over_store(store, query)

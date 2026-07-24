@@ -42,11 +42,21 @@ class CrossStore:
     # word → [n_cap_mid_sentence, n_lower]; 文頭大文字の二段判定に使う
     cap_stats: Dict[str, List[int]] = field(default_factory=dict)
     proper_lexicon: set = field(default_factory=set)
+    # 出典・時刻 (opt-in; 大量 pour では既定オフ):
+    #   provenance[core][facet] = [first_ts, last_ts, source_snippet]
+    track_provenance: bool = False
+    provenance: Dict[str, Dict[str, List[Any]]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # accumulate
     # ------------------------------------------------------------------
-    def add(self, core: str, facts: Iterable[str]) -> None:
+    def add(
+        self,
+        core: str,
+        facts: Iterable[str],
+        *,
+        source: Optional[str] = None,
+    ) -> None:
         core = str(core).casefold().strip()
         if not core:
             return
@@ -57,6 +67,43 @@ class CrossStore:
             if not f or f == core:
                 continue
             cross[f] = cross.get(f, 0) + 1
+            if self.track_provenance:
+                import time
+
+                now = round(time.time(), 2)
+                slot = self.provenance.setdefault(core, {})
+                if f in slot:
+                    slot[f][1] = now
+                    if source:
+                        slot[f][2] = source[:200]
+                else:
+                    slot[f] = [now, now, (source or "")[:200]]
+
+    # ------------------------------------------------------------------
+    # 矛盾検出: key:value facet は同一 key で排他 (db:postgres vs db:mysql)
+    # ------------------------------------------------------------------
+    def contradictions(self, core: str) -> List[Dict[str, Any]]:
+        cross = self.crosses.get(str(core).casefold().strip(), {})
+        by_key: Dict[str, List[str]] = {}
+        for f in cross:
+            if ":" in f:
+                k, v = f.split(":", 1)
+                if k and v:
+                    by_key.setdefault(k, []).append(f)
+        out: List[Dict[str, Any]] = []
+        for k, vals in sorted(by_key.items()):
+            if len(vals) > 1:
+                entry: Dict[str, Any] = {
+                    "key": k,
+                    "values": sorted(vals),
+                    "counts": {v: cross[v] for v in vals},
+                }
+                if self.track_provenance and core in self.provenance:
+                    entry["provenance"] = {
+                        v: self.provenance[core].get(v) for v in vals
+                    }
+                out.append(entry)
+        return out
 
     def ingest_sentence(self, text: str) -> Optional[str]:
         unit = classify_sentence(text)
@@ -78,7 +125,7 @@ class CrossStore:
                     merged = "_".join(run) + "#p"
                     break
             facts.append(merged or f)
-        self.add(key, dict.fromkeys(facts))  # preserve order, dedupe
+        self.add(key, dict.fromkeys(facts), source=text.strip())
         self.n_sentences += 1
         return key
 
@@ -160,6 +207,8 @@ class CrossStore:
             "n_rows": self.n_rows,
             "source": self.source,
             "cap_stats": self.cap_stats,
+            "provenance": self.provenance if self.track_provenance else {},
+            "track_provenance": self.track_provenance,
         }
         path.write_text(json.dumps(payload, ensure_ascii=False))
 
@@ -173,6 +222,11 @@ class CrossStore:
             n_rows=int(d.get("n_rows", 0)),
             source=str(d.get("source", "")),
             cap_stats={k: list(v) for k, v in d.get("cap_stats", {}).items()},
+            track_provenance=bool(d.get("track_provenance", False)),
+            provenance={
+                c: {f: list(p) for f, p in fs.items()}
+                for c, fs in d.get("provenance", {}).items()
+            },
         )
         st.proper_lexicon = proper_lexicon_from_stats(st.cap_stats)
         return st

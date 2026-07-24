@@ -241,6 +241,49 @@ def _apply_coverage_gate(out: Dict[str, Any], query: str) -> None:
                 return
 
 
+def ja_consensus_ask(
+    store: CrossStore,
+    query: str,
+    *,
+    k: int = MAX_ARMS,
+    cfg: Optional[ConsensusConfig] = None,
+) -> Dict[str, Any]:
+    """日本語の合意分解経路: 文字種 run → qset → 多断面合意 (ゲート共通).
+
+    英語と同じ三段ゲート (合意・根拠・接地) が run ベースの qset で動く。
+    候補ゼロは型付き拒否。文書は選ばれた腕の core+facets を「は/、」で連結。
+    """
+    from .lang import ja_content_runs
+
+    runs = ja_content_runs(query)
+    if not runs:
+        return {"verdict": "UNKNOWN_UNPARSED", "lang": "ja"}
+    qset = set(runs)
+    cores: List[str] = []
+    for r in runs:
+        for v in (r, r + PROPER_SUFFIX):
+            if store.has(v) and v not in cores:
+                cores.append(v)
+    if not cores:
+        return {
+            "verdict": "UNKNOWN_NO_EVIDENCE",
+            "lang": "ja",
+            "queried": runs,
+            "retrieved": [],
+        }
+    shell = build_shell_from_store(store, cores[:k])
+    out = run_consensus(
+        shell, query, cfg=cfg, masses=_MassView(store), qset_override=qset
+    ).as_dict()
+    out["lang"] = "ja"
+    out["retrieved"] = cores[:k]
+    if out.get("verdict") == "ANSWER" and out.get("core"):
+        core = out["core"]
+        facets = [t for t in out.get("tokens", []) if t != core]
+        out["text"] = core + ("は" + "、".join(facets) if facets else "")
+    return out
+
+
 def probe_coverage(
     store: CrossStore,
     queries: List[str],
