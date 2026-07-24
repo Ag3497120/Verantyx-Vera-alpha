@@ -94,6 +94,45 @@ utterance is remembered automatically; questions and imperatives are not
 (so "tell me something" never becomes a fake fact). Disable with
 `--no-auto-memory`.
 
+## First-run setup
+
+```bash
+vera setup       # arrow-key menu: pick a local Ollama model + the allocation
+                 # dial (which domains Vera owns vs where the LLM may speak),
+                 # saved to ~/.verantyx.json
+```
+
+## Agent mode (hands and feet)
+
+A ReAct loop where **Vera is the controller** and tools do real work — file
+edits, folder/file creation, shell commands, and web search — each mutating
+action gated behind **arrow-key approval**:
+
+```bash
+vera agent "read README.md and tell me the license"
+vera agent          # interactive; ↑/↓ + Enter to approve/deny each action
+```
+
+Exact math/code finishes with no LLM and no tools; web search is a stdlib
+DuckDuckGo client (no API key). Full details: [docs/AGENT_MODE.md](docs/AGENT_MODE.md).
+
+## Guided data placement
+
+```bash
+vera wizard      # arrow-key: choose a corpus + row budget, then it pours
+```
+
+## Base store from HuggingFace (no local store needed)
+
+Vera ships no weights; the artifact is the poured store. Publish it once,
+and any fresh checkout fetches it automatically:
+
+```bash
+vera push-store --repo <user>/Verantyx-Vera-base-store   # upload (needs HF login)
+# later, on any machine: if no local store exists and hf_store_repo is set
+# in ~/.verantyx.json, `vera ask ...` fetches the base store on first use.
+```
+
 ## Languages
 
 The cross substrate is symbol-agnostic; segmentation is per-language:

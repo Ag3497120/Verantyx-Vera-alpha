@@ -39,8 +39,14 @@ from .rewrite_kernel import default_algebra_rules, simplify
 DEFAULT_STORE = "vera_store.json"
 
 
-def _load(path: str) -> CrossStore:
+def _load(path: str, *, base_repo: str = "") -> CrossStore:
     p = Path(path)
+    if not p.is_file() and base_repo:
+        from .hf_store import ensure_store
+
+        res = ensure_store(path, base_repo)
+        if res.get("ok"):
+            print(f"[store] fetched base store from HuggingFace: {base_repo}")
     return CrossStore.load(p) if p.is_file() else CrossStore()
 
 
@@ -129,9 +135,11 @@ def cmd_stats(args) -> int:
 
 
 def cmd_chat(args) -> int:
+    from .config import VeraConfig
     from .router import route as harness_route
 
-    st = _load(args.store)
+    cfg = VeraConfig.load()
+    st = _load(args.store, base_repo=cfg.hf_store_repo)
     store_path = Path(args.store)
 
     llm_fn = None
@@ -139,7 +147,7 @@ def cmd_chat(args) -> int:
         from .llm_local import ollama_available, ollama_generate
 
         if ollama_available():
-            model = args.llm
+            model = args.llm if args.llm != "llama3.2" else (cfg.llm_model or args.llm)
 
             def llm_fn(prompt, system):  # noqa: E731 — closure over model
                 return ollama_generate(model, prompt, system=system)
@@ -192,6 +200,7 @@ def cmd_chat(args) -> int:
             lang=args.lang,
             auto_memory=auto_mem,
             save=lambda: st.save(store_path),
+            allocation=cfg.allocation,
         )
         mem = out.get("remembered")
         if mem and mem.get("cores"):
@@ -240,6 +249,7 @@ def cmd_code(args) -> int:
 def cmd_lab(args) -> int:
     from .consensus_forks import all_consensus_forks
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
+    from .agent_forks import all_agent_forks
     from .lang_router_forks import all_lang_router_forks
     from .math_sim_forks import all_math_sim_forks
     from .phase2_forks import all_phase2_forks
@@ -252,6 +262,7 @@ def cmd_lab(args) -> int:
         + all_kripke_rewrite_forks()
         + all_lang_router_forks()
         + all_phase2_forks()
+        + all_agent_forks()
     )
     forks = {e["fork"]: e["pass"] for e in experiments}
     all_pass = all(forks.values())
@@ -265,10 +276,124 @@ def cmd_mcp(args) -> int:
     return serve(args.store)
 
 
+def cmd_setup(args) -> int:
+    from .config import run_setup_menu
+
+    cfg = run_setup_menu()
+    _print({"llm_model": cfg.llm_model, "store": cfg.store,
+            "allocation": cfg.allocation, "hf_store_repo": cfg.hf_store_repo})
+    return 0
+
+
+def cmd_wizard(args) -> int:
+    """Guided data-placement: choose a source with arrow keys and pour."""
+    from .tui import select
+
+    presets = [
+        ("hf:dbpedia_14:content", "DBpedia abstracts — best definitional pour"),
+        ("hf:ag_news", "AG News headlines — current events"),
+        ("wikitext", "WikiText-2 from local HF cache"),
+        ("hf:wikitext#wikitext-103-raw-v1", "WikiText-103 — large"),
+        ("synthetic", "tiny offline synthetic corpus (smoke test)"),
+        ("file:", "a local text file (one document per line)"),
+    ]
+    i = select(
+        "Choose a data source to pour into the store:",
+        [p[0] for p in presets],
+        descriptions=[p[1] for p in presets],
+    )
+    if i is None:
+        print("cancelled")
+        return 1
+    source = presets[i][0]
+    if source == "file:":
+        source = "file:" + input("path to text file: ").strip()
+    caps = ["2000", "40000", "120000", "560000", "all (2000000)"]
+    j = select("Row budget:", caps, default=1)
+    max_rows = {0: 2000, 1: 40000, 2: 120000, 3: 560000, 4: 2000000}[j or 1]
+    print(f"pouring {source} (max_rows={max_rows}) → {args.store}")
+    ns = argparse.Namespace(
+        store=args.store, source=source, max_rows=max_rows,
+        max_sentences=None, checkpoint_every=100000, no_two_pass=False,
+    )
+    return cmd_pour(ns)
+
+
+def cmd_agent(args) -> int:
+    from .agent import Agent
+    from .config import VeraConfig
+    from .tui import confirm_action
+
+    cfg = VeraConfig.load()
+    st = _load(args.store, base_repo=cfg.hf_store_repo)
+    store_path = Path(args.store)
+
+    llm_fn = None
+    model = args.llm or cfg.llm_model
+    if model:
+        from .llm_local import ollama_available, ollama_generate
+
+        if ollama_available():
+            def llm_fn(prompt, system):  # noqa: E731
+                return ollama_generate(model, prompt, system=system, timeout=180)
+            print(f"[agent] planner LLM: {model}")
+        else:
+            print("[agent] Ollama unreachable — solo mode (manual !tool calls)")
+
+    def approver(tool, tool_args):
+        return confirm_action(
+            f"{tool.name}({tool.args_hint})",
+            detail=json.dumps(tool_args, ensure_ascii=False, indent=2),
+        )
+
+    agent = Agent(
+        st, llm=llm_fn, save=lambda: st.save(store_path),
+        approver=approver, allocation=cfg.allocation,
+        auto_approve=args.yes,
+    )
+
+    if args.task:
+        out = agent.run(args.task)
+        _print(out.get("final", out))
+        return 0
+
+    print("Verantyx agent mode. Type a task, or '!tool {\"arg\":..}' for a "
+          "manual tool call, ':quit' to exit.")
+    while True:
+        try:
+            line = input("task> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line or line in (":quit", ":q"):
+            break
+        if line.startswith("!"):
+            out = agent.step_solo(line)
+            _print(out)
+            continue
+        out = agent.run(line)
+        final = out.get("final", out)
+        print(f"agent> {final if isinstance(final, str) else json.dumps(final, ensure_ascii=False)[:600]}")
+    return 0
+
+
+def cmd_push_store(args) -> int:
+    from .config import VeraConfig
+    from .hf_store import upload_store
+
+    repo = args.repo or VeraConfig.load().hf_store_repo
+    if not repo:
+        print("no repo given; pass --repo user/name or set hf_store_repo in setup")
+        return 2
+    _print(upload_store(args.store, repo, private=args.private))
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="vera", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--store", default=DEFAULT_STORE)
+    ap.add_argument("--store", default=None,
+                    help="store path (default: config, else vera_store.json)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("pour", help="stream a corpus into the store")
@@ -324,7 +449,29 @@ def main(argv: Optional[list] = None) -> int:
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
 
+    p = sub.add_parser("setup", help="interactive settings (LLM, allocation)")
+    p.set_defaults(fn=cmd_setup)
+
+    p = sub.add_parser("wizard", help="guided data-placement (arrow keys)")
+    p.set_defaults(fn=cmd_wizard)
+
+    p = sub.add_parser("agent", help="agent mode: tools + ReAct + approvals")
+    p.add_argument("task", nargs="?", default=None)
+    p.add_argument("--llm", default=None)
+    p.add_argument("--yes", action="store_true", help="auto-approve (careful)")
+    p.set_defaults(fn=cmd_agent)
+
+    p = sub.add_parser("push-store", help="upload the store to HuggingFace")
+    p.add_argument("--repo", default=None)
+    p.add_argument("--private", action="store_true")
+    p.set_defaults(fn=cmd_push_store)
+
     args = ap.parse_args(argv)
+    # resolve store: --store > config > default
+    if getattr(args, "store", None) is None:
+        from .config import VeraConfig
+
+        args.store = VeraConfig.load().store or DEFAULT_STORE
     return args.fn(args)
 
 

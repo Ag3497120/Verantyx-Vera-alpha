@@ -38,15 +38,21 @@ _FREE_SYSTEM = (
 )
 
 
-def _vera_answer(store: CrossStore, query: str, lang: str) -> Dict[str, Any]:
-    m = math_ask(query)
-    if m["verdict"] != "UNKNOWN_UNPARSED":
-        m["route"] = "math"
-        return m
-    c = code_ask(store, query)
-    if c["verdict"] != "UNKNOWN_UNPARSED":
-        c["route"] = "code"
-        return c
+def _vera_answer(
+    store: CrossStore, query: str, lang: str,
+    allocation: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    alloc = allocation or {}
+    if alloc.get("math", "vera") == "vera":
+        m = math_ask(query)
+        if m["verdict"] != "UNKNOWN_UNPARSED":
+            m["route"] = "math"
+            return m
+    if alloc.get("code", "vera") == "vera":
+        c = code_ask(store, query)
+        if c["verdict"] != "UNKNOWN_UNPARSED":
+            c["route"] = "code"
+            return c
     if lang == "ja":
         from .consensus_store import ja_consensus_ask
 
@@ -73,8 +79,14 @@ def route(
     lang: str = "auto",
     auto_memory: bool = True,
     save: Optional[Callable[[], None]] = None,
+    allocation: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """One chat turn under Vera's control. Deterministic allocation."""
+    """One chat turn under Vera's control. Deterministic allocation.
+
+    ``allocation`` (config dial): math/code "vera"|"llm", known
+    "vera"|"llm_guided", unknown "refuse"|"llm_free".
+    """
+    alloc = allocation or {}
     if lang == "auto":
         lang = detect(user_text)
 
@@ -88,13 +100,18 @@ def route(
                 save()
 
     # 2. Vera-first answer
-    vera = _vera_answer(store, user_text, lang)
+    vera = _vera_answer(store, user_text, lang, allocation=alloc)
     verdict = vera.get("verdict")
 
     if verdict == "ANSWER":
         # exact routes (math / code) are never paraphrased by the LLM —
-        # a language model must not be allowed to garble a proven value
-        if llm is None or vera.get("route") in ("math", "code"):
+        # a language model must not be allowed to garble a proven value.
+        # allocation "known": "vera" keeps raw facet answers even with an LLM.
+        if (
+            llm is None
+            or vera.get("route") in ("math", "code")
+            or alloc.get("known", "llm_guided") == "vera"
+        ):
             return {**vera, "source": "vera", "remembered": remembered}
         # grounded rephrasing: LLM speaks around Vera's facts only
         facts = (
@@ -121,7 +138,10 @@ def route(
                 "llm_error": r.get("error")}
 
     # 3. Vera knows nothing usable
-    if llm is None:
+    # explicit allocation may forbid free LLM chat; without an allocation
+    # dial, an available LLM may speak (labeled) — backwards compatible
+    unknown_policy = alloc.get("unknown", "llm_free") if alloc else "llm_free"
+    if llm is None or unknown_policy == "refuse":
         return {**vera, "source": "refused", "remembered": remembered}
     if verdict in ("AMBIGUOUS",):
         # genuine ambiguity is Vera's own verdict — the LLM may explain it

@@ -13,8 +13,9 @@ authors = [{ name = "Verantyx" }]
 keywords = ["knowledge-graph", "symbolic", "deterministic", "mcp", "hallucination-free"]
 
 [project.optional-dependencies]
-hf = ["datasets"]
+hf = ["datasets", "huggingface_hub"]
 mcp = ["mcp[cli]"]
+all = ["datasets", "huggingface_hub", "mcp[cli]"]
 
 [project.scripts]
 vera = "verantyx.cli:main"
