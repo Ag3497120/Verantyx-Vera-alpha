@@ -129,9 +129,31 @@ def cmd_stats(args) -> int:
 
 
 def cmd_chat(args) -> int:
+    from .router import route as harness_route
+
     st = _load(args.store)
-    print("Verantyx Vera α — typed-verdict chat. Commands: :remember <text>, "
-          ":forget <core>, :stats, :quit")
+    store_path = Path(args.store)
+
+    llm_fn = None
+    if args.mode == "hybrid":
+        from .llm_local import ollama_available, ollama_generate
+
+        if ollama_available():
+            model = args.llm
+
+            def llm_fn(prompt, system):  # noqa: E731 — closure over model
+                return ollama_generate(model, prompt, system=system)
+
+            print(f"[hybrid] local model '{model}' under Vera control "
+                  "(vera / llm_guided / llm_free / refused)")
+        else:
+            print("[hybrid] Ollama not reachable at localhost:11434 — "
+                  "falling back to lab mode (deterministic only)")
+
+    auto_mem = not args.no_auto_memory
+    print("Verantyx Vera α — "
+          f"mode={args.mode}, lang={args.lang}, auto-memory={'on' if auto_mem else 'off'}. "
+          "Commands: :remember <text>, :forget <core>, :stats, :quit")
     while True:
         try:
             line = input("you> ").strip()
@@ -143,9 +165,11 @@ def cmd_chat(args) -> int:
         if line in (":quit", ":q", "exit"):
             break
         if line.startswith(":remember "):
-            key = st.ingest_sentence(line[len(":remember "):])
-            st.save(Path(args.store))
-            print(f"vera> remembered core={key}")
+            from .lang import ingest_text
+
+            rep = ingest_text(st, line[len(":remember "):], lang=args.lang)
+            st.save(store_path)
+            print(f"vera> remembered {rep['cores']} [{rep['lang']}]")
             continue
         if line.startswith(":forget "):
             core = line[len(":forget "):].strip()
@@ -155,15 +179,28 @@ def cmd_chat(args) -> int:
                     del st.crosses[key]
                     st.core_count.pop(key, None)
                     n += 1
-            st.save(Path(args.store))
+            st.save(store_path)
             print(f"vera> forgot {n} cross(es)")
             continue
         if line == ":stats":
             print(f"vera> {st.report()}")
             continue
-        out = _route(st, line)
-        v = out["verdict"]
-        if v == "ANSWER":
+
+        out = harness_route(
+            st, line,
+            llm=llm_fn,
+            lang=args.lang,
+            auto_memory=auto_mem,
+            save=lambda: st.save(store_path),
+        )
+        mem = out.get("remembered")
+        if mem and mem.get("cores"):
+            print(f"      (remembered: {mem['cores']} [{mem['lang']}])")
+        src = out.get("source", "vera")
+        if src in ("llm_guided", "llm_free"):
+            tag = "llm←vera-facts" if src == "llm_guided" else "llm UNVERIFIED"
+            print(f"vera> {out.get('surface','')}   [{tag}]")
+        elif out.get("verdict") == "ANSWER":
             body = (
                 out.get("text")
                 or out.get("value")
@@ -172,9 +209,9 @@ def cmd_chat(args) -> int:
                 or out.get("calls")
                 or out.get("impacted")
             )
-            print(f"vera> {body}   [{out['route']}]")
+            print(f"vera> {body}   [{out.get('route','?')}]")
         else:
-            print(f"vera> {v}   [{out.get('route','?')}] "
+            print(f"vera> {out.get('verdict')}   [{out.get('route','?')}] "
                   "(I do not know — no guessing)")
     return 0
 
@@ -203,6 +240,7 @@ def cmd_code(args) -> int:
 def cmd_lab(args) -> int:
     from .consensus_forks import all_consensus_forks
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
+    from .lang_router_forks import all_lang_router_forks
     from .math_sim_forks import all_math_sim_forks
     from .pour_forks import all_pour_forks
 
@@ -211,6 +249,7 @@ def cmd_lab(args) -> int:
         + all_pour_forks()
         + all_math_sim_forks()
         + all_kripke_rewrite_forks()
+        + all_lang_router_forks()
     )
     forks = {e["fork"]: e["pass"] for e in experiments}
     all_pass = all(forks.values())
@@ -253,7 +292,15 @@ def main(argv: Optional[list] = None) -> int:
     p = sub.add_parser("stats", help="store statistics")
     p.set_defaults(fn=cmd_stats)
 
-    p = sub.add_parser("chat", help="interactive REPL")
+    p = sub.add_parser("chat", help="interactive REPL (lab | hybrid)")
+    p.add_argument("--mode", choices=["lab", "hybrid"], default="lab",
+                   help="lab: deterministic only; hybrid: local LLM under Vera control")
+    p.add_argument("--llm", default="llama3.2",
+                   help="Ollama model name for hybrid mode")
+    p.add_argument("--lang", default="auto",
+                   help="auto | en | ja | es | fr | de | latin")
+    p.add_argument("--no-auto-memory", action="store_true",
+                   help="disable the native always-on memory harness")
     p.set_defaults(fn=cmd_chat)
 
     p = sub.add_parser("math", help="wire arithmetic / typed equations")

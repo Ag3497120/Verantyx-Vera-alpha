@@ -72,6 +72,40 @@ vera simplify "(2 + 3) * y"        # → 5 * y   (rule trace included)
 vera chat
 ```
 
+## Chat modes: lab & hybrid (a local LLM under Vera's control)
+
+```bash
+vera chat --mode lab                      # deterministic only (default)
+vera chat --mode hybrid --llm qwen3.5:2b  # local Ollama model, Vera allocates
+```
+
+In **hybrid** mode Vera stays the controller; the local model is only the
+language surface. Allocation is deterministic and every reply is labeled:
+
+| Label | Meaning |
+|-------|---------|
+| `[math]` / `[code]` | exact routes — the LLM is **never** allowed to touch proven values |
+| `[llm←vera-facts]` | Vera answered; the LLM only rephrases Vera's verified facts |
+| `[llm UNVERIFIED]` | Vera has nothing; the LLM may converse, explicitly unverified |
+| `UNKNOWN_*` | genuine ambiguity stays refused — the LLM cannot vote it away |
+
+**Native memory harness** (no MCP, no triggers): in chat, every declarative
+utterance is remembered automatically; questions and imperatives are not
+(so "tell me something" never becomes a fake fact). Disable with
+`--no-auto-memory`.
+
+## Languages
+
+The cross substrate is symbol-agnostic; segmentation is per-language:
+
+- **English** — full elementary-grammar pipeline (richest)
+- **Japanese** — tokenizer-free script-run segmentation
+  (`リンゴは甘い果物です` → core リンゴ, facets 甘い/果物; recall + typed refusal)
+- **Spanish / French / German** — generic content-word path with per-language
+  function-word stoplists; other Latin-script languages fall back to a shared list
+
+`vera chat --lang auto` detects per utterance; force with `--lang ja` etc.
+
 ## Pouring corpora (bulk knowledge)
 
 ```bash
@@ -130,7 +164,8 @@ Every capability is guarded by falsifiable "fork" tests — including the
 refusal behaviors:
 
 ```bash
-vera lab        # 30 forks: consensus gates, pouring, math, rewriting, Kripke
+vera lab        # 35 forks: consensus gates, pouring, math, rewriting,
+                # Kripke, languages, router allocation
 ```
 
 ## Architecture (one page)
@@ -157,9 +192,11 @@ facets, sense channels, deletion).
 
 ## Honest limitations
 
-- Output is structured facet documents, **not fluent prose**.
-- English only (whitespace + elementary grammar rules); Japanese needs a
-  tokenizer front-end (planned).
+- Output is structured facet documents, **not fluent prose** (hybrid mode
+  buys fluency from a local LLM, clearly labeled).
+- English has the richest pipeline; Japanese is an elementary tokenizer-free
+  recall path (no consensus decomposer yet); es/fr/de use a generic
+  content-word path.
 - Facet extraction is rule-based and shallow; noisy corpora leave noisy
   facets (they are at least *visible* and deletable).
 - Same-surface homographs in the same channel can mix; sense clusters

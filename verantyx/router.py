@@ -1,0 +1,130 @@
+"""Router — Vera as the controller that allocates work between itself and
+an optional local LLM (制御配分).
+
+Native harness behavior (no MCP, no triggers):
+  * every declarative user utterance is auto-remembered into the store
+  * every query runs Vera-first: math → code → knowledge consensus
+  * the local LLM speaks only when Vera allows it, and always labeled:
+
+      vera          deterministic grounded answer (LLM not consulted)
+      llm_guided    LLM phrases an answer AROUND Vera's grounded facts
+      llm_free      Vera has nothing (typed UNKNOWN); LLM may converse,
+                    explicitly labeled as unverified
+      refused       no LLM configured → the typed UNKNOWN itself is the answer
+
+The allocation is deterministic; only the LLM's wording is not.
+"""
+from __future__ import annotations
+
+from typing import Any, Callable, Dict, Optional
+
+from .code_ingest import code_ask
+from .consensus_store import consensus_over_store
+from .cross_store import CrossStore
+from .lang import detect, ingest_text, is_question, ja_ask
+from .math_sim import math_ask
+
+LlmFn = Callable[[str, Optional[str]], Dict[str, Any]]  # (prompt, system) → {ok,text}
+
+_GUIDED_SYSTEM = (
+    "You are the language surface of a deterministic knowledge engine. "
+    "Answer ONLY from the verified facts given. If the facts do not cover "
+    "the question, say you do not know. Never add outside knowledge."
+)
+_FREE_SYSTEM = (
+    "The knowledge engine has NO verified facts for this input. You may "
+    "converse helpfully, but you MUST NOT present factual claims as "
+    "verified. Prefix factual guesses with 'unverified:'."
+)
+
+
+def _vera_answer(store: CrossStore, query: str, lang: str) -> Dict[str, Any]:
+    m = math_ask(query)
+    if m["verdict"] != "UNKNOWN_UNPARSED":
+        m["route"] = "math"
+        return m
+    c = code_ask(store, query)
+    if c["verdict"] != "UNKNOWN_UNPARSED":
+        c["route"] = "code"
+        return c
+    if lang == "ja":
+        out = ja_ask(store, query)
+        out["route"] = "knowledge_ja"
+        return out
+    out = consensus_over_store(store, query)
+    out["route"] = "knowledge"
+    return out
+
+
+def route(
+    store: CrossStore,
+    user_text: str,
+    *,
+    llm: Optional[LlmFn] = None,
+    lang: str = "auto",
+    auto_memory: bool = True,
+    save: Optional[Callable[[], None]] = None,
+) -> Dict[str, Any]:
+    """One chat turn under Vera's control. Deterministic allocation."""
+    if lang == "auto":
+        lang = detect(user_text)
+
+    # 1. native memory harness: declaratives are remembered, always
+    remembered = None
+    if auto_memory and not is_question(user_text, lang):
+        rep = ingest_text(store, user_text, lang=lang)
+        if rep["cores"]:
+            remembered = rep
+            if save:
+                save()
+
+    # 2. Vera-first answer
+    vera = _vera_answer(store, user_text, lang)
+    verdict = vera.get("verdict")
+
+    if verdict == "ANSWER":
+        # exact routes (math / code) are never paraphrased by the LLM —
+        # a language model must not be allowed to garble a proven value
+        if llm is None or vera.get("route") in ("math", "code"):
+            return {**vera, "source": "vera", "remembered": remembered}
+        # grounded rephrasing: LLM speaks around Vera's facts only
+        facts = (
+            vera.get("text")
+            or vera.get("facets")
+            or vera.get("value")
+            or vera.get("x")
+            or vera.get("callers")
+            or vera.get("calls")
+        )
+        r = llm(
+            f"Verified facts: {facts}\nUser question ({lang}): {user_text}\n"
+            f"Answer in the user's language using ONLY these facts.",
+            _GUIDED_SYSTEM,
+        )
+        if r.get("ok"):
+            return {
+                **vera,
+                "source": "llm_guided",
+                "surface": r["text"],
+                "remembered": remembered,
+            }
+        return {**vera, "source": "vera", "remembered": remembered,
+                "llm_error": r.get("error")}
+
+    # 3. Vera knows nothing usable
+    if llm is None:
+        return {**vera, "source": "refused", "remembered": remembered}
+    if verdict in ("AMBIGUOUS",):
+        # genuine ambiguity is Vera's own verdict — the LLM may explain it
+        # but must not resolve it by vibes.
+        return {**vera, "source": "refused", "remembered": remembered}
+    r = llm(user_text, _FREE_SYSTEM)
+    if r.get("ok"):
+        return {
+            **vera,
+            "source": "llm_free",
+            "surface": r["text"],
+            "remembered": remembered,
+        }
+    return {**vera, "source": "refused", "remembered": remembered,
+            "llm_error": r.get("error")}
