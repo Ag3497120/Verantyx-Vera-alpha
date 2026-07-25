@@ -15,7 +15,8 @@ keywords = ["knowledge-graph", "symbolic", "deterministic", "mcp", "hallucinatio
 [project.optional-dependencies]
 hf = ["datasets", "huggingface_hub"]
 mcp = ["mcp[cli]"]
-all = ["datasets", "huggingface_hub", "mcp[cli]"]
+obfuscate = ["cryptography"]
+all = ["datasets", "huggingface_hub", "mcp[cli]", "cryptography"]
 
 [project.scripts]
 vera = "verantyx.cli:main"

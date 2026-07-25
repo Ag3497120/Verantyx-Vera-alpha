@@ -6,3 +6,6 @@ dist/
 vera_store.json
 *.local.json
 .DS_Store
+
+# Verantyx JCross Vault (local only)
+.openclaw/jcross_vault/

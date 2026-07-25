@@ -309,6 +309,7 @@ def cmd_lab(args) -> int:
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
     from .agent_forks import all_agent_forks
     from .ai_ingest_forks import all_ai_ingest_forks
+    from .obfuscate_forks import all_obfuscate_forks
     from .lang_router_forks import all_lang_router_forks
     from .math_sim_forks import all_math_sim_forks
     from .phase2_forks import all_phase2_forks
@@ -323,6 +324,7 @@ def cmd_lab(args) -> int:
         + all_phase2_forks()
         + all_agent_forks()
         + all_ai_ingest_forks()
+        + all_obfuscate_forks()
     )
     forks = {e["fork"]: e["pass"] for e in experiments}
     all_pass = all(forks.values())
@@ -440,6 +442,30 @@ def cmd_agent(args) -> int:
     return 0
 
 
+def cmd_obfuscate(args) -> int:
+    from .obfuscate import export_recovery_key, key_from_store, obfuscate_file
+
+    st = _load(args.store)
+    rep = obfuscate_file(Path(args.file), st)
+    if args.export_key and rep.get("ok"):
+        export_recovery_key(key_from_store(st), Path(args.export_key))
+        rep["recovery_key"] = args.export_key
+    _print(rep)
+    return 0 if rep.get("ok") else 1
+
+
+def cmd_deobfuscate(args) -> int:
+    from .obfuscate import deobfuscate_file, load_recovery_key
+
+    key = load_recovery_key(Path(args.key_file)) if args.key_file else None
+    st = None if key is not None else _load(args.store)
+    rep = deobfuscate_file(
+        Path(args.obf_file), Path(args.map_file), store=st, key=key
+    )
+    _print(rep)
+    return 0 if rep.get("ok") else 1
+
+
 def cmd_push_store(args) -> int:
     from .config import VeraConfig
     from .hf_store import upload_store
@@ -539,6 +565,23 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--llm", default=None)
     p.add_argument("--yes", action="store_true", help="auto-approve (careful)")
     p.set_defaults(fn=cmd_agent)
+
+    p = sub.add_parser(
+        "obfuscate",
+        help="reversible identifier obfuscation, mapping encrypted with a "
+             "key derived from your store's personal state",
+    )
+    p.add_argument("file")
+    p.add_argument("--export-key", default=None,
+                   help="also export a portable recovery key to this path")
+    p.set_defaults(fn=cmd_obfuscate)
+
+    p = sub.add_parser("deobfuscate", help="restore original names")
+    p.add_argument("obf_file")
+    p.add_argument("map_file")
+    p.add_argument("--key-file", default=None,
+                   help="use an exported recovery key instead of --store")
+    p.set_defaults(fn=cmd_deobfuscate)
 
     p = sub.add_parser("push-store", help="upload the store to HuggingFace")
     p.add_argument("--repo", default=None)

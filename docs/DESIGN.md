@@ -122,6 +122,33 @@ This mirrors the project's contradiction-detection philosophy: a fact isn't
 trusted just because *something* said it — it's trusted once a human (or,
 for user-taught facts, the act of teaching itself) has vouched for it.
 
+## Reversible obfuscation, keyed by personal state
+
+A recurring request during design discussions was code obfuscation that
+"only Vera can decode" or "requires the same puzzle-reasoning process to
+break." Every version of that idea shared one flaw: it tried to make the
+*process* secret, but Vera's process is public (MIT, on GitHub) — so is
+any conceivable "6-axis isolation" or "consensus-search" scheme once
+described or open-sourced. Kerckhoffs's principle: an algorithm cannot be
+the secret if it's known (or knowable by inspection/reverse-engineering);
+only a **key** can be. "Requires multi-frontier search to solve" is not a
+hardness guarantee — Vera's consensus search is explicitly polynomial-time
+and deterministic, the opposite of what a real puzzle-hardness claim would
+need, and dressing it up as one repeats the exact over-claiming pattern
+this project exists to refuse (see the JCross critique, same principle).
+
+The version that *does* hold up: two people running the identical public
+code accumulate **different CrossStore state** — different facets, counts,
+and insertion order, shaped by what each person actually poured and in
+what sequence. That path-dependent residue is real, personal, and not
+reconstructible by an outsider without the same history. Used as key
+material (`obfuscate.fingerprint_store` → PBKDF2 → AES-256-GCM), it's a
+legitimate instance of "your personal secret, not the algorithm, is the
+key" — the same principle behind a password or a keyfile, just derived
+from a richer, evolving structure instead of a memorized string. The
+actual hardness guarantee comes entirely from the vetted cryptographic
+primitive (AES-256-GCM via `cryptography`), never from home-grown math.
+
 ## Roadmap markers
 
 Sharded/parallel pouring for 100M+ row corpora, richer information

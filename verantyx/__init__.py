@@ -34,6 +34,17 @@ from .debug_consensus import locate_bug
 from .lang import detect as detect_lang, ingest_text, ja_ask
 from .router import route as harness_route
 from .store_sqlite import SqliteSync, load_sqlite, save_sqlite
+from .obfuscate import (
+    deobfuscate_file,
+    derive_key,
+    export_recovery_key,
+    fingerprint_store,
+    key_from_store,
+    load_recovery_key,
+    obfuscate_file,
+    plan_obfuscation,
+    restore_source,
+)
 
 __version__ = "0.1.0a1"
 
@@ -79,5 +90,14 @@ __all__ = [
     "save_sqlite",
     "load_sqlite",
     "SqliteSync",
+    "fingerprint_store",
+    "derive_key",
+    "key_from_store",
+    "export_recovery_key",
+    "load_recovery_key",
+    "plan_obfuscation",
+    "restore_source",
+    "obfuscate_file",
+    "deobfuscate_file",
     "__version__",
 ]

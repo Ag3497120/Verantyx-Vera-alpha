@@ -100,6 +100,20 @@ it line by line — plain `input()` submits on every embedded newline, which
 silently mangles pastes. This uses bracketed-paste mode and needs a real
 TTY; piped/non-interactive input falls back to reading one line at a time.
 
+## Reversible obfuscation, keyed by your personal store state
+
+```bash
+pip install -e ".[obfuscate]"
+vera obfuscate billing.py --export-key recovery.key   # → billing.py.obf + .obfmap
+vera deobfuscate billing.py.obf billing.py.obfmap --key-file recovery.key
+```
+
+Identifiers are renamed via exact AST positions (never touches string
+literals or docstrings); the reversal mapping is AES-256-GCM-encrypted
+with a key derived from your store's own accumulated state — real, unique
+per person, and never from hiding the (public) algorithm. Full rationale
+and honest limits: [docs/OBFUSCATE.md](docs/OBFUSCATE.md).
+
 ## First-run setup
 
 ```bash
