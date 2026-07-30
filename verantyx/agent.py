@@ -281,6 +281,22 @@ class Agent:
         system = _SYSTEM % manifest
         history: List[str] = [f"Task: {task}",
                               f"Vera's initial read: {json.dumps(vera, ensure_ascii=False)[:400]}"]
+        # Real-usage bug found live: gap_node.acquisition_methods (the
+        # ordered "how to actually resolve this" hint -- e.g.
+        # ["vera_git_clone", "vera_code_ingest", "web_search", ...] for a
+        # repo-study task) was computed but NEVER shown to the LLM. The
+        # LLM only ever saw the generic tool manifest + system prompt, so
+        # a "study this repo" task just repeated web_search until
+        # max_steps_reached instead of trying vera_git_clone -- a routing
+        # bug, not a budget problem; a bigger max_steps would have burned
+        # more calls doing the exact same unproductive loop.
+        if gap_node is not None and gap_node.acquisition_methods:
+            history.append(
+                "Vera recommends trying these tools IN ORDER for this gap "
+                f"(most direct first): {', '.join(gap_node.acquisition_methods)}. "
+                "Only fall back to open-ended web_search once the earlier ones "
+                "in this list have failed or don't apply."
+            )
         # Milestone P5: Vera's own automatic hidden-state probe (no LLM
         # tool choice involved) gets folded into the SAME initial history
         # the LLM's first prompt is built from -- this is the actual

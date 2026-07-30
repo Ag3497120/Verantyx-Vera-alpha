@@ -10,10 +10,11 @@ Client setup: see docs/MCP.md.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from . import boundary, domains
-from .agent_tools import build_registry, fetch_url, web_search
+from .agent_tools import build_registry, fetch_url, git_clone_scratch, git_clone_scratch_dir, web_search
 from .ai_ingest import AiFactQuarantine
 from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
@@ -430,6 +431,44 @@ def serve(store_path: str) -> int:
                 if node.status == "BLOCKED_POLICY":
                     continue
                 gap_graph.set_status(node.gap_id, "ACQUIRING")
+                # Real-usage bug found live: this loop only ever knew how
+                # to try web_search, so a repo-study gap (acquisition_
+                # methods = ["vera_git_clone", "vera_code_ingest", ...])
+                # always fell straight through to BLOCKED_NO_SOURCE, even
+                # though vera_git_clone/vera_code_ingest are both perfectly
+                # able to resolve it. Cloning is safe to run automatically
+                # here (writes only to Vera's own scratch dir, no trust
+                # implications) -- but ingestion writes directly into the
+                # TRUSTED store, so Sleep mode does NOT call it itself;
+                # it queues vera_code_ingest into the SAME tool_call_
+                # quarantine a human already reviews via
+                # list_pending_tool_calls/accept_tool_call, exactly the
+                # same "never silently promote to trusted" rule every
+                # other Sleep-mode resolution in this loop already follows.
+                if "vera_git_clone" in node.acquisition_methods:
+                    m = re.search(r"https://github\.com/[\w.-]+/[\w.-]+", node.subject)
+                    if m:
+                        clone = git_clone_scratch(m.group(0), scratch_dir=git_clone_scratch_dir())
+                        if clone.get("ok"):
+                            entry = tool_call_quarantine.propose(
+                                "vera_code_ingest", {"path": clone["path"]},
+                                reason="Sleep-mode heartbeat: repo cloned, ingestion queued for review",
+                                task=node.subject,
+                            )
+                            _save_tool_call_quarantine()
+                            gap_graph.set_status(
+                                node.gap_id, "RESOLUTION_PLANNED",
+                                resolution=f"cloned to {clone['path']}, queued vera_code_ingest as {entry.call_id}",
+                            )
+                            gap_results.append({
+                                "gap_id": node.gap_id, "subject": node.subject,
+                                "status": "RESOLUTION_PLANNED", "queued_tool_call": entry.call_id,
+                            })
+                            continue
+                    gap_graph.set_status(node.gap_id, "BLOCKED_NO_SOURCE")
+                    gap_results.append({"gap_id": node.gap_id, "subject": node.subject,
+                                        "status": "BLOCKED_NO_SOURCE"})
+                    continue
                 evidence_text = None
                 source_used = None
                 if "web_search" in node.acquisition_methods:
