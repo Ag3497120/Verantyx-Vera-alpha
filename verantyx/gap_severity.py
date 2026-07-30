@@ -18,10 +18,26 @@ from the design discussion).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
 from . import boundary
+
+# A gap whose task text names a repo/file to study needs vera_code_ingest
+# as an acquisition method, not web_search/fetch_url (which would search
+# the literal task text and fail closed as BLOCKED_NO_SOURCE instead of
+# resolving). Narrow and explicit on purpose: a missed match just falls
+# back to the older, still-correct web/ask methods.
+_REPO_STUDY_RE = re.compile(
+    r"github\.com/|リポジトリ|repository|repo\b|study this (repo|repository|code)|"
+    r"\.py\b|\.swift\b|codebase",
+    re.IGNORECASE,
+)
+
+
+def is_repo_study_intent(text: str) -> bool:
+    return bool(_REPO_STUDY_RE.search(text))
 
 
 @dataclass

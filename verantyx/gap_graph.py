@@ -53,6 +53,12 @@ class GapNode:
     status: str = "DETECTED"
     blocks: List[str] = field(default_factory=list)      # gap_ids (or "answer") this node blocks
     caused_by: List[str] = field(default_factory=list)   # upstream gap_ids; empty = this IS the root cause
+    # Milestone R2 (task-bootstrap design): what capability this gap being
+    # closed actually unlocks, e.g. ["SELECT_ACTION"], ["task_execution"].
+    # Optional and unset by default -- every existing caller that doesn't
+    # pass it keeps working exactly as before (same additive-field
+    # contract as role/failure_type/etc below).
+    required_for: List[str] = field(default_factory=list)
     acquisition_methods: List[str] = field(default_factory=list)
     allowed_sources: List[str] = field(default_factory=list)
     max_depth: int = 1
@@ -77,7 +83,7 @@ class GapNode:
         return {
             "gap_id": self.gap_id, "gap_type": self.gap_type, "subject": self.subject,
             "scope": self.scope, "severity": self.severity, "status": self.status,
-            "blocks": self.blocks, "caused_by": self.caused_by,
+            "blocks": self.blocks, "caused_by": self.caused_by, "required_for": self.required_for,
             "acquisition_methods": self.acquisition_methods, "allowed_sources": self.allowed_sources,
             "max_depth": self.max_depth, "resolution": self.resolution,
             "verified_by": self.verified_by, "created_at": self.created_at, "updated_at": self.updated_at,
@@ -92,6 +98,7 @@ class GapNode:
             gap_id=d["gap_id"], gap_type=d["gap_type"], subject=d["subject"],
             scope=d["scope"], severity=d["severity"], status=d.get("status", "DETECTED"),
             blocks=list(d.get("blocks", [])), caused_by=list(d.get("caused_by", [])),
+            required_for=list(d.get("required_for", [])),
             acquisition_methods=list(d.get("acquisition_methods", [])),
             allowed_sources=list(d.get("allowed_sources", [])),
             max_depth=d.get("max_depth", 1), resolution=d.get("resolution"),
@@ -121,6 +128,7 @@ class GapGraph:
         role: Optional[str] = None, failure_type: Optional[str] = None,
         input_type: Optional[str] = None, output_type: Optional[str] = None,
         expected_transition: Optional[str] = None, observed_transition: Optional[str] = None,
+        required_for: Optional[List[str]] = None,
     ) -> GapNode:
         if severity not in SEVERITIES:
             raise ValueError(f"bad severity: {severity}")
@@ -140,6 +148,7 @@ class GapGraph:
             allowed_sources=list(allowed_sources or []), max_depth=max_depth,
             role=role, failure_type=failure_type, input_type=input_type, output_type=output_type,
             expected_transition=expected_transition, observed_transition=observed_transition,
+            required_for=list(required_for or []),
         )
         self.nodes[node.gap_id] = node
         return node

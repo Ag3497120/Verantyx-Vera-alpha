@@ -26,6 +26,7 @@ from urllib.parse import urlparse, parse_qs
 
 from .agent import Agent
 from .cross_store import CrossStore
+from .cognitive_interventions import InterventionLog, intervention_log_path
 from .gap_graph import GapGraph, gap_graph_path
 
 
@@ -74,7 +75,8 @@ def _jgen_llm_fn(endpoint: str) -> Callable:
 
 
 def make_handler(store: CrossStore, save: Callable[[], None], default_model: str,
-                  jgen_endpoint: Optional[str], gap_graph: GapGraph, gap_graph_save: Callable[[], None]):
+                  jgen_endpoint: Optional[str], gap_graph: GapGraph, gap_graph_save: Callable[[], None],
+                  intervention_log: InterventionLog, intervention_log_save: Callable[[], None]):
     runs: Dict[str, RunState] = {}
     runs_lock = threading.Lock()
 
@@ -132,10 +134,12 @@ def make_handler(store: CrossStore, save: Callable[[], None], default_model: str
                 # rather than adding a second CLI flag for the same daemon.
                 agent = Agent(store, llm=llm_fn, save=save, auto_approve=False,
                               browser_endpoint=jgen_endpoint,
-                              gap_graph=gap_graph, cognition_mode=cognition_mode)
+                              gap_graph=gap_graph, cognition_mode=cognition_mode,
+                              intervention_log=intervention_log)
                 result = agent.run(task, on_step=on_step)
                 if cognition_mode in ("experiment", "sleep"):
                     gap_graph_save()
+                    intervention_log_save()
                 state.result = result
                 state.done.set()
                 state.events.put({"__terminal__": True})
@@ -214,7 +218,14 @@ def serve(store: CrossStore, save: Callable[[], None], *, port: int = 8765,
     def gap_graph_save() -> None:
         gap_graph.save(ggpath)
 
-    handler = make_handler(store, save, default_model, jgen_endpoint, gap_graph, gap_graph_save)
+    ilpath = intervention_log_path(resolved_store_path)
+    intervention_log = InterventionLog.load(ilpath)
+
+    def intervention_log_save() -> None:
+        intervention_log.save(ilpath)
+
+    handler = make_handler(store, save, default_model, jgen_endpoint, gap_graph, gap_graph_save,
+                            intervention_log, intervention_log_save)
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     print(f"[vera serve] listening on http://127.0.0.1:{port} "
           f"(model={default_model or '(unset)'}, jgen_endpoint={jgen_endpoint or '(none)'})")

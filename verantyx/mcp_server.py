@@ -18,8 +18,19 @@ from .ai_ingest import AiFactQuarantine
 from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
 from .code_ingest import code_ask, ingest_python_repo
+from .arc_env_adapter import find_transferable_matches, observe_transition
 from .gap_graph import GapGraph, gap_graph_path
 from .structural_similarity import find_structural_matches
+from .task_bootstrap import TaskDescriptor
+from .task_bootstrap import bootstrap_unknown_task as _bootstrap_unknown_task
+from .task_bootstrap import select_next_action as _select_next_action
+from .transfer_outcomes import (
+    TransferOutcomeLog,
+    infer_missing_outcomes,
+    record_transfer_attempt,
+    record_transfer_outcome,
+    transfer_outcome_log_path,
+)
 from .growth_signals import GrowthSignals, growth_signals_path
 from .llm_local import ollama_available
 from .math_sim import math_ask
@@ -52,6 +63,12 @@ def serve(store_path: str) -> int:
 
     def _save_gap_graph() -> None:
         gap_graph.save(ggpath)
+
+    xopath = transfer_outcome_log_path(path)
+    transfer_log = TransferOutcomeLog.load(xopath)
+
+    def _save_transfer_log() -> None:
+        transfer_log.save(xopath)
 
     mcp = FastMCP("verantyx-vera")
 
@@ -426,9 +443,22 @@ def serve(store_path: str) -> int:
                                         "status": "BLOCKED_NO_SOURCE"})
             _save_gap_graph()
 
+        # Milestone R3: close out any transfer-outcome records whose target
+        # gap has since settled (RESOLVED/BLOCKED_*) without an explicit
+        # human judgment — this is what keeps list_transfer_outcomes from
+        # staying permanently full of "unjudged" entries when nobody calls
+        # record_transfer_result by hand. Runs every heartbeat regardless
+        # of cognition_mode (pure read of existing gap status, no new
+        # action taken, so it's as safe as wake_summary's own read-only
+        # scan).
+        newly_judged = infer_missing_outcomes(transfer_log, gap_graph)
+        if newly_judged:
+            _save_transfer_log()
+
         return json.dumps(
             {"drifted_cores": drifted, "growth_candidates": candidates, "drafted": drafted,
-             "gap_resolutions": gap_results},
+             "gap_resolutions": gap_results,
+             "transfer_outcomes_inferred": len(newly_judged)},
             ensure_ascii=False,
         )
 
@@ -528,6 +558,117 @@ def serve(store_path: str) -> int:
                  "resolution": gap_graph.get(m.gap_id).resolution if gap_graph.get(m.gap_id) else None}
                 for m in matches
             ],
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    def log_transfer_attempt(source_gap_id: str, target_gap_id: str, resolution_applied: str) -> str:
+        """Milestone R3: record that a structurally-matched resolution
+        (from find_similar_gaps' source_gap_id) was actually tried on
+        target_gap_id. `success` starts unset — call
+        record_transfer_outcome once you know the result, or let
+        heartbeat's automatic status-based inference fill it in later.
+        This tool ONLY records; it never applies anything itself."""
+        target = gap_graph.get(target_gap_id)
+        source = gap_graph.get(source_gap_id)
+        if target is None or source is None:
+            return json.dumps({"ok": False, "error": "unknown_gap_id"})
+        matches = find_structural_matches(target, [source], limit=1)
+        if not matches:
+            return json.dumps({"ok": False, "error": "not_structurally_comparable"})
+        record = record_transfer_attempt(
+            transfer_log, matches[0], target_gap_id=target_gap_id, resolution_applied=resolution_applied,
+        )
+        _save_transfer_log()
+        return json.dumps({"ok": True, "outcome_id": record.outcome_id}, ensure_ascii=False)
+
+    @mcp.tool()
+    def record_transfer_result(outcome_id: str, success: bool, judged_by: str = "human") -> str:
+        """Explicitly judge a previously-logged transfer attempt
+        (log_transfer_attempt's outcome_id). Explicit judgment always
+        takes priority over heartbeat's later automatic inference."""
+        record = record_transfer_outcome(transfer_log, outcome_id, success=success, judged_by=judged_by)
+        if record is None:
+            return json.dumps({"ok": False, "error": "unknown_outcome_id"})
+        _save_transfer_log()
+        return json.dumps({"ok": True, **record.as_dict()}, ensure_ascii=False)
+
+    @mcp.tool()
+    def list_transfer_outcomes(only_unjudged: bool = False) -> str:
+        """The raw log this milestone exists to build up — every recorded
+        structural-match reuse attempt and whether it worked. Nothing
+        analyzes this yet (deliberately not part of this pass); it's the
+        evidence a future calibration step would need to tell "just needs
+        more knowledge" apart from "the comparison shape itself is
+        insufficient" (see this module's own docstring)."""
+        records = transfer_log.unjudged() if only_unjudged else transfer_log.records
+        return json.dumps([r.as_dict() for r in records], ensure_ascii=False)
+
+    def _csv(s: str) -> list:
+        return [x.strip() for x in s.split(",") if x.strip()] if s else []
+
+    @mcp.tool()
+    def bootstrap_unknown_task(
+        name: str, description: str = "", user_goal: str = "",
+        available_inputs: str = "", available_tools: str = "", known_affordances: str = "",
+        success_criteria: str = "", allowed_sources: str = "", constraints: str = "",
+    ) -> str:
+        """Milestone R2: turn an unfamiliar task (ARC-AGI-3, an unknown CLI/
+        library, an unknown repository, or anything else — same entry point
+        for all of them) into 6 structural slots (IDENTITY/GOAL/AFFORDANCES/
+        INPUTS/SUCCESS_CRITERIA/CONSTRAINTS). Unknown slots become typed
+        GapNodes; the result also surfaces past tasks with the same known/
+        unknown SHAPE (structural_matches) and one recommended next
+        acquisition action. List-shaped args are comma-separated (e.g.
+        allowed_sources="web,local_repository"). This tool only structures
+        the task — it never searches or acts on its own."""
+        descriptor = TaskDescriptor(
+            name=name, description=description, user_goal=user_goal,
+            available_inputs=_csv(available_inputs), available_tools=_csv(available_tools),
+            known_affordances=_csv(known_affordances), success_criteria=_csv(success_criteria),
+            allowed_sources=_csv(allowed_sources), constraints=_csv(constraints),
+        )
+        result = _bootstrap_unknown_task(gap_graph, descriptor)
+        _save_gap_graph()
+        action = _select_next_action(result, gap_graph)
+        return json.dumps({
+            "task_id": result.task_id, "known_slots": result.known_nodes,
+            "gap_ids": result.gap_nodes, "executable": result.executable,
+            "structural_matches": [
+                {"gap_id": m.gap_id, "level": m.level} for m in result.structural_matches
+            ],
+            "next_action": {
+                "intent_type": action.intent_type, "target_gap_id": action.target_gap_id,
+                "preferred_tools": action.preferred_tools, "allowed_sources": action.allowed_sources,
+                "query": action.required_evidence[0] if action.required_evidence else None,
+            } if action else None,
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    def arc_observe_transition(session_id: str, level_id: str, action: str,
+                                frame_before: str, frame_after: str) -> str:
+        """Milestone R1: feed one action->observation step from a 2D
+        dynamic-puzzle environment (ARC-AGI-3 or similar). frame_before/
+        frame_after are JSON 2D grids of ints (e.g. "[[0,0],[1,0]]"). If
+        the naive "nothing changes" hypothesis was wrong, creates a typed
+        GapNode and immediately checks it against every past environment
+        gap for a structural match (same failure shape, possibly a
+        totally different game)."""
+        try:
+            before = json.loads(frame_before)
+            after = json.loads(frame_after)
+        except json.JSONDecodeError as e:
+            return json.dumps({"ok": False, "error": f"bad_json: {e}"})
+        node = observe_transition(
+            gap_graph, session_id=session_id, level_id=level_id, action=action,
+            frame_before=before, frame_after=after,
+        )
+        if node is None:
+            return json.dumps({"ok": True, "gap_created": False})
+        _save_gap_graph()
+        matches = find_transferable_matches(node, gap_graph)
+        return json.dumps({
+            "ok": True, "gap_created": True, "gap_id": node.gap_id,
+            "transferable_matches": [{"gap_id": m.gap_id, "level": m.level} for m in matches],
         }, ensure_ascii=False)
 
     mcp.run()

@@ -120,14 +120,17 @@ def route(
 
     if gap_graph is not None and cognition_mode in ("experiment", "sleep") and \
             isinstance(verdict, str) and verdict.startswith("UNKNOWN"):
-        from .gap_severity import classify as classify_gap
+        from .gap_severity import classify as classify_gap, is_repo_study_intent
 
         gap_class = classify_gap(user_text)
+        acquisition_methods = ["web_search", "fetch_url", "vera_ask"]
+        if is_repo_study_intent(user_text):
+            acquisition_methods = ["vera_code_ingest"] + acquisition_methods
         gap_graph.create(
             gap_type=gap_class.gap_type, subject=user_text[:200],
             scope=f"query:{user_text[:100]}", severity=gap_class.severity,
             status="BLOCKED_POLICY" if gap_class.blocked_policy else "DETECTED",
-            acquisition_methods=["web_search", "fetch_url", "vera_ask"],
+            acquisition_methods=acquisition_methods,
             allowed_sources=["web", "local_repository"],
         )
 
