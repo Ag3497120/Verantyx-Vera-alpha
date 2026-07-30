@@ -141,7 +141,43 @@ def web_search(query: str, k: int = 5) -> Dict[str, Any]:
     return {"ok": True, "query": query, "results": out}
 
 
+_GITHUB_REPO_ROOT_RE = re.compile(
+    r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$"
+)
+
+
+def _github_readme_url(url: str) -> Optional[str]:
+    """A bare github.com/OWNER/REPO URL renders as a full HTML page whose
+    file-tree listing alone can run past max_chars before the actual README
+    ever starts (confirmed directly: fetch_url on a real repo page spent its
+    entire 6000-char budget on a doubled file-name list, cutting off right
+    as the README began) -- agent.run() then has nothing useful to answer
+    from and keeps re-searching instead of concluding. GitHub's REST API
+    returns the README as clean raw text with no chrome, so repo-root URLs
+    are redirected there instead of being scraped as HTML."""
+    m = _GITHUB_REPO_ROOT_RE.match(url.strip())
+    if not m:
+        return None
+    owner, repo = m.group(1), m.group(2)
+    return f"https://api.github.com/repos/{owner}/{repo}/readme"
+
+
 def fetch_url(url: str, max_chars: int = 6000) -> Dict[str, Any]:
+    readme_url = _github_readme_url(url)
+    if readme_url:
+        req = urllib.request.Request(
+            readme_url, headers={**_UA, "Accept": "application/vnd.github.raw+json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                text = r.read().decode(errors="replace")
+            return {"ok": True, "url": url, "text": text[:max_chars],
+                    "note": "fetched as README (raw), not the rendered repo page"}
+        except Exception as e:
+            # README fetch failing (e.g. no README, private repo) falls
+            # through to the normal HTML scrape below rather than giving up.
+            pass
+
     req = urllib.request.Request(url, headers=_UA)
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
