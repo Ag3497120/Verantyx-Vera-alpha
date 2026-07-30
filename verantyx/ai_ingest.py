@@ -118,6 +118,21 @@ class AiFactQuarantine:
         self.entries.extend(added)
         return added
 
+    def propose_raw(self, text: str, *, source: str) -> QuarantineEntry:
+        """Milestone O: for raw fetched evidence (a gap-resolution web
+        excerpt), not a conversational reply. `propose()`'s
+        candidate_sentences() is tuned for filtering an LLM's spoken
+        answer (hedge words, meta-commentary, question sentences) --
+        confirmed directly that running a real Wikipedia excerpt through
+        it produced ZERO surviving candidates, silently dropping the
+        evidence entirely. This adds exactly one entry, verbatim, so a
+        human reviewer sees the actual retrieved text to accept/reject as
+        a whole rather than losing it to filters meant for a different
+        kind of input."""
+        entry = QuarantineEntry(text=text, source=source, ts=round(time.time(), 2))
+        self.entries.append(entry)
+        return entry
+
     def pending(self) -> List[QuarantineEntry]:
         return [e for e in self.entries if e.status == "pending"]
 

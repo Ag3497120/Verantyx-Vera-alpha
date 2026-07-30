@@ -407,7 +407,7 @@ def cmd_serve(args) -> int:
         st.save(store_path)
 
     return serve_http(st, save, port=args.port, default_model=model,
-                       jgen_endpoint=args.jgen_endpoint)
+                       jgen_endpoint=args.jgen_endpoint, store_path=store_path)
 
 
 def cmd_setup(args) -> int:

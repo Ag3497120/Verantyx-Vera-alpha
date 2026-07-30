@@ -34,6 +34,17 @@ class VeraConfig:
     allocation: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_ALLOCATION))
     hf_store_repo: str = ""          # e.g. "user/Verantyx-Vera-base-store"
 
+    # Milestone O: "normal" (default, unchanged behavior -- no gap nodes are
+    # ever created) | "experiment" (gap nodes persisted on UNKNOWN, no
+    # auto-resolution) | "sleep" (experiment + heartbeat attempts quarantine-
+    # gated resolution). Existing users who never touch this stay on
+    # "normal" forever -- this field did not exist before Milestone O, so
+    # anyone loading an old config.json gets the safe default via .get().
+    cognition_mode: str = "normal"
+    gap_max_depth: int = 1
+    gap_max_new_nodes_per_run: int = 20
+    gap_max_tool_calls_per_run: int = 20
+
     def save(self, path: Path = CONFIG_PATH) -> None:
         path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False))
 
@@ -49,6 +60,10 @@ class VeraConfig:
             store=d.get("store", "vera_store.json"),
             allocation=alloc,
             hf_store_repo=d.get("hf_store_repo", ""),
+            cognition_mode=d.get("cognition_mode", "normal"),
+            gap_max_depth=d.get("gap_max_depth", 1),
+            gap_max_new_nodes_per_run=d.get("gap_max_new_nodes_per_run", 20),
+            gap_max_tool_calls_per_run=d.get("gap_max_tool_calls_per_run", 20),
         )
 
 

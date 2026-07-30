@@ -65,6 +65,8 @@ class Agent:
         max_steps: int = 12,
         auto_approve: bool = False,
         browser_endpoint: Optional[str] = None,
+        gap_graph: Optional[Any] = None,
+        cognition_mode: str = "normal",
     ):
         self.store = store
         self.llm = llm
@@ -76,6 +78,31 @@ class Agent:
         self.auto_approve = auto_approve
         self.always: set = set()
         self.transcript: List[Dict[str, Any]] = []
+        # Milestone O: same no-op-unless-opted-in contract as router.route()'s
+        # own gap_graph/cognition_mode params -- this is the actual entry
+        # point the IDE's Vera-harness chat (vera_server.py -> Agent.run())
+        # uses, which calls _vera_answer() directly and never goes through
+        # router.route() at all, so the hook has to live here too or
+        # Milestone O would silently never fire for real IDE usage.
+        self.gap_graph = gap_graph
+        self.cognition_mode = cognition_mode
+
+    def _maybe_record_gap(self, task: str, vera: Dict[str, Any]) -> None:
+        if self.gap_graph is None or self.cognition_mode not in ("experiment", "sleep"):
+            return
+        verdict = vera.get("verdict")
+        if not (isinstance(verdict, str) and verdict.startswith("UNKNOWN")):
+            return
+        from .gap_severity import classify as classify_gap
+
+        gap_class = classify_gap(task)
+        self.gap_graph.create(
+            gap_type=gap_class.gap_type, subject=task[:200], scope=f"query:{task[:100]}",
+            severity=gap_class.severity,
+            status="BLOCKED_POLICY" if gap_class.blocked_policy else "DETECTED",
+            acquisition_methods=["web_search", "fetch_url", "vera_ask"],
+            allowed_sources=["web", "local_repository"],
+        )
 
     def _approve(self, tool: Tool, args: Dict[str, Any]) -> bool:
         if not tool.mutating or self.auto_approve or tool.name in self.always:
@@ -126,6 +153,7 @@ class Agent:
         cmd_agent doesn't pass one)."""
         # 1. deterministic shortcut
         vera = _vera_answer(self.store, task, "auto", self.allocation)
+        self._maybe_record_gap(task, vera)
         if vera.get("verdict") == "ANSWER" and vera.get("route") in ("math", "code"):
             result = {"final": vera, "steps": 0, "source": "vera_direct"}
             if on_step:

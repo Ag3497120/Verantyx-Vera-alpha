@@ -76,6 +76,8 @@ def route(
     save: Optional[Callable[[], None]] = None,
     allocation: Optional[Dict[str, str]] = None,
     growth: "Optional[Any]" = None,
+    gap_graph: "Optional[Any]" = None,
+    cognition_mode: str = "normal",
 ) -> Dict[str, Any]:
     """One chat turn under Vera's control. Deterministic allocation.
 
@@ -85,6 +87,13 @@ def route(
     ``growth`` (optional `growth_signals.GrowthSignals`): every normal
     call is "power-on" for Milestone M's self-growth loop — a real typed
     UNKNOWN just gets logged here, no extra wiring needed at call sites.
+
+    ``gap_graph``/``cognition_mode`` (Milestone O): when cognition_mode is
+    "normal" (the default), this is a pure no-op -- no GapNode is ever
+    created, matching pre-Milestone-O behavior exactly for anyone who
+    hasn't opted in. "experiment"/"sleep" persist a GapNode on a typed
+    UNKNOWN; actual resolution only ever happens in "sleep" mode, and only
+    from mcp_server.py's heartbeat(), never from here.
     """
     alloc = allocation or {}
     if lang == "auto":
@@ -108,6 +117,19 @@ def route(
         # it — a needs_more_facts signal, not a missing-domain signal.
         matched = bool(vera.get("route")) and vera.get("route") not in ("knowledge", "knowledge_ja")
         growth.record_unknown(user_text, verdict, matched_domain=matched)
+
+    if gap_graph is not None and cognition_mode in ("experiment", "sleep") and \
+            isinstance(verdict, str) and verdict.startswith("UNKNOWN"):
+        from .gap_severity import classify as classify_gap
+
+        gap_class = classify_gap(user_text)
+        gap_graph.create(
+            gap_type=gap_class.gap_type, subject=user_text[:200],
+            scope=f"query:{user_text[:100]}", severity=gap_class.severity,
+            status="BLOCKED_POLICY" if gap_class.blocked_policy else "DETECTED",
+            acquisition_methods=["web_search", "fetch_url", "vera_ask"],
+            allowed_sources=["web", "local_repository"],
+        )
 
     if verdict == "ANSWER":
         # exact routes (math / code) are never paraphrased by the LLM —

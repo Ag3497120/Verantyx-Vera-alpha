@@ -13,10 +13,12 @@ import json
 from pathlib import Path
 
 from . import boundary, domains
+from .agent_tools import fetch_url, web_search
 from .ai_ingest import AiFactQuarantine
 from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
 from .code_ingest import code_ask, ingest_python_repo
+from .gap_graph import GapGraph, gap_graph_path
 from .growth_signals import GrowthSignals, growth_signals_path
 from .llm_local import ollama_available
 from .math_sim import math_ask
@@ -44,6 +46,11 @@ def serve(store_path: str) -> int:
     growth = GrowthSignals.load(gpath)
     mqpath = path.with_name(path.stem + ".module_quarantine.json")
     module_quarantine = DomainModuleQuarantine.load(mqpath)
+    ggpath = gap_graph_path(path)
+    gap_graph = GapGraph.load(ggpath)
+
+    def _save_gap_graph() -> None:
+        gap_graph.save(ggpath)
 
     mcp = FastMCP("verantyx-vera")
 
@@ -343,17 +350,18 @@ def serve(store_path: str) -> int:
         return json.dumps({"ok": ok}, ensure_ascii=False)
 
     @mcp.tool()
-    def heartbeat(llm_model: str = "") -> str:
-        """Milestone M's autonomous growth tick. Scans growth_signals.json
-        (recurring UNKNOWN buckets accumulated from ordinary ask() traffic —
-        no separate trigger wiring needed) through the deterministic
-        boundary detector; any bucket classified growth_candidate gets an
-        LLM-drafted module (requires llm_model, an Ollama model name — no
-        LLM means candidates are found but not drafted), verified in a
-        sandbox, and — only if it passes every gate — queued via
-        propose_domain_module for human review. NEVER auto-activates a
-        module; call this as often as you like (a daily cron/launchd job
-        is the intended cadence, not per-chat-turn)."""
+    def heartbeat(llm_model: str = "", cognition_mode: str = "normal") -> str:
+        """Milestone M's autonomous growth tick (closed-domain modules,
+        unchanged) plus, when cognition_mode="sleep" (Milestone O), a
+        second pass over gap_graph.json's open-domain GapNodes: attempts
+        acquisition (web_search/fetch_url) for actionable nodes and
+        proposes results into the SAME ai_quarantine.json queue
+        propose_ai_facts already uses (see ai_ingest.AiFactQuarantine) --
+        never writes directly to the trusted store. cognition_mode=
+        "normal"/"experiment" skip this second pass entirely (no gap
+        resolution attempted, matching router.py's own no-op guarantee
+        for "normal" and "experiment"'s "detect only, don't resolve"
+        contract)."""
         drifted = growth.record_mass_snapshot(store)
         candidates = []
         drafted = []
@@ -380,8 +388,46 @@ def serve(store_path: str) -> int:
             else:
                 drafted.append({"normalized": bucket.normalized, "ok": False, "verify_reports": report_dicts})
         _save_growth()
+
+        gap_results: list = []
+        if cognition_mode == "sleep":
+            from .config import VeraConfig
+
+            cfg = VeraConfig.load()
+            for node in gap_graph.actionable(limit=cfg.gap_max_new_nodes_per_run):
+                if node.status == "BLOCKED_POLICY":
+                    continue
+                gap_graph.set_status(node.gap_id, "ACQUIRING")
+                evidence_text = None
+                source_used = None
+                if "web_search" in node.acquisition_methods:
+                    sr = web_search(node.subject)
+                    if sr.get("ok") and sr.get("results"):
+                        top = sr["results"][0]
+                        fr = fetch_url(top.get("url", ""))
+                        if fr.get("ok"):
+                            evidence_text = fr.get("text", "")[:2000]
+                            source_used = top.get("url")
+                if evidence_text:
+                    gap_graph.set_status(node.gap_id, "EVIDENCE_COLLECTED")
+                    quarantine.propose_raw(
+                        f"[gap:{node.gap_id}] {node.subject}\n\n{evidence_text}",
+                        source=f"sleep_mode_gap_resolution:{source_used or 'unknown'}",
+                    )
+                    quarantine.save(qpath)
+                    gap_graph.set_status(node.gap_id, "RESOLVED",
+                                          resolution=f"quarantined:{source_used}")
+                    gap_results.append({"gap_id": node.gap_id, "subject": node.subject,
+                                        "status": "RESOLVED", "queued_for_review": True})
+                else:
+                    gap_graph.set_status(node.gap_id, "BLOCKED_NO_SOURCE")
+                    gap_results.append({"gap_id": node.gap_id, "subject": node.subject,
+                                        "status": "BLOCKED_NO_SOURCE"})
+            _save_gap_graph()
+
         return json.dumps(
-            {"drifted_cores": drifted, "growth_candidates": candidates, "drafted": drafted},
+            {"drifted_cores": drifted, "growth_candidates": candidates, "drafted": drafted,
+             "gap_resolutions": gap_results},
             ensure_ascii=False,
         )
 
@@ -434,6 +480,29 @@ def serve(store_path: str) -> int:
         ok = module_quarantine.reject(pend[index])
         module_quarantine.save(mqpath)
         return json.dumps({"ok": ok}, ensure_ascii=False)
+
+    @mcp.tool()
+    def wake_summary(since_seconds: float = 43200.0) -> str:
+        """Milestone O: 'what changed while you were away' — GapNodes whose
+        status changed within the last `since_seconds` (default 12h),
+        split by outcome, plus a reminder of how many items are sitting in
+        the two existing review queues (list_pending_ai_facts /
+        list_pending_domain_modules — this tool doesn't duplicate their
+        content, just points at them)."""
+        import time as _time
+
+        cutoff = _time.time() - since_seconds
+        changed = gap_graph.since(cutoff)
+        resolved = [n.as_dict() for n in changed if n.status == "RESOLVED"]
+        still_open = [n.as_dict() for n in changed if n.status not in ("RESOLVED",) and n.status not in
+                      ("BLOCKED_POLICY", "BLOCKED_NO_SOURCE", "BLOCKED_PERMISSION",
+                       "BLOCKED_BUDGET", "BLOCKED_CONTRADICTION", "STALE")]
+        blocked = [n.as_dict() for n in changed if n.status.startswith("BLOCKED_") or n.status == "STALE"]
+        return json.dumps({
+            "resolved": resolved, "still_open": still_open, "blocked": blocked,
+            "pending_fact_review": len(quarantine.pending()),
+            "pending_module_review": len(module_quarantine.pending()),
+        }, ensure_ascii=False)
 
     mcp.run()
     return 0

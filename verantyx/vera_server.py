@@ -26,6 +26,7 @@ from urllib.parse import urlparse, parse_qs
 
 from .agent import Agent
 from .cross_store import CrossStore
+from .gap_graph import GapGraph, gap_graph_path
 
 
 class RunState:
@@ -73,7 +74,7 @@ def _jgen_llm_fn(endpoint: str) -> Callable:
 
 
 def make_handler(store: CrossStore, save: Callable[[], None], default_model: str,
-                  jgen_endpoint: Optional[str]):
+                  jgen_endpoint: Optional[str], gap_graph: GapGraph, gap_graph_save: Callable[[], None]):
     runs: Dict[str, RunState] = {}
     runs_lock = threading.Lock()
 
@@ -106,6 +107,11 @@ def make_handler(store: CrossStore, save: Callable[[], None], default_model: str
                 return
             model = body.get("model") or default_model
             backend = body.get("backend", "ollama")
+            # Milestone O: same request-scoped override pattern as "model"/
+            # "backend" -- the IDE's 3-mode toggle sends this per request
+            # rather than needing to write Vera-alpha's own config.json from
+            # a separate process.
+            cognition_mode = body.get("cognition_mode", "normal")
             llm_fn = _make_llm_fn(model, backend, jgen_endpoint)
             if llm_fn is None:
                 self._json(400, {"ok": False, "error": "jgen_backend_requested_but_no_endpoint_configured"})
@@ -125,8 +131,11 @@ def make_handler(store: CrossStore, save: Callable[[], None], default_model: str
                 # and /browser/fetch), so this reuses one configured URL
                 # rather than adding a second CLI flag for the same daemon.
                 agent = Agent(store, llm=llm_fn, save=save, auto_approve=False,
-                              browser_endpoint=jgen_endpoint)
+                              browser_endpoint=jgen_endpoint,
+                              gap_graph=gap_graph, cognition_mode=cognition_mode)
                 result = agent.run(task, on_step=on_step)
+                if cognition_mode in ("experiment", "sleep"):
+                    gap_graph_save()
                 state.result = result
                 state.done.set()
                 state.events.put({"__terminal__": True})
@@ -194,8 +203,18 @@ def make_handler(store: CrossStore, save: Callable[[], None], default_model: str
 
 
 def serve(store: CrossStore, save: Callable[[], None], *, port: int = 8765,
-          default_model: str = "", jgen_endpoint: Optional[str] = None) -> int:
-    handler = make_handler(store, save, default_model, jgen_endpoint)
+          default_model: str = "", jgen_endpoint: Optional[str] = None,
+          store_path: Optional["Path"] = None) -> int:
+    from pathlib import Path as _Path
+
+    resolved_store_path = store_path or _Path("vera_store.json")
+    ggpath = gap_graph_path(resolved_store_path)
+    gap_graph = GapGraph.load(ggpath)
+
+    def gap_graph_save() -> None:
+        gap_graph.save(ggpath)
+
+    handler = make_handler(store, save, default_model, jgen_endpoint, gap_graph, gap_graph_save)
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     print(f"[vera serve] listening on http://127.0.0.1:{port} "
           f"(model={default_model or '(unset)'}, jgen_endpoint={jgen_endpoint or '(none)'})")
