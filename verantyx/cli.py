@@ -134,6 +134,57 @@ def cmd_stats(args) -> int:
     return 0
 
 
+def cmd_heartbeat(args) -> int:
+    """Milestone M: scans growth_signals.json for recurring UNKNOWN
+    patterns, drafts+verifies a candidate module via an LLM if one clears
+    the boundary detector, and queues it for human review — never
+    auto-activates. Intended for a daily cron/launchd job, not per-turn."""
+    from . import boundary, domains
+    from .growth_signals import GrowthSignals, growth_signals_path
+    from .llm_local import ollama_available
+    from .module_forge import build_test_queries, draft_module
+    from .module_ingest import DomainModuleQuarantine
+    from .module_verify import verify_module
+
+    st = _load(args.store)
+    store_path = Path(args.store)
+    pkg_dir = Path(__file__).resolve().parent
+    domains.register_builtins()
+    domains.register_generated(pkg_dir)
+
+    gpath = growth_signals_path(store_path)
+    growth = GrowthSignals.load(gpath)
+    drifted = growth.record_mass_snapshot(st)
+
+    mqpath = store_path.with_name(store_path.stem + ".module_quarantine.json")
+    module_quarantine = DomainModuleQuarantine.load(mqpath)
+
+    candidates, drafted_out = [], []
+    for bucket in growth.buckets.values():
+        verdict = boundary.classify(bucket)
+        if verdict.classification != "growth_candidate":
+            continue
+        candidates.append({"normalized": bucket.normalized, "reason": verdict.reason})
+        if not args.llm_model or not ollama_available():
+            continue
+        draft = draft_module(bucket, args.llm_model)
+        if not draft["ok"]:
+            drafted_out.append({"normalized": bucket.normalized, "ok": False, "error": draft["error"]})
+            continue
+        ok, reports = verify_module(draft["source"], build_test_queries(bucket), st, draft["name"])
+        report_dicts = [r.as_dict() for r in reports]
+        if ok:
+            module_quarantine.propose(draft["name"], draft["source"], bucket.normalized, report_dicts)
+            drafted_out.append({"normalized": bucket.normalized, "ok": True, "name": draft["name"], "queued": True})
+        else:
+            drafted_out.append({"normalized": bucket.normalized, "ok": False, "verify_reports": report_dicts})
+
+    growth.save(gpath)
+    module_quarantine.save(mqpath)
+    _print({"drifted_cores": drifted, "growth_candidates": candidates, "drafted": drafted_out})
+    return 0
+
+
 def _quarantine_path(args) -> Path:
     return Path(args.store).with_suffix("").with_name(
         Path(args.store).stem + ".ai_quarantine.json"
@@ -310,6 +361,7 @@ def cmd_lab(args) -> int:
     from .agent_forks import all_agent_forks
     from .ai_ingest_forks import all_ai_ingest_forks
     from .obfuscate_forks import all_obfuscate_forks
+    from .watermark_forks import all_watermark_forks
     from .lang_router_forks import all_lang_router_forks
     from .math_sim_forks import all_math_sim_forks
     from .phase2_forks import all_phase2_forks
@@ -325,6 +377,7 @@ def cmd_lab(args) -> int:
         + all_agent_forks()
         + all_ai_ingest_forks()
         + all_obfuscate_forks()
+        + all_watermark_forks()
     )
     forks = {e["fork"]: e["pass"] for e in experiments}
     all_pass = all(forks.values())
@@ -336,6 +389,25 @@ def cmd_mcp(args) -> int:
     from .mcp_server import serve
 
     return serve(args.store)
+
+
+def cmd_serve(args) -> int:
+    """Milestone N: HTTP+SSE daemon — Vera as the harness, the IDE (or any
+    local caller) as a subscriber/tool-provider instead of an MCP client
+    driving Vera as a flat tool. See vera_server.py's own docstring."""
+    from .config import VeraConfig
+    from .vera_server import serve as serve_http
+
+    st = _load(args.store)
+    store_path = Path(args.store)
+    cfg = VeraConfig.load()
+    model = args.llm or cfg.llm_model
+
+    def save() -> None:
+        st.save(store_path)
+
+    return serve_http(st, save, port=args.port, default_model=model,
+                       jgen_endpoint=args.jgen_endpoint)
 
 
 def cmd_setup(args) -> int:
@@ -466,6 +538,19 @@ def cmd_deobfuscate(args) -> int:
     return 0 if rep.get("ok") else 1
 
 
+def cmd_watermark(args) -> int:
+    from .watermark import identify_candidates, register_owner
+
+    if args.action == "register":
+        st = _load(args.store)
+        rep = register_owner(Path(args.registry), args.owner_id, st)
+    else:  # identify
+        source = Path(args.file).read_text()
+        rep = identify_candidates(Path(args.registry), source)
+    _print(rep)
+    return 0 if rep.get("ok") else 1
+
+
 def cmd_push_store(args) -> int:
     from .config import VeraConfig
     from .hf_store import upload_store
@@ -507,6 +592,15 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("stats", help="store statistics")
     p.set_defaults(fn=cmd_stats)
+
+    p = sub.add_parser(
+        "heartbeat",
+        help="Milestone M: scan growth signals, draft+verify candidate "
+             "domain modules, queue for human review (never auto-activates)",
+    )
+    p.add_argument("--llm-model", default="", dest="llm_model",
+                    help="Ollama model to draft with; omit to only report candidates")
+    p.set_defaults(fn=cmd_heartbeat)
 
     p = sub.add_parser(
         "propose-ai-facts",
@@ -554,6 +648,18 @@ def main(argv: Optional[list] = None) -> int:
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
 
+    p = sub.add_parser(
+        "serve",
+        help="Milestone N: HTTP+SSE daemon (Vera as harness, not an MCP tool) "
+             "— POST /agent/run, GET /events?run_id=, GET /agent/run/<id>",
+    )
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--llm", default=None, help="Ollama model; falls back to config's llm_model")
+    p.add_argument("--jgen-endpoint", default=None, dest="jgen_endpoint",
+                    help="e.g. http://127.0.0.1:8766 — the IDE's JGenAgentServer (N4), "
+                         "only needed if a request sets \"backend\": \"jgen\"")
+    p.set_defaults(fn=cmd_serve)
+
     p = sub.add_parser("setup", help="interactive settings (LLM, allocation)")
     p.set_defaults(fn=cmd_setup)
 
@@ -582,6 +688,18 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--key-file", default=None,
                    help="use an exported recovery key instead of --store")
     p.set_defaults(fn=cmd_deobfuscate)
+
+    p = sub.add_parser(
+        "watermark",
+        help="leak attribution: register an owner's naming-variant, or "
+             "identify candidate owners of an obfuscated file (evidence, "
+             "not proof — see docs/WATERMARK.md)",
+    )
+    p.add_argument("action", choices=["register", "identify"])
+    p.add_argument("registry", help="path to the watermark registry JSON file")
+    p.add_argument("--owner-id", default=None, help="required for register")
+    p.add_argument("--file", default=None, help="obfuscated .obf file, required for identify")
+    p.set_defaults(fn=cmd_watermark)
 
     p = sub.add_parser("push-store", help="upload the store to HuggingFace")
     p.add_argument("--repo", default=None)

@@ -18,11 +18,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
-from .code_ingest import code_ask
+from . import domains
 from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
 from .lang import detect, ingest_text, is_question, ja_ask
-from .math_sim import math_ask
+
+domains.register_builtins()
 
 LlmFn = Callable[[str, Optional[str]], Dict[str, Any]]  # (prompt, system) → {ok,text}
 
@@ -43,16 +44,10 @@ def _vera_answer(
     allocation: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     alloc = allocation or {}
-    if alloc.get("math", "vera") == "vera":
-        m = math_ask(query)
-        if m["verdict"] != "UNKNOWN_UNPARSED":
-            m["route"] = "math"
-            return m
-    if alloc.get("code", "vera") == "vera":
-        c = code_ask(store, query)
-        if c["verdict"] != "UNKNOWN_UNPARSED":
-            c["route"] = "code"
-            return c
+    skip = {name for name in ("math", "code") if alloc.get(name, "vera") != "vera"}
+    reg_out = domains.try_all(store, query, skip=skip)
+    if reg_out["verdict"] != domains.NOT_MY_DOMAIN:
+        return reg_out
     if lang == "ja":
         from .consensus_store import ja_consensus_ask
 
@@ -80,11 +75,16 @@ def route(
     auto_memory: bool = True,
     save: Optional[Callable[[], None]] = None,
     allocation: Optional[Dict[str, str]] = None,
+    growth: "Optional[Any]" = None,
 ) -> Dict[str, Any]:
     """One chat turn under Vera's control. Deterministic allocation.
 
     ``allocation`` (config dial): math/code "vera"|"llm", known
     "vera"|"llm_guided", unknown "refuse"|"llm_free".
+
+    ``growth`` (optional `growth_signals.GrowthSignals`): every normal
+    call is "power-on" for Milestone M's self-growth loop — a real typed
+    UNKNOWN just gets logged here, no extra wiring needed at call sites.
     """
     alloc = allocation or {}
     if lang == "auto":
@@ -102,6 +102,12 @@ def route(
     # 2. Vera-first answer
     vera = _vera_answer(store, user_text, lang, allocation=alloc)
     verdict = vera.get("verdict")
+    if growth is not None and isinstance(verdict, str) and verdict.startswith("UNKNOWN"):
+        # "route" set (even on a typed UNKNOWN) means some domain module
+        # recognized the query's shape and just lacks facts/evidence for
+        # it — a needs_more_facts signal, not a missing-domain signal.
+        matched = bool(vera.get("route")) and vera.get("route") not in ("knowledge", "knowledge_ja")
+        growth.record_unknown(user_text, verdict, matched_domain=matched)
 
     if verdict == "ANSWER":
         # exact routes (math / code) are never paraphrased by the LLM —

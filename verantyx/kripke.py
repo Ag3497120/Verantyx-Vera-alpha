@@ -233,3 +233,35 @@ def check(
         "per_world": per,
         "formula": formula,
     }
+
+
+_AT_WORLD_RE = re.compile(r"^(.*?)\s+at\s+(\w+)\s*$")
+
+# Module-level default model — deliberately starts EMPTY (no worlds/props).
+# There is no CrossStore <-> KripkeModel bridge yet (CrossStore has no
+# accessibility-relation storage), so this honestly reflects "Vera knows no
+# Kripke facts by default" rather than faking a populated model. Real
+# queries against this model will mostly return UNKNOWN_NO_EVIDENCE until
+# someone calls `register_kripke_world`/`register_kripke_edge` below — that
+# recurring gap is itself the Milestone M growth signal, not a bug.
+_default_model = KripkeModel()
+
+
+def register_kripke_world(name: str, props: List[str]) -> None:
+    _default_model.add_world(name, props)
+
+
+def register_kripke_edge(u: str, v: str) -> None:
+    _default_model.add_edge(u, v)
+
+
+def kripke_ask(_store: Any, query: str) -> Dict[str, Any]:
+    """Domain-registry adapter (see domains/__init__.py) over the module-
+    level default model. Query shape: "<formula>" (validity across all
+    worlds) or "<formula> at <world>". Formulas that don't parse as modal
+    logic at all correctly fall through as UNKNOWN_UNPARSED ("not my
+    domain") rather than a false negative on real Kripke queries."""
+    q = (query or "").strip()
+    m = _AT_WORLD_RE.match(q)
+    formula, world = (m.group(1), m.group(2)) if m else (q, None)
+    return check(_default_model, formula, world)

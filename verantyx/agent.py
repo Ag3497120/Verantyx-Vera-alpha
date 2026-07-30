@@ -110,19 +110,36 @@ class Agent:
         vera = _vera_answer(self.store, action_line, "auto", self.allocation)
         return {"vera": vera}
 
-    def run(self, task: str) -> Dict[str, Any]:
-        """Full ReAct loop (requires an LLM for autonomous planning)."""
+    def run(
+        self, task: str,
+        on_step: "Optional[Callable[[Dict[str, Any]], None]]" = None,
+    ) -> Dict[str, Any]:
+        """Full ReAct loop (requires an LLM for autonomous planning).
+
+        ``on_step`` (optional): called after each transcript entry is
+        finalized (action + observation, or the terminal vera_direct/
+        vera_only/llm_error/final/max_steps event) — lets a caller like
+        vera_server.py's SSE endpoint (Milestone N) push live progress
+        without needing to poll or re-implement this loop. Purely additive:
+        omitting it reproduces the exact prior behavior (cli.py's
+        cmd_agent doesn't pass one)."""
         # 1. deterministic shortcut
         vera = _vera_answer(self.store, task, "auto", self.allocation)
         if vera.get("verdict") == "ANSWER" and vera.get("route") in ("math", "code"):
-            return {"final": vera, "steps": 0, "source": "vera_direct"}
+            result = {"final": vera, "steps": 0, "source": "vera_direct"}
+            if on_step:
+                on_step(result)
+            return result
         if self.llm is None:
-            return {
+            result = {
                 "final": vera,
                 "steps": 0,
                 "source": "vera_only",
                 "note": "no LLM configured; use step_solo for manual tools",
             }
+            if on_step:
+                on_step(result)
+            return result
 
         manifest = tools_manifest(self.registry)
         system = _SYSTEM % manifest
@@ -132,21 +149,32 @@ class Agent:
             prompt = "\n".join(history) + "\nNext action (JSON only):"
             r = self.llm(prompt, system)
             if not r.get("ok"):
-                return {"final": {"error": r.get("error")}, "steps": step,
-                        "source": "llm_error"}
+                result = {"final": {"error": r.get("error")}, "steps": step,
+                          "source": "llm_error"}
+                if on_step:
+                    on_step(result)
+                return result
             action = _parse_action(r["text"])
             if action is None:
                 history.append(f"(unparseable action; reply JSON only)")
                 continue
             self.transcript.append({"step": step, "action": action})
             if "final" in action:
-                return {"final": action["final"], "steps": step + 1,
-                        "source": "react", "transcript": self.transcript}
+                result = {"final": action["final"], "steps": step + 1,
+                          "source": "react", "transcript": self.transcript}
+                if on_step:
+                    on_step(result)
+                return result
             name = action.get("tool", "")
             args = action.get("args", {}) or {}
             obs = self._run_tool(name, args)
             history.append(f"Action: {name}({json.dumps(args, ensure_ascii=False)})")
             history.append(f"Observation: {json.dumps(obs, ensure_ascii=False)[:600]}")
             self.transcript[-1]["observation"] = obs
-        return {"final": {"error": "max_steps_reached"}, "steps": self.max_steps,
-                "source": "react", "transcript": self.transcript}
+            if on_step:
+                on_step({"step": step, "action": action, "observation": obs, "source": "react_step"})
+        result = {"final": {"error": "max_steps_reached"}, "steps": self.max_steps,
+                  "source": "react", "transcript": self.transcript}
+        if on_step:
+            on_step(result)
+        return result
