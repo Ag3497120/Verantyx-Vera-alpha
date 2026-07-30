@@ -173,8 +173,27 @@ class Agent:
             self.transcript[-1]["observation"] = obs
             if on_step:
                 on_step({"step": step, "action": action, "observation": obs, "source": "react_step"})
-        result = {"final": {"error": "max_steps_reached"}, "steps": self.max_steps,
-                  "source": "react", "transcript": self.transcript}
+        # Ran out of step budget with real observations already gathered
+        # (confirmed against a real run: 11 web_search/fetch_url/run_command
+        # steps on a repo-analysis task, budget exhausted before the model
+        # ever emitted `{"final": ...}`) -- a bare "max_steps_reached" error
+        # throws away everything Vera actually found. One last forced
+        # synthesis turn (no more tool calls allowed) salvages a real
+        # answer from the transcript instead.
+        synthesis_prompt = (
+            "\n".join(history)
+            + "\nYou are out of steps. Do not call any tool. Reply with "
+              "ONLY {\"thought\": \"...\", \"final\": \"<your best answer "
+              "for the user from what you found above>\"}."
+        )
+        r = self.llm(synthesis_prompt, system)
+        action = _parse_action(r.get("text", "")) if r.get("ok") else None
+        if action and "final" in action:
+            result = {"final": action["final"], "steps": self.max_steps,
+                      "source": "react_forced_synthesis", "transcript": self.transcript}
+        else:
+            result = {"final": {"error": "max_steps_reached"}, "steps": self.max_steps,
+                      "source": "react", "transcript": self.transcript}
         if on_step:
             on_step(result)
         return result
