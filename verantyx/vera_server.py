@@ -28,6 +28,7 @@ from .agent import Agent
 from .cross_store import CrossStore
 from .cognitive_interventions import InterventionLog, intervention_log_path
 from .gap_graph import GapGraph, gap_graph_path
+from .tool_call_quarantine import ToolCallQuarantine, tool_call_quarantine_path
 
 
 class RunState:
@@ -76,7 +77,8 @@ def _jgen_llm_fn(endpoint: str) -> Callable:
 
 def make_handler(store: CrossStore, save: Callable[[], None], default_model: str,
                   jgen_endpoint: Optional[str], gap_graph: GapGraph, gap_graph_save: Callable[[], None],
-                  intervention_log: InterventionLog, intervention_log_save: Callable[[], None]):
+                  intervention_log: InterventionLog, intervention_log_save: Callable[[], None],
+                  tool_call_quarantine: ToolCallQuarantine, tool_call_quarantine_save: Callable[[], None]):
     runs: Dict[str, RunState] = {}
     runs_lock = threading.Lock()
 
@@ -135,8 +137,14 @@ def make_handler(store: CrossStore, save: Callable[[], None], default_model: str
                 agent = Agent(store, llm=llm_fn, save=save, auto_approve=False,
                               browser_endpoint=jgen_endpoint,
                               gap_graph=gap_graph, cognition_mode=cognition_mode,
-                              intervention_log=intervention_log)
+                              intervention_log=intervention_log,
+                              tool_call_quarantine=tool_call_quarantine)
                 result = agent.run(task, on_step=on_step)
+                # Milestone R4: unlike gap_graph/intervention_log, tool-call
+                # proposals matter in EVERY cognition mode (a normal-mode
+                # chat that wants to write a file needs this exactly as
+                # much as Sleep mode does), so this save is unconditional.
+                tool_call_quarantine_save()
                 if cognition_mode in ("experiment", "sleep"):
                     gap_graph_save()
                     intervention_log_save()
@@ -224,8 +232,15 @@ def serve(store: CrossStore, save: Callable[[], None], *, port: int = 8765,
     def intervention_log_save() -> None:
         intervention_log.save(ilpath)
 
+    tcqpath = tool_call_quarantine_path(resolved_store_path)
+    tool_call_quarantine = ToolCallQuarantine.load(tcqpath)
+
+    def tool_call_quarantine_save() -> None:
+        tool_call_quarantine.save(tcqpath)
+
     handler = make_handler(store, save, default_model, jgen_endpoint, gap_graph, gap_graph_save,
-                            intervention_log, intervention_log_save)
+                            intervention_log, intervention_log_save,
+                            tool_call_quarantine, tool_call_quarantine_save)
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     print(f"[vera serve] listening on http://127.0.0.1:{port} "
           f"(model={default_model or '(unset)'}, jgen_endpoint={jgen_endpoint or '(none)'})")

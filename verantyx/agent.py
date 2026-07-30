@@ -47,6 +47,13 @@ tool results. Available tools:
 
 _JSON = re.compile(r"\{.*\}", re.S)
 
+# Acquisition methods that only fetch raw material for a LATER step (e.g.
+# vera_git_clone gets a repo onto disk, but doesn't itself add any
+# knowledge) -- succeeding at one of these must NOT close the gap on its
+# own, or a gap like "study this repo" would be marked RESOLVED the
+# instant the clone finishes, before anything was actually learned.
+_NON_TERMINAL_ACQUISITION_METHODS = frozenset({"vera_git_clone"})
+
 
 def _parse_action(text: str) -> Optional[Dict[str, Any]]:
     m = _JSON.search(text or "")
@@ -74,6 +81,7 @@ class Agent:
         gap_graph: Optional[Any] = None,
         cognition_mode: str = "normal",
         intervention_log: Optional[Any] = None,
+        tool_call_quarantine: Optional[Any] = None,
     ):
         self.store = store
         self.llm = llm
@@ -101,6 +109,12 @@ class Agent:
         # probe, it just doesn't persist provenance anywhere.
         self.browser_endpoint = browser_endpoint
         self.intervention_log = intervention_log
+        # Milestone R4: same optional/no-op contract as gap_graph/
+        # intervention_log -- omit it and behavior is unchanged (mutating
+        # tools with no interactive approver still get denied, exactly
+        # like before this milestone).
+        self.tool_call_quarantine = tool_call_quarantine
+        self._current_task: str = ""
 
     def _maybe_record_gap(self, task: str, vera: Dict[str, Any]) -> Optional[Any]:
         if self.gap_graph is None or self.cognition_mode not in ("experiment", "sleep"):
@@ -113,7 +127,7 @@ class Agent:
         gap_class = classify_gap(task)
         acquisition_methods = ["web_search", "fetch_url", "vera_ask"]
         if is_repo_study_intent(task):
-            acquisition_methods = ["vera_code_ingest"] + acquisition_methods
+            acquisition_methods = ["vera_git_clone", "vera_code_ingest"] + acquisition_methods
         node = self.gap_graph.create(
             gap_type=gap_class.gap_type, subject=task[:200], scope=f"query:{task[:100]}",
             severity=gap_class.severity,
@@ -182,23 +196,37 @@ class Agent:
             f"({gap_node.gap_type}: {gap_node.subject[:100]}) -- observed: {obs_text[:400]}"
         )
 
-    def _approve(self, tool: Tool, args: Dict[str, Any]) -> bool:
-        if not tool.mutating or self.auto_approve or tool.name in self.always:
-            return True
-        if self.approver is None:
-            return False
-        decision = self.approver(tool, args)
-        if decision == "always":
-            self.always.add(tool.name)
-            return True
-        return decision == "approve"
-
-    def _run_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _run_tool(self, name: str, args: Dict[str, Any], *, thought: str = "") -> Dict[str, Any]:
         tool = self.registry.get(name)
         if tool is None:
             return {"ok": False, "error": f"unknown_tool: {name}"}
-        if not self._approve(tool, args):
-            return {"ok": False, "error": "denied_by_user"}
+        if tool.mutating and not self.auto_approve and name not in self.always:
+            if self.approver is not None:
+                decision = self.approver(tool, args)
+                if decision == "always":
+                    self.always.add(name)
+                elif decision != "approve":
+                    return {"ok": False, "error": "denied_by_user"}
+            elif self.tool_call_quarantine is not None:
+                # Milestone R4: no interactive approver reachable (the
+                # Vera-harness HTTP path never has one) -- queue the call
+                # for human review through the SAME propose/pending/accept
+                # gate as Vera's own memory (AiFactQuarantine), instead of
+                # unconditionally denying it. The tool does NOT run now.
+                entry = self.tool_call_quarantine.propose(
+                    name, args, reason=thought, task=self._current_task,
+                )
+                return {
+                    "ok": False, "queued_for_approval": True, "call_id": entry.call_id,
+                    "note": (
+                        f"'{name}' requires human approval and has been queued "
+                        f"(call_id={entry.call_id}). It has NOT run yet. Continue "
+                        "with what you already know, or end the turn -- the "
+                        "actual result will only exist after a human accepts it."
+                    ),
+                }
+            else:
+                return {"ok": False, "error": "denied_by_user"}
         try:
             return tool.fn(**args)
         except TypeError as e:
@@ -229,6 +257,7 @@ class Agent:
         without needing to poll or re-implement this loop. Purely additive:
         omitting it reproduces the exact prior behavior (cli.py's
         cmd_agent doesn't pass one)."""
+        self._current_task = task
         # 1. deterministic shortcut
         vera = _vera_answer(self.store, task, "auto", self.allocation)
         gap_node = self._maybe_record_gap(task, vera)
@@ -283,7 +312,7 @@ class Agent:
                 return result
             name = action.get("tool", "")
             args = action.get("args", {}) or {}
-            obs = self._run_tool(name, args)
+            obs = self._run_tool(name, args, thought=str(action.get("thought", "")))
             history.append(f"Action: {name}({json.dumps(args, ensure_ascii=False)})")
             history.append(f"Observation: {json.dumps(obs, ensure_ascii=False)[:600]}")
             self.transcript[-1]["observation"] = obs
@@ -300,6 +329,7 @@ class Agent:
             if (
                 gap_node is not None and self.gap_graph is not None
                 and tool_succeeded and name in gap_node.acquisition_methods
+                and name not in _NON_TERMINAL_ACQUISITION_METHODS
                 and gap_node.status not in ("RESOLVED",)
             ):
                 self.gap_graph.set_status(

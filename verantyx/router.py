@@ -125,7 +125,7 @@ def route(
         gap_class = classify_gap(user_text)
         acquisition_methods = ["web_search", "fetch_url", "vera_ask"]
         if is_repo_study_intent(user_text):
-            acquisition_methods = ["vera_code_ingest"] + acquisition_methods
+            acquisition_methods = ["vera_git_clone", "vera_code_ingest"] + acquisition_methods
         gap_graph.create(
             gap_type=gap_class.gap_type, subject=user_text[:200],
             scope=f"query:{user_text[:100]}", severity=gap_class.severity,

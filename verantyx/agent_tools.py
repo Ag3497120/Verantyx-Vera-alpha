@@ -103,6 +103,58 @@ def run_command(command: str, timeout: int = 60) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# git clone (scoped, NOT run_command) -- real-usage gap found live: a
+# "study this repo" task had no way to actually get the repo without
+# reaching for run_command's arbitrary-shell escape hatch, which correctly
+# gets denied by the mutating-tool approval gate. This is the safe
+# alternative: URL-allowlisted (https://github.com/... only, no shell
+# metacharacters possible since args are passed as a list, not a shell
+# string), shallow (--depth 1, bounded time/size), and writes ONLY into
+# Vera's own scratch workspace -- never the user's project directory, never
+# an arbitrary path chosen by the LLM. Same risk class as fetch_url/
+# web_search (reads external content, writes only to Vera's own private
+# state), which is why it's registered non-mutating below, unlike
+# run_command/write_file/edit_file which can touch anything.
+# ---------------------------------------------------------------------------
+
+_GITHUB_CLONE_URL_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+(?:\.git)?/?$")
+
+
+def git_clone_scratch(url: str, *, scratch_dir: Path, timeout: int = 120) -> Dict[str, Any]:
+    url = url.strip()
+    if not _GITHUB_CLONE_URL_RE.match(url):
+        return {"ok": False, "error": "only_https_github_repo_urls_supported"}
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", url.rstrip("/")).strip("_")[:80]
+    dest = Path(scratch_dir) / slug
+    if dest.is_dir() and any(dest.iterdir()):
+        return {"ok": True, "path": str(dest), "already_cloned": True}
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run(
+            ["git", "clone", "--depth", "1", url, str(dest)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"timeout_{timeout}s"}
+    except FileNotFoundError:
+        return {"ok": False, "error": "git_not_installed"}
+    if r.returncode != 0:
+        return {"ok": False, "error": r.stderr.strip()[-2000:]}
+    return {"ok": True, "path": str(dest)}
+
+
+def git_clone_scratch_dir() -> Path:
+    """Vera's own private clone workspace -- next to the same Application
+    Support location vera-memory already uses (see vera_server.py's
+    resolved_store_path pattern), never inside the user's own project."""
+    from pathlib import Path as _Path
+    import os as _os
+
+    base = _os.environ.get("XDG_STATE_HOME") or str(_Path.home() / "Library" / "Application Support")
+    return _Path(base) / "Verantyx" / "vera-memory" / "scratch_repos"
+
+
+# ---------------------------------------------------------------------------
 # web (Python counterpart of the vaulted BrowserBridge)
 # ---------------------------------------------------------------------------
 
@@ -285,6 +337,9 @@ def build_registry(store: CrossStore, save: Callable[[], None],
         save()
         return rep
 
+    def vera_git_clone_bound(url: str) -> Dict[str, Any]:
+        return git_clone_scratch(url, scratch_dir=git_clone_scratch_dir())
+
     def vera_code_query(query: str) -> Dict[str, Any]:
         return code_ask(store, query)
 
@@ -334,6 +389,13 @@ def build_registry(store: CrossStore, save: Callable[[], None],
              "core"),
         Tool("vera_code_ingest", "AST-ingest a Python repo", True,
              vera_code_ingest, "path"),
+        Tool("vera_git_clone",
+             "Shallow-clone a public https://github.com/... repo URL into "
+             "Vera's own private scratch workspace (never the user's project "
+             "directory) so vera_code_ingest has a local path to read. "
+             "Same risk class as fetch_url/web_search -- reads external "
+             "content, writes only to Vera's own state.",
+             False, vera_git_clone_bound, "url"),
         Tool("vera_code_query", "who calls X / impact of X", False,
              vera_code_query, "query"),
         Tool("vera_math", "Exact arithmetic / equations", False, vera_math,

@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from . import boundary, domains
-from .agent_tools import fetch_url, web_search
+from .agent_tools import build_registry, fetch_url, web_search
 from .ai_ingest import AiFactQuarantine
 from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
@@ -24,6 +24,7 @@ from .structural_similarity import find_structural_matches
 from .task_bootstrap import TaskDescriptor
 from .task_bootstrap import bootstrap_unknown_task as _bootstrap_unknown_task
 from .task_bootstrap import select_next_action as _select_next_action
+from .tool_call_quarantine import ToolCallQuarantine, tool_call_quarantine_path
 from .transfer_outcomes import (
     TransferOutcomeLog,
     infer_missing_outcomes,
@@ -70,6 +71,12 @@ def serve(store_path: str) -> int:
     def _save_transfer_log() -> None:
         transfer_log.save(xopath)
 
+    tcqpath = tool_call_quarantine_path(path)
+    tool_call_quarantine = ToolCallQuarantine.load(tcqpath)
+
+    def _save_tool_call_quarantine() -> None:
+        tool_call_quarantine.save(tcqpath)
+
     mcp = FastMCP("verantyx-vera")
 
     def _save() -> None:
@@ -77,6 +84,13 @@ def serve(store_path: str) -> int:
 
     def _save_growth() -> None:
         growth.save(gpath)
+
+    # Milestone R4: no browser_endpoint here (this is the headless MCP
+    # process, not the IDE) -- jgen_reflect will just report its own
+    # typed "no_jgen_endpoint_configured" if an accepted call happens to
+    # be that tool. Every other tool works identically to how the agent
+    # itself would have run it.
+    tool_registry = build_registry(store, _save, browser_endpoint=None)
 
     @mcp.tool()
     def ask(query: str) -> str:
@@ -670,6 +684,38 @@ def serve(store_path: str) -> int:
             "ok": True, "gap_created": True, "gap_id": node.gap_id,
             "transferable_matches": [{"gap_id": m.gap_id, "level": m.level} for m in matches],
         }, ensure_ascii=False)
+
+    @mcp.tool()
+    def list_pending_tool_calls() -> str:
+        """Milestone R4: mutating tool calls the Vera-harness chat (IDE)
+        proposed but could not run without a human — same shape as
+        list_pending_ai_facts/list_pending_domain_modules. Use the index
+        with accept_tool_call/reject_tool_call."""
+        pend = tool_call_quarantine.pending()
+        return json.dumps([{"index": i, **e.as_dict()} for i, e in enumerate(pend)], ensure_ascii=False)
+
+    @mcp.tool()
+    def accept_tool_call(index: int) -> str:
+        """Actually RUN one pending tool call (by index from
+        list_pending_tool_calls) now, with current state — not a replay
+        of state from when it was proposed. The ONLY path from a queued
+        proposal to an executed mutating action."""
+        pend = tool_call_quarantine.pending()
+        if not (0 <= index < len(pend)):
+            return json.dumps({"ok": False, "error": "index_out_of_range"})
+        result = tool_call_quarantine.accept(pend[index], tool_registry)
+        _save_tool_call_quarantine()
+        return json.dumps({"executed": True, "result": result}, ensure_ascii=False)
+
+    @mcp.tool()
+    def reject_tool_call(index: int) -> str:
+        """Discard one pending tool call (by index) — never runs."""
+        pend = tool_call_quarantine.pending()
+        if not (0 <= index < len(pend)):
+            return json.dumps({"ok": False, "error": "index_out_of_range"})
+        ok = tool_call_quarantine.reject(pend[index])
+        _save_tool_call_quarantine()
+        return json.dumps({"ok": ok}, ensure_ascii=False)
 
     mcp.run()
     return 0
