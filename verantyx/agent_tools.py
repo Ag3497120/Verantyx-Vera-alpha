@@ -162,6 +162,40 @@ def _github_readme_url(url: str) -> Optional[str]:
     return f"https://api.github.com/repos/{owner}/{repo}/readme"
 
 
+def jgen_reflect(
+    jgen_endpoint: str, prompt: str, interventions: List[Dict[str, Any]], observe_layers: List[int],
+) -> Dict[str, Any]:
+    """Milestone P: injects short text labels (Vera's own state -- goal,
+    confirmed facts, rejected hypotheses, knowledge gaps -- one per
+    intervention) into JGEN's hidden states at specific layers in ONE
+    forward pass, and returns what JGEN's internal representation decodes
+    to at each requested layer, as text. This is the first concrete step
+    of the "Vera is the persistent cognitive architecture; JGEN is its
+    steerable neural cortex" design -- Vera doesn't have its own vector
+    space, so JGEN's own encode() is what turns Vera's text state into
+    vectors on the IDE side (see JCrossChatManager.reflect); this function
+    only ever sends/receives text across the process boundary, never a
+    raw vector, matching Milestone L's own principle.
+
+    `interventions`: [{"layer": int, "text_label": str, "alpha": float}].
+    `observe_layers`: which layers to report back (pre/post-layer
+    conventions differ between inject and observe -- see the Swift/Rust
+    doc comments this mirrors)."""
+    payload = json.dumps({
+        "prompt": prompt, "interventions": interventions, "observe_layers": observe_layers,
+    }).encode()
+    req = urllib.request.Request(
+        jgen_endpoint.rstrip("/") + "/jgen/inject_multi_layer",
+        data=payload, headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read())
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return d
+
+
 def _browser_bridge_fetch(url: str, browser_endpoint: str, max_chars: int) -> Optional[Dict[str, Any]]:
     """Calls the IDE's JGenAgentServer /browser/fetch (Milestone N-adjacent
     bridge over BrowserBridge/verantyx-browser, a real WKWebView) instead
@@ -260,6 +294,20 @@ def build_registry(store: CrossStore, save: Callable[[], None],
     def fetch_url_bound(url: str, max_chars: int = 6000) -> Dict[str, Any]:
         return fetch_url(url, max_chars, browser_endpoint=browser_endpoint)
 
+    def jgen_reflect_bound(prompt: str, interventions: str, observe_layers: str) -> Dict[str, Any]:
+        # LLM tool-call args arrive as JSON strings for the two structured
+        # params (matches how other tools here take flat scalar args) --
+        # parsed defensively so a malformed call fails typed, not with a
+        # raw exception surfacing to the ReAct loop.
+        if not browser_endpoint:
+            return {"ok": False, "error": "no_jgen_endpoint_configured"}
+        try:
+            iv = json.loads(interventions) if interventions else []
+            layers = json.loads(observe_layers) if observe_layers else []
+        except json.JSONDecodeError as e:
+            return {"ok": False, "error": f"bad_json_args: {e}"}
+        return jgen_reflect(browser_endpoint, prompt, iv, layers)
+
     tools = [
         Tool("read_file", "Read a text file", False, read_file, "path"),
         Tool("list_dir", "List a directory", False, list_dir, "path"),
@@ -271,6 +319,13 @@ def build_registry(store: CrossStore, save: Callable[[], None],
         Tool("run_command", "Run a shell command", True, run_command, "command"),
         Tool("web_search", "DuckDuckGo search", False, web_search, "query"),
         Tool("fetch_url", "Fetch a web page as text", False, fetch_url_bound, "url"),
+        Tool("jgen_reflect",
+             "Inject short text state labels into JGEN's hidden states at "
+             "specific layers and see what JGEN's internal representation "
+             "decodes to -- only useful when a jgen_endpoint is configured; "
+             "returns a typed error otherwise",
+             False, jgen_reflect_bound,
+             'prompt, interventions (JSON list of {"layer","text_label","alpha"}), observe_layers (JSON list of int)'),
         Tool("vera_ask", "Ask the deterministic knowledge store", False,
              vera_ask, "query"),
         Tool("vera_remember", "Store a fact permanently", True, vera_remember,
