@@ -61,6 +61,18 @@ class GapNode:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
+    # Structural-similarity fields (design discussion's "compare cause/
+    # role/dependency/state-transition, not raw text similarity"). All
+    # optional and unset by default -- a node with none of these still
+    # works exactly as before (M/N/O's own no-op guarantees extend here:
+    # nothing populates these unless a caller explicitly sets them).
+    role: Optional[str] = None                    # e.g. "trigger", "blocker", "policy_constraint"
+    failure_type: Optional[str] = None             # e.g. "missing_state_transition", "missing_output"
+    input_type: Optional[str] = None
+    output_type: Optional[str] = None
+    expected_transition: Optional[str] = None
+    observed_transition: Optional[str] = None
+
     def as_dict(self) -> Dict[str, Any]:
         return {
             "gap_id": self.gap_id, "gap_type": self.gap_type, "subject": self.subject,
@@ -69,6 +81,9 @@ class GapNode:
             "acquisition_methods": self.acquisition_methods, "allowed_sources": self.allowed_sources,
             "max_depth": self.max_depth, "resolution": self.resolution,
             "verified_by": self.verified_by, "created_at": self.created_at, "updated_at": self.updated_at,
+            "role": self.role, "failure_type": self.failure_type,
+            "input_type": self.input_type, "output_type": self.output_type,
+            "expected_transition": self.expected_transition, "observed_transition": self.observed_transition,
         }
 
     @classmethod
@@ -82,6 +97,9 @@ class GapNode:
             max_depth=d.get("max_depth", 1), resolution=d.get("resolution"),
             verified_by=list(d.get("verified_by", [])),
             created_at=d.get("created_at", 0.0), updated_at=d.get("updated_at", 0.0),
+            role=d.get("role"), failure_type=d.get("failure_type"),
+            input_type=d.get("input_type"), output_type=d.get("output_type"),
+            expected_transition=d.get("expected_transition"), observed_transition=d.get("observed_transition"),
         )
 
 
@@ -100,6 +118,9 @@ class GapGraph:
         *, blocks: Optional[List[str]] = None, caused_by: Optional[List[str]] = None,
         acquisition_methods: Optional[List[str]] = None, allowed_sources: Optional[List[str]] = None,
         max_depth: int = 1, status: str = "DETECTED",
+        role: Optional[str] = None, failure_type: Optional[str] = None,
+        input_type: Optional[str] = None, output_type: Optional[str] = None,
+        expected_transition: Optional[str] = None, observed_transition: Optional[str] = None,
     ) -> GapNode:
         if severity not in SEVERITIES:
             raise ValueError(f"bad severity: {severity}")
@@ -117,6 +138,8 @@ class GapGraph:
             blocks=list(blocks or []), caused_by=list(caused_by or []),
             acquisition_methods=list(acquisition_methods or []),
             allowed_sources=list(allowed_sources or []), max_depth=max_depth,
+            role=role, failure_type=failure_type, input_type=input_type, output_type=output_type,
+            expected_transition=expected_transition, observed_transition=observed_transition,
         )
         self.nodes[node.gap_id] = node
         return node

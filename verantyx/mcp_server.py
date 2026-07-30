@@ -19,6 +19,7 @@ from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
 from .code_ingest import code_ask, ingest_python_repo
 from .gap_graph import GapGraph, gap_graph_path
+from .structural_similarity import find_structural_matches
 from .growth_signals import GrowthSignals, growth_signals_path
 from .llm_local import ollama_available
 from .math_sim import math_ask
@@ -502,6 +503,31 @@ def serve(store_path: str) -> int:
             "resolved": resolved, "still_open": still_open, "blocked": blocked,
             "pending_fact_review": len(quarantine.pending()),
             "pending_module_review": len(module_quarantine.pending()),
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    def find_similar_gaps(gap_id: str, limit: int = 5) -> str:
+        """Structural (not text/vector) similarity against other GapNodes'
+        role/failure_type/input_type/output_type/expected_transition/
+        observed_transition fields — same shape, possibly totally
+        different subject (e.g. a save-button bug and a 3D-export bug
+        sharing "trigger fires, expected transition never observed").
+        Requires the target and candidates to have these fields set (most
+        gaps created by router.py/agent.py don't set them yet — this tool
+        is useful once callers start populating them). NOT_COMPARABLE
+        candidates are dropped entirely, not returned with a low score."""
+        target = gap_graph.get(gap_id)
+        if target is None:
+            return json.dumps({"ok": False, "error": "unknown_gap_id"})
+        matches = find_structural_matches(target, list(gap_graph.nodes.values()), limit=limit)
+        return json.dumps({
+            "ok": True,
+            "matches": [
+                {"gap_id": m.gap_id, "level": m.level, "scores": m.scores,
+                 "matched_dimensions": m.matched_dimensions, "different_dimensions": m.different_dimensions,
+                 "resolution": gap_graph.get(m.gap_id).resolution if gap_graph.get(m.gap_id) else None}
+                for m in matches
+            ],
         }, ensure_ascii=False)
 
     mcp.run()
