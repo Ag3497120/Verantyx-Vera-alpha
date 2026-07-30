@@ -120,7 +120,12 @@ def make_handler(store: CrossStore, save: Callable[[], None], default_model: str
                 state.events.put(event)
 
             def worker() -> None:
-                agent = Agent(store, llm=llm_fn, save=save, auto_approve=False)
+                # jgen_endpoint doubles as the browser bridge -- both are
+                # served by the same IDE-side JGenAgentServer (/jgen/generate
+                # and /browser/fetch), so this reuses one configured URL
+                # rather than adding a second CLI flag for the same daemon.
+                agent = Agent(store, llm=llm_fn, save=save, auto_approve=False,
+                              browser_endpoint=jgen_endpoint)
                 result = agent.run(task, on_step=on_step)
                 state.result = result
                 state.done.set()

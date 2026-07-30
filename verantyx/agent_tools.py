@@ -162,7 +162,38 @@ def _github_readme_url(url: str) -> Optional[str]:
     return f"https://api.github.com/repos/{owner}/{repo}/readme"
 
 
-def fetch_url(url: str, max_chars: int = 6000) -> Dict[str, Any]:
+def _browser_bridge_fetch(url: str, browser_endpoint: str, max_chars: int) -> Optional[Dict[str, Any]]:
+    """Calls the IDE's JGenAgentServer /browser/fetch (Milestone N-adjacent
+    bridge over BrowserBridge/verantyx-browser, a real WKWebView) instead
+    of this module's own urllib scrape. Real browser rendering handles
+    JS-heavy pages and gives markdown extraction tuned by BrowserBridge
+    itself, not a generic tag-strip. Returns None (never raises) on any
+    failure so the caller falls through to the existing urllib path --
+    this is a preference, not a hard dependency, since not every `vera
+    serve` invocation has a browser_endpoint configured."""
+    payload = json.dumps({"url": url}).encode()
+    req = urllib.request.Request(
+        browser_endpoint.rstrip("/") + "/browser/fetch",
+        data=payload, headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            d = json.loads(r.read())
+    except Exception:
+        return None
+    if not d.get("ok"):
+        return None
+    markdown = d.get("markdown", "")
+    return {"ok": True, "url": url, "text": markdown[:max_chars],
+            "note": "fetched via verantyx-browser (real WKWebView render)"}
+
+
+def fetch_url(url: str, max_chars: int = 6000, browser_endpoint: Optional[str] = None) -> Dict[str, Any]:
+    if browser_endpoint:
+        via_browser = _browser_bridge_fetch(url, browser_endpoint, max_chars)
+        if via_browser is not None:
+            return via_browser
+
     readme_url = _github_readme_url(url)
     if readme_url:
         req = urllib.request.Request(
@@ -193,7 +224,8 @@ def fetch_url(url: str, max_chars: int = 6000) -> Dict[str, Any]:
 # registry
 # ---------------------------------------------------------------------------
 
-def build_registry(store: CrossStore, save: Callable[[], None]) -> Dict[str, Tool]:
+def build_registry(store: CrossStore, save: Callable[[], None],
+                    browser_endpoint: Optional[str] = None) -> Dict[str, Tool]:
     from .code_ingest import code_ask, ingest_python_repo
     from .consensus_store import consensus_over_store
     from .math_sim import math_ask
@@ -225,6 +257,9 @@ def build_registry(store: CrossStore, save: Callable[[], None]) -> Dict[str, Too
     def vera_math(query: str) -> Dict[str, Any]:
         return math_ask(query)
 
+    def fetch_url_bound(url: str, max_chars: int = 6000) -> Dict[str, Any]:
+        return fetch_url(url, max_chars, browser_endpoint=browser_endpoint)
+
     tools = [
         Tool("read_file", "Read a text file", False, read_file, "path"),
         Tool("list_dir", "List a directory", False, list_dir, "path"),
@@ -235,7 +270,7 @@ def build_registry(store: CrossStore, save: Callable[[], None]) -> Dict[str, Too
         Tool("make_dir", "Create a directory", True, make_dir, "path"),
         Tool("run_command", "Run a shell command", True, run_command, "command"),
         Tool("web_search", "DuckDuckGo search", False, web_search, "query"),
-        Tool("fetch_url", "Fetch a web page as text", False, fetch_url, "url"),
+        Tool("fetch_url", "Fetch a web page as text", False, fetch_url_bound, "url"),
         Tool("vera_ask", "Ask the deterministic knowledge store", False,
              vera_ask, "query"),
         Tool("vera_remember", "Store a fact permanently", True, vera_remember,

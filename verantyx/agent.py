@@ -64,11 +64,12 @@ class Agent:
         allocation: Optional[Dict[str, str]] = None,
         max_steps: int = 12,
         auto_approve: bool = False,
+        browser_endpoint: Optional[str] = None,
     ):
         self.store = store
         self.llm = llm
         self.save = save
-        self.registry = build_registry(store, save)
+        self.registry = build_registry(store, save, browser_endpoint=browser_endpoint)
         self.approver = approver
         self.allocation = allocation or {}
         self.max_steps = max_steps
