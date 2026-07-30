@@ -729,7 +729,21 @@ def serve(store_path: str) -> int:
         """Milestone R4: mutating tool calls the Vera-harness chat (IDE)
         proposed but could not run without a human — same shape as
         list_pending_ai_facts/list_pending_domain_modules. Use the index
-        with accept_tool_call/reject_tool_call."""
+        with accept_tool_call/reject_tool_call.
+
+        Real bug found live: the Vera-harness chat runs as a SEPARATE OS
+        process (`vera-memory ... serve`, launched by VeraAgentClient.swift)
+        from this MCP server (`vera-memory ... mcp`, launched by
+        MCPEngine.swift) -- two independent processes with their own
+        memory, sharing state only through tool_call_quarantine.json on
+        disk. Reading the in-memory `tool_call_quarantine` this function
+        used to use was only ever a snapshot from whenever THIS process
+        started, so a call queued by the other process was invisible
+        forever. Reloading from disk on every call is the fix -- cheap
+        (small JSON file, human-paced call frequency), and correct for
+        two independent writers in a way an in-memory cache never can be."""
+        nonlocal tool_call_quarantine
+        tool_call_quarantine = ToolCallQuarantine.load(tcqpath)
         pend = tool_call_quarantine.pending()
         return json.dumps([{"index": i, **e.as_dict()} for i, e in enumerate(pend)], ensure_ascii=False)
 
@@ -739,6 +753,8 @@ def serve(store_path: str) -> int:
         list_pending_tool_calls) now, with current state — not a replay
         of state from when it was proposed. The ONLY path from a queued
         proposal to an executed mutating action."""
+        nonlocal tool_call_quarantine
+        tool_call_quarantine = ToolCallQuarantine.load(tcqpath)
         pend = tool_call_quarantine.pending()
         if not (0 <= index < len(pend)):
             return json.dumps({"ok": False, "error": "index_out_of_range"})
@@ -749,6 +765,8 @@ def serve(store_path: str) -> int:
     @mcp.tool()
     def reject_tool_call(index: int) -> str:
         """Discard one pending tool call (by index) — never runs."""
+        nonlocal tool_call_quarantine
+        tool_call_quarantine = ToolCallQuarantine.load(tcqpath)
         pend = tool_call_quarantine.pending()
         if not (0 <= index < len(pend)):
             return json.dumps({"ok": False, "error": "index_out_of_range"})
