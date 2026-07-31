@@ -55,6 +55,35 @@ _JSON = re.compile(r"\{.*\}", re.S)
 _NON_TERMINAL_ACQUISITION_METHODS = frozenset({"vera_git_clone"})
 
 
+_PARTIAL_FINAL = re.compile(r'"final"\s*:\s*"(.*)', re.S)
+
+
+def _extract_partial_final(text: str) -> Optional[str]:
+    """Real bug found live: a real model, asked for {"thought": ...,
+    "final": "..."}, can get cut off by a token limit mid-string --
+    before this, the raw fragment (including the unclosed JSON/markdown
+    wrapper) was shown to the user verbatim. If the text at least reached
+    a `"final": "` marker, pull out what came after it and undo the
+    common JSON escapes by hand (a regex `.search` can't safely
+    json.loads an intentionally-incomplete document), rather than
+    dumping the wrapper syntax on the user. Returns None if the marker
+    was never reached at all -- there's nothing to salvage."""
+    m = _PARTIAL_FINAL.search(text or "")
+    if not m:
+        return None
+    partial = m.group(1)
+    # Drop a trailing incomplete escape sequence (e.g. text cut off right
+    # after a lone backslash) before unescaping, or it'd swallow the
+    # last real character.
+    if partial.endswith("\\"):
+        partial = partial[:-1]
+    partial = (
+        partial.replace('\\n', '\n').replace('\\"', '"')
+        .replace('\\t', '\t').replace('\\\\', '\\')
+    )
+    return partial.strip() or None
+
+
 def _parse_action(text: str) -> Optional[Dict[str, Any]]:
     m = _JSON.search(text or "")
     if not m:
@@ -384,7 +413,8 @@ class Agent:
             # step. Use the raw text directly, clearly labeled as
             # unstructured rather than silently pretending it's the same
             # shape as a normal `final`.
-            result = {"final": r["text"].strip(), "steps": self.max_steps,
+            partial = _extract_partial_final(r["text"])
+            result = {"final": partial if partial else r["text"].strip(), "steps": self.max_steps,
                       "source": "react_forced_synthesis_raw", "transcript": self.transcript}
         else:
             # Genuine failure: the LLM call itself failed, or returned
