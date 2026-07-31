@@ -372,9 +372,27 @@ class Agent:
         if action and "final" in action:
             result = {"final": action["final"], "steps": self.max_steps,
                       "source": "react_forced_synthesis", "transcript": self.transcript}
+        elif r.get("ok") and (r.get("text") or "").strip():
+            # Real repro: a real model can answer the synthesis prompt with
+            # real, useful findings and still fail the strict {"thought":
+            # ..., "final": ...}-only format (e.g. wraps it in markdown, or
+            # quotes file content whose own braces/quotes break the JSON
+            # parse) -- especially likely on a "summarize what you read"
+            # task, since the answer often needs to quote code. Discarding
+            # a real, present answer just because it isn't valid JSON
+            # defeats the whole point of this forced-synthesis salvage
+            # step. Use the raw text directly, clearly labeled as
+            # unstructured rather than silently pretending it's the same
+            # shape as a normal `final`.
+            result = {"final": r["text"].strip(), "steps": self.max_steps,
+                      "source": "react_forced_synthesis_raw", "transcript": self.transcript}
         else:
-            result = {"final": {"error": "max_steps_reached"}, "steps": self.max_steps,
-                      "source": "react", "transcript": self.transcript}
+            # Genuine failure: the LLM call itself failed, or returned
+            # nothing at all. Surface what the call actually reported
+            # (previously discarded) so this is diagnosable instead of a
+            # bare "max_steps_reached" with no further information.
+            result = {"final": {"error": "max_steps_reached", "llm_error": r.get("error")},
+                      "steps": self.max_steps, "source": "react", "transcript": self.transcript}
         if on_step:
             on_step(result)
         return result
