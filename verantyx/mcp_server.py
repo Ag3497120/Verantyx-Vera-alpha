@@ -20,6 +20,7 @@ from .consensus_store import consensus_over_store
 from .cross_store import CrossStore
 from .code_ingest import code_ask, ingest_python_repo
 from .arc_env_adapter import find_transferable_matches, observe_transition
+from .ui_transition import observe_ui_transition
 from .gap_graph import GapGraph, gap_graph_path
 from .structural_similarity import find_structural_matches
 from .task_bootstrap import TaskDescriptor
@@ -723,6 +724,28 @@ def serve(store_path: str) -> int:
             "ok": True, "gap_created": True, "gap_id": node.gap_id,
             "transferable_matches": [{"gap_id": m.gap_id, "level": m.level} for m in matches],
         }, ensure_ascii=False)
+
+    @mcp.tool()
+    def record_ui_transition(session_id: str, action_label: str, changed: bool,
+                              cognition_mode: str = "normal") -> str:
+        """Milestone S: the IDE's Swift side calls this once per recorded
+        UI-automation step (the same call site that already writes to
+        UITestVectorTrace) to record a causal action -> observation pair
+        into GapGraph -- model-independent, unlike UITestVectorTrace's own
+        JGEN-embedding record. Respects the same normal/experiment/sleep
+        contract as every other GapNode-creating path: "normal" is a
+        guaranteed no-op, matching router.py's own guarantee. v1 only
+        records what was observed (see ui_transition.py's own docstring
+        for why expected_transition is deliberately left unset) --
+        mismatch detection across accumulated observations is future
+        work, not this tool's job."""
+        if cognition_mode == "normal":
+            return json.dumps({"ok": True, "skipped": "normal_mode"})
+        node = observe_ui_transition(
+            gap_graph, session_id=session_id, action_label=action_label, changed=changed,
+        )
+        _save_gap_graph()
+        return json.dumps({"ok": True, "gap_id": node.gap_id, "status": node.status}, ensure_ascii=False)
 
     @mcp.tool()
     def list_pending_tool_calls() -> str:
