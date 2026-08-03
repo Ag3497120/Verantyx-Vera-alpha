@@ -54,6 +54,29 @@ _JSON = re.compile(r"\{.*\}", re.S)
 # instant the clone finishes, before anything was actually learned.
 _NON_TERMINAL_ACQUISITION_METHODS = frozenset({"vera_git_clone"})
 
+# Premature-surrender finals the LLM emits after identical tool spam.
+_SURRENDER_FINAL_RE = re.compile(
+    r"couldn'?t\s+clone|could\s+not\s+clone|unable\s+to\s+clone|"
+    r"clone\s+failed|failed\s+to\s+clone|諦め|できません|クローンでき",
+    re.I,
+)
+
+
+def _tool_fingerprint(name: str, args: Dict[str, Any]) -> str:
+    try:
+        args_s = json.dumps(args or {}, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        args_s = str(args)
+    return f"{name}:{args_s}"
+
+
+def _looks_like_surrender_final(text: Any) -> bool:
+    if not isinstance(text, str):
+        return False
+    return bool(_SURRENDER_FINAL_RE.search(text)) or (
+        "couldn't" in text.lower() and "clone" in text.lower()
+    )
+
 
 _PARTIAL_FINAL = re.compile(r'"final"\s*:\s*"(.*)', re.S)
 
@@ -335,7 +358,23 @@ class Agent:
         reflect_note = self._maybe_reflect(task, gap_node, vera)
         if reflect_note:
             history.append(reflect_note)
-        for step in range(self.max_steps):
+
+        # Gap-driven persistence: identical tool spam is capped, but the loop
+        # keeps trying DISTINCT strategies while the gap is open. "couldn't
+        # clone" is only allowed after acquisition methods are exhausted or
+        # the gap is BLOCKED — not after N identical vera_git_clone calls.
+        identical_tool_streak = 0
+        last_tool_fp = ""
+        tried_tools: set = set()
+        blocked_fps: set = set()
+        # Extra steps while gap open: one per remaining acquisition method (cap +8).
+        base_max = self.max_steps
+        effective_max = base_max
+        if gap_node is not None and gap_node.acquisition_methods:
+            effective_max = min(base_max + min(8, len(gap_node.acquisition_methods)), base_max * 2)
+
+        step = 0
+        while step < effective_max:
             prompt = "\n".join(history) + "\nNext action (JSON only):"
             r = self.llm(prompt, system)
             if not r.get("ok"):
@@ -347,9 +386,49 @@ class Agent:
             action = _parse_action(r["text"])
             if action is None:
                 history.append(f"(unparseable action; reply JSON only)")
+                step += 1
                 continue
             self.transcript.append({"step": step, "action": action})
             if "final" in action:
+                # Refuse surrender final while gap is still open AND distinct
+                # acquisition methods remain untried.
+                final_text = action.get("final")
+                gap_open = (
+                    gap_node is not None
+                    and getattr(gap_node, "status", "") not in (
+                        "RESOLVED", "BLOCKED_NO_SOURCE", "BLOCKED_POLICY",
+                        "BLOCKED_PERMISSION", "BLOCKED_BUDGET", "STALE",
+                    )
+                )
+                remaining = []
+                if gap_node is not None and gap_node.acquisition_methods:
+                    remaining = [m for m in gap_node.acquisition_methods if m not in tried_tools]
+                if gap_open and _looks_like_surrender_final(final_text) and remaining:
+                    history.append(
+                        "Observation: GAP still open — premature surrender refused. "
+                        f"Tried={sorted(tried_tools) or []}. Still untried: {remaining}. "
+                        "Call a DIFFERENT tool from that list (not the same one again). "
+                        "Do not emit final until the gap is resolved or every method failed."
+                    )
+                    self.transcript[-1]["observation"] = {
+                        "ok": False, "error": "gap_open_surrender_refused",
+                        "remaining": remaining,
+                    }
+                    if on_step:
+                        on_step({
+                            "step": step, "action": action,
+                            "observation": self.transcript[-1]["observation"],
+                            "source": "react_step",
+                        })
+                    step += 1
+                    continue
+                if gap_open and _looks_like_surrender_final(final_text) and not remaining:
+                    # True exhaustion — mark gap blocked, allow the final.
+                    if self.gap_graph is not None and gap_node is not None:
+                        self.gap_graph.set_status(
+                            gap_node.gap_id, "BLOCKED_NO_SOURCE",
+                            resolution="distinct acquisition methods exhausted",
+                        )
                 result = {"final": action["final"], "steps": step + 1,
                           "source": "react", "transcript": self.transcript}
                 if on_step:
@@ -357,7 +436,46 @@ class Agent:
                 return result
             name = action.get("tool", "")
             args = action.get("args", {}) or {}
+            fp = _tool_fingerprint(name, args if isinstance(args, dict) else {})
+            if fp == last_tool_fp:
+                identical_tool_streak += 1
+            else:
+                identical_tool_streak = 1
+                last_tool_fp = fp
+
+            # Cap identical tool spam — do not re-execute; nudge toward next method.
+            if identical_tool_streak >= 2 or fp in blocked_fps:
+                blocked_fps.add(fp)
+                remaining = []
+                if gap_node is not None and gap_node.acquisition_methods:
+                    remaining = [m for m in gap_node.acquisition_methods if m not in tried_tools and m != name]
+                nudge = (
+                    f"CYCLE/identical tool blocked: {name}×{identical_tool_streak}. "
+                    "GAP still open — try a DIFFERENT tool"
+                )
+                if remaining:
+                    nudge += f" (suggested: {remaining[0]})"
+                else:
+                    nudge += " or a different args set; do not spam the same call"
+                history.append(f"Action: {name}(blocked-identical)")
+                history.append(f"Observation: {nudge}")
+                self.transcript[-1]["observation"] = {"ok": False, "error": "identical_tool_blocked", "note": nudge}
+                # Extend budget once when we still have untried strategies.
+                if remaining and effective_max < base_max + 8:
+                    effective_max = min(effective_max + 1, base_max + 8)
+                if on_step:
+                    on_step({
+                        "step": step, "action": action,
+                        "observation": self.transcript[-1]["observation"],
+                        "source": "react_step",
+                    })
+                identical_tool_streak = 0
+                last_tool_fp = ""
+                step += 1
+                continue
+
             obs = self._run_tool(name, args, thought=str(action.get("thought", "")))
+            tried_tools.add(name)
             history.append(f"Action: {name}({json.dumps(args, ensure_ascii=False)})")
             history.append(f"Observation: {json.dumps(obs, ensure_ascii=False)[:600]}")
             self.transcript[-1]["observation"] = obs
@@ -381,8 +499,21 @@ class Agent:
                     gap_node.gap_id, "RESOLVED",
                     resolution=f"tool:{name} succeeded in the same run",
                 )
+            # Failed acquisition: keep gap open, note failure on node if possible.
+            if (
+                gap_node is not None and self.gap_graph is not None
+                and not tool_succeeded
+                and gap_node.status not in ("RESOLVED",)
+            ):
+                # Soft status bump to ACQUIRING so wake_summary sees progress.
+                if gap_node.status in ("DETECTED", "SCOPED", "RESOLUTION_PLANNED"):
+                    try:
+                        self.gap_graph.set_status(gap_node.gap_id, "ACQUIRING")
+                    except Exception:
+                        pass
             if on_step:
                 on_step({"step": step, "action": action, "observation": obs, "source": "react_step"})
+            step += 1
         # Ran out of step budget with real observations already gathered
         # (confirmed against a real run: 11 web_search/fetch_url/run_command
         # steps on a repo-analysis task, budget exhausted before the model
@@ -390,16 +521,32 @@ class Agent:
         # throws away everything Vera actually found. One last forced
         # synthesis turn (no more tool calls allowed) salvages a real
         # answer from the transcript instead.
+        remaining = []
+        if gap_node is not None and gap_node.acquisition_methods:
+            remaining = [m for m in gap_node.acquisition_methods if m not in tried_tools]
+        still_trying_note = ""
+        if remaining:
+            still_trying_note = (
+                f" GAP still open; untried strategies were: {remaining}. "
+                "Say you are still blocked only if those cannot apply — "
+                "do NOT claim 'couldn't clone' solely from repeated identical clone failures."
+            )
+        elif gap_node is not None and self.gap_graph is not None:
+            self.gap_graph.set_status(
+                gap_node.gap_id, "BLOCKED_NO_SOURCE",
+                resolution="max steps with distinct strategies exhausted",
+            )
         synthesis_prompt = (
             "\n".join(history)
             + "\nYou are out of steps. Do not call any tool. Reply with "
               "ONLY {\"thought\": \"...\", \"final\": \"<your best answer "
               "for the user from what you found above>\"}."
+            + still_trying_note
         )
         r = self.llm(synthesis_prompt, system)
         action = _parse_action(r.get("text", "")) if r.get("ok") else None
         if action and "final" in action:
-            result = {"final": action["final"], "steps": self.max_steps,
+            result = {"final": action["final"], "steps": effective_max,
                       "source": "react_forced_synthesis", "transcript": self.transcript}
         elif r.get("ok") and (r.get("text") or "").strip():
             # Real repro: a real model can answer the synthesis prompt with
@@ -414,7 +561,7 @@ class Agent:
             # unstructured rather than silently pretending it's the same
             # shape as a normal `final`.
             partial = _extract_partial_final(r["text"])
-            result = {"final": partial if partial else r["text"].strip(), "steps": self.max_steps,
+            result = {"final": partial if partial else r["text"].strip(), "steps": effective_max,
                       "source": "react_forced_synthesis_raw", "transcript": self.transcript}
         else:
             # Genuine failure: the LLM call itself failed, or returned
@@ -422,7 +569,7 @@ class Agent:
             # (previously discarded) so this is diagnosable instead of a
             # bare "max_steps_reached" with no further information.
             result = {"final": {"error": "max_steps_reached", "llm_error": r.get("error")},
-                      "steps": self.max_steps, "source": "react", "transcript": self.transcript}
+                      "steps": effective_max, "source": "react", "transcript": self.transcript}
         if on_step:
             on_step(result)
         return result
