@@ -665,6 +665,7 @@ def serve(store_path: str) -> int:
         name: str, description: str = "", user_goal: str = "",
         available_inputs: str = "", available_tools: str = "", known_affordances: str = "",
         success_criteria: str = "", allowed_sources: str = "", constraints: str = "",
+        cognition_mode: str = "normal",
     ) -> str:
         """Milestone R2: turn an unfamiliar task (ARC-AGI-3, an unknown CLI/
         library, an unknown repository, or anything else — same entry point
@@ -674,7 +675,11 @@ def serve(store_path: str) -> int:
         unknown SHAPE (structural_matches) and one recommended next
         acquisition action. List-shaped args are comma-separated (e.g.
         allowed_sources="web,local_repository"). This tool only structures
-        the task — it never searches or acts on its own."""
+        the task — it never searches or acts on its own. Respects the same
+        normal/experiment/sleep contract as record_ui_transition (Milestone
+        S): "normal" is a guaranteed no-op, no GapNodes written."""
+        if cognition_mode == "normal":
+            return json.dumps({"ok": True, "skipped": "normal_mode"})
         descriptor = TaskDescriptor(
             name=name, description=description, user_goal=user_goal,
             available_inputs=_csv(available_inputs), available_tools=_csv(available_tools),
