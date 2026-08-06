@@ -68,7 +68,8 @@ jobs:
         run: |
           set -e
           for m in boundary_eval rewrite_eval build_failure_eval \
-                   failure_domains_eval consensus_ab_eval; do
+                   failure_domains_eval consensus_ab_eval \
+                   settings_registry_eval; do
             echo "--- $m ---"
             python -m verantyx.$m
           done

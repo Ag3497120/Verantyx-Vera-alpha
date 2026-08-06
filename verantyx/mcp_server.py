@@ -826,6 +826,51 @@ def serve(store_path: str) -> int:
                 out["verify"] = spec.verify
         return json.dumps(out, ensure_ascii=False)
 
+    # ── Settings help ─────────────────────────────────────────────────────
+    # These back the in-app support bot. Deliberately deterministic: the bot
+    # they replace was a language model holding a one-row lookup table, told
+    # in its own prompt not to invent commands — an instruction a model cannot
+    # keep when the table does not cover the question. Here "I do not have
+    # that" is a return value rather than a hope.
+
+    @mcp.tool()
+    def settings_lookup(question: str) -> str:
+        """Find which Verantyx setting a question is about.
+
+        Returns one of ANSWER (with the exact Settings tab and field),
+        UNKNOWN_NO_SETTING (no such setting — do not guess one),
+        UNKNOWN_AMBIGUOUS (several match; ask the user which). An ANSWER for
+        a GUI-only setting also carries cli_verdict=UNKNOWN_NO_CLI, which is
+        the honest form of "there is no command for this"."""
+        from .settings_registry import lookup
+        return json.dumps(lookup(question), ensure_ascii=False)
+
+    @mcp.tool()
+    def settings_search(question: str, limit: int = 8) -> str:
+        """Ranked near-matches for a settings question — use when
+        settings_lookup returns UNKNOWN_AMBIGUOUS or UNKNOWN_NO_SETTING and
+        you want to offer the user candidates instead of a dead end."""
+        from .settings_registry import search
+        return json.dumps(search(question, limit=limit), ensure_ascii=False)
+
+    @mcp.tool()
+    def list_modes() -> str:
+        """Every mode family in the IDE, in one list.
+
+        The interface shows six independent families on five screens, so each
+        one looks like the only mode switch. Each option carries `when`: the
+        situation it is the right choice for."""
+        from .settings_registry import all_modes
+        return json.dumps(all_modes(), ensure_ascii=False)
+
+    @mcp.tool()
+    def settings_guide(quickstart: bool = False) -> str:
+        """The settings guide as Markdown, generated from the same registry
+        the lookup tools read, so the document and the answers cannot drift
+        apart. `quickstart=True` returns the short first-run path."""
+        from .settings_guide import render_guide, render_quickstart
+        return render_quickstart() if quickstart else render_guide()
+
     @mcp.tool()
     def failure_stats() -> str:
         """Histogram of typed failures across all recorded UNKNOWN buckets,
