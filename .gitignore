@@ -9,3 +9,6 @@ vera_store.json
 
 # Verantyx JCross Vault (local only)
 .openclaw/jcross_vault/
+
+.venv*/
+*.egg-info/

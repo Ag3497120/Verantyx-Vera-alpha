@@ -1,0 +1,88 @@
+name: verify
+
+# Every check here is deterministic and offline: no network, no LLM, no
+# model weights. That is a property of the system under test, not a CI
+# convenience — the deterministic core is what makes "state the expectation,
+# re-run, compare" possible, and a suite that needed a model would be
+# testing the model instead.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Import every module
+        # A syntax error or a bad import in a module no suite happens to
+        # touch would otherwise only surface when a user hits that path.
+        run: |
+          python -c "
+          import importlib, pkgutil, sys, verantyx
+          bad = []
+          for m in pkgutil.iter_modules(verantyx.__path__):
+              try:
+                  importlib.import_module('verantyx.' + m.name)
+              except Exception as e:
+                  bad.append((m.name, type(e).__name__ + ': ' + str(e)[:120]))
+          for name, err in bad:
+              print('FAIL import', name, err)
+          sys.exit(1 if bad else 0)
+          "
+
+      - name: Fork suite (vera lab)
+        # The behavioural suite: every fork states its expected outcome and
+        # returns evidence. all_pass is the gate.
+        run: |
+          python -m verantyx.cli lab > lab.json
+          python -c "
+          import json, sys
+          d = json.load(open('lab.json'))
+          failed = [k for k, v in d['forks'].items() if not v]
+          print(f\"{d['n_forks'] - len(failed)}/{d['n_forks']} forks pass\")
+          for f in failed:
+              print('FAIL', f)
+          sys.exit(0 if d['all_pass'] else 1)
+          "
+
+      - name: Structural and classifier evals
+        run: |
+          set -e
+          for m in boundary_eval rewrite_eval build_failure_eval \
+                   failure_domains_eval consensus_ab_eval; do
+            echo "--- $m ---"
+            python -m verantyx.$m
+          done
+
+      - name: Failure-pack maturity contract
+        # Restated as its own step because it is the safety property, not a
+        # test: a seeded pack must never acquire the power to propose limit
+        # changes, and a pack an expert edited into an invalid state must be
+        # loud rather than silently absent.
+        run: |
+          python -c "
+          import sys
+          from verantyx.failure_domains import all_domains, load_errors, validate
+          errs = list(load_errors())
+          for d in all_domains():
+              errs += [f'{d.name}: {e}' for e in validate(d)]
+          for e in errs:
+              print('FAIL', e)
+          print(f'{len(all_domains())} packs validated')
+          sys.exit(1 if errs else 0)
+          "
+
+      - name: Upload lab results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-results
+          path: lab.json

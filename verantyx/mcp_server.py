@@ -61,6 +61,18 @@ def serve(store_path: str) -> int:
     growth = GrowthSignals.load(gpath)
     mqpath = path.with_name(path.stem + ".module_quarantine.json")
     module_quarantine = DomainModuleQuarantine.load(mqpath)
+    from .capacity_ingest import CapacityQuarantine
+    cqpath = path.with_name(path.stem + ".capacity_quarantine.json")
+    capacity_quarantine = CapacityQuarantine.load(cqpath)
+    from .pack_ingest import PackQuarantine
+    # Overlay lives beside the store, so an expert's corrections travel with
+    # their data rather than with the app bundle (which a reinstall replaces).
+    pack_overlay_dir = path.parent / "failure_packs"
+    pkpath = path.with_name(path.stem + ".pack_quarantine.json")
+    pack_quarantine = PackQuarantine.load(pkpath)
+    from .failure_domains import BUILTIN_PACK_DIR as _BPD, reload_from as _reload
+    if pack_overlay_dir.is_dir():
+        _reload([_BPD, pack_overlay_dir])
     ggpath = gap_graph_path(path)
     gap_graph = GapGraph.load(ggpath)
 
@@ -509,12 +521,367 @@ def serve(store_path: str) -> int:
         if newly_judged:
             _save_transfer_log()
 
+        # Capacity pass — the other half of the failure taxonomy. Buckets
+        # whose dominant verdict says "a limit was hit" get their own failing
+        # queries re-run at scaled limits; a limit that verifiably fixes them
+        # is queued for human approval, never applied. The re-run doubles as
+        # a check on the classification itself: a bucket a larger limit does
+        # not fix comes back "reclassify", not as a bigger number.
+        from .capacity_calibration import capacity_pass
+        from .config import VeraConfig as _VC
+        capacity = capacity_pass(
+            list(growth.buckets.values()), _VC.load(), capacity_quarantine)
+        if any(r.get("queued") for r in capacity):
+            capacity_quarantine.save(cqpath)
+
         return json.dumps(
             {"drifted_cores": drifted, "growth_candidates": candidates, "drafted": drafted,
+             "capacity": capacity,
              "gap_resolutions": gap_results,
              "transfer_outcomes_inferred": len(newly_judged)},
             ensure_ascii=False,
         )
+
+    @mcp.tool()
+    def record_build_failure(source: str, log_excerpt: str) -> str:
+        """Classify a build/CI/conversion failure into a typed verdict
+        (UNKNOWN_SIGNING / UNKNOWN_DEPENDENCY / UNKNOWN_MODEL_GEOMETRY /
+        UNKNOWN_TEST / UNKNOWN_TIMEOUT / UNKNOWN_DISK / ...) and record it
+        in the shared growth-signal store, bucketed by `source` (a stable
+        pipeline label like "xcodebuild", "cargo", "jgen_convert").
+        Recurrences then surface through failure_stats and the boundary
+        classifier like every other typed unknown. Returns the verdict and
+        the evidence line so the caller can display the diagnosis."""
+        from .build_failure import record_build_failure as _record
+        failure = _record(growth, source, log_excerpt)
+        _save_growth()
+        return json.dumps(
+            {"verdict": failure.verdict, "evidence": failure.evidence,
+             "note": failure.note},
+            ensure_ascii=False,
+        )
+
+    # Conversation context as space. One Conversation per server process,
+    # persisted beside the store — turns are knowledge, not a scrollback.
+    from .conversation import Conversation as _Conv
+    from .layer_stack import LayeredMemory as _LM
+    _conv_path = path.with_name(path.stem + ".conversation")
+    _conversation = _Conv(memory=_LM.load(_conv_path))
+
+    @mcp.tool()
+    def add_conversation_turn(speaker: str, text: str) -> str:
+        """Ingest one utterance into the conversation's SPACE (not a window).
+        Each sentence becomes a node tagged with speaker and turn index, so
+        it is retrieved by relevance rather than recency and never falls out
+        of a context window. Overflow, when it happens, freezes a layer —
+        the turn stays consultable and is reported as FROZEN, never silently
+        dropped. Returns which cores the turn touched and whether it caused
+        a layer to freeze."""
+        turn = _conversation.add_turn(speaker, text)
+        _conversation.memory.save(_conv_path)
+        return json.dumps(
+            {"turn": turn.index, "speaker": turn.speaker, "cores": turn.cores,
+             "stats": _conversation.stats()}, ensure_ascii=False)
+
+    @mcp.tool()
+    def locate_conversation_topic(topic: str) -> str:
+        """Is a topic still in context? The typed answer an LLM cannot give:
+        ACTIVE (top layer), FROZEN (overflowed to a lower layer but intact
+        and answerable), or ABSENT (never discussed). FROZEN is not lost —
+        that distinction is the point. Includes who mentioned it and in which
+        turns."""
+        return json.dumps(_conversation.locate(topic), ensure_ascii=False)
+
+    @mcp.tool()
+    def recall_conversation(query: str, carry: str = "A") -> str:
+        """Answer from the conversation's own memory across every layer,
+        oldest first (extended inference). `carry` controls whether the
+        original query rides along to later layers: A full query, B previous
+        answer only, C intent head only. B can drift and says so —
+        UNKNOWN_DRIFT rather than a confident wrong answer."""
+        return json.dumps(_conversation.recall(query, carry=carry),
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def conversation_stats() -> str:
+        """Turns, layers, total cores, speakers."""
+        return json.dumps(_conversation.stats(), ensure_ascii=False)
+
+    # Deep search over multiple sources. The arm index lives beside the
+    # store so intent gating and gap-driven follow-up survive a restart.
+    from .arm_schema import ArmIndex as _ArmIndex
+    _arm_path = path.with_name(path.stem + ".arms.json")
+    _arms = _ArmIndex.load(_arm_path)
+
+    @mcp.tool()
+    def ingest_documents(documents_json: str) -> str:
+        """Ingest several source documents about one event and PRESERVE their
+        disagreements. `documents_json` is a JSON list of
+        {"source": "...", "text": "...", "published": "..."}.
+
+        Each sentence is placed with its source attached and, where the
+        wording is polar (open/closed, safe/dangerous, passable/blocked...),
+        on the corresponding pole. Two sources that disagree therefore end
+        up on opposite poles of one aspect, which the store detects on its
+        own — unlike a summary, where the disagreement dissolves into
+        fluency. Deterministic: no LLM is involved, so the same documents
+        always yield the same report and a disputed claim stays citable."""
+        from .document_ingest import Document, ingest_documents as _ingest
+        try:
+            raw = json.loads(documents_json)
+        except json.JSONDecodeError as e:
+            return json.dumps({"error": f"documents_json is not valid JSON: {e}"},
+                              ensure_ascii=False)
+        if not isinstance(raw, list):
+            return json.dumps({"error": "documents_json must be a JSON list"},
+                              ensure_ascii=False)
+        docs = [Document(source=str(d.get("source", "unknown")),
+                         text=str(d.get("text", "")),
+                         published=str(d.get("published", "")))
+                for d in raw if isinstance(d, dict)]
+        if not store.track_provenance:
+            # Attribution is the whole point here; without provenance the
+            # report cannot say who claimed which side.
+            store.track_provenance = True
+        rep = _ingest(store, docs, arms=_arms)
+        _save()
+        _arms.save(_arm_path)
+        return json.dumps(rep.as_dict(), ensure_ascii=False)
+
+    @mcp.tool()
+    def deep_report(topic: str) -> str:
+        """What is actually known about a topic, in three UNBLENDED parts:
+
+          settled    every source that spoke agrees (with citations)
+          disputed   sources disagree — which source said which side
+          missing    a question the arm schema says should have an answer
+                     and no source gave one, each with `next_query`: the
+                     search string that would close it
+
+        `missing` is what makes this deep search rather than summarisation —
+        a typed gap is the next round's query. `confidence` is contested /
+        supported / unknown, the first thing a responder reads."""
+        from .document_ingest import deep_report as _report
+        return json.dumps(_report(store, topic, arms=_arms), ensure_ascii=False)
+
+    @mcp.tool()
+    def arm_completeness(topic: str) -> str:
+        """The six-question checklist for a topic: which arms hold knowledge
+        (support/oppose, cause/effect, general/instance) and which are empty.
+        An empty arm is a typed gap — unverified, untestable, untransferable
+        — ready to become a GapNode."""
+        return json.dumps(_arms.report(topic), ensure_ascii=False)
+
+    @mcp.tool()
+    def list_failure_domains() -> str:
+        """The registered failure-domain packs: name, maturity (verified =
+        validated against confirmed incidents; seeded = taxonomy written,
+        awaiting real incidents), the typed verdicts each can produce, and
+        each verdict's remedy (kind / owner / how it is verified). This is
+        the plugin surface of the typed-failure loop — the core is shared,
+        packs supply classification and remedy knowledge per field."""
+        from .failure_domains import all_domains, load_errors
+        out = []
+        for d in all_domains():
+            out.append({
+                "name": d.name, "maturity": d.maturity,
+                "description": d.description,
+                "editable": d.source_path is not None,
+                "source_path": d.source_path,
+                "verdicts": [
+                    {"verdict": v, "note": note,
+                     "provenance": d.provenance.get(v, "code"),
+                     "remedy_kind": d.remedies[v].kind,
+                     "remedy_owner": d.remedies[v].owner,
+                     "verify": d.remedies[v].verify,
+                     "auto_calibratable": d.remedies[v].auto_calibratable}
+                    for v, _, note in d.patterns
+                ],
+            })
+        # Load errors are part of the answer: a pack an expert edited into an
+        # invalid state must be visible, not merely absent.
+        return json.dumps({"packs": out, "load_errors": load_errors()},
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def propose_failure_verdict(
+        pack: str, verdict: str, note: str, positive_examples: str,
+        negative_examples: str = "", remedy_kind: str = "fix_content",
+        remedy_owner: str = "", verify: str = "rerun",
+        remedy_note: str = "", author: str = "unknown",
+    ) -> str:
+        """Add a new typed verdict to a failure pack FROM EXAMPLES, not from
+        a regular expression. Paste real failure lines (one per line in
+        positive_examples; optional counter-examples in negative_examples)
+        and a pattern is proposed from what they share.
+
+        The proposal is refused, with the specific counter-example, if it
+        matches a negative, misses a positive, or breaks the pack's
+        maturity contract; existing fixtures it would also claim are
+        reported as `shadowed_fixtures`. Nothing is written — the returned
+        proposed_pack goes to review. `author` is stamped into provenance
+        as human:<author>, which is how a claude-seeded taxonomy stops
+        claiming to be mine once a domain expert has corrected it."""
+        from .pack_authoring import propose_verdict
+        pos = [l for l in positive_examples.split("\n") if l.strip()]
+        neg = [l for l in negative_examples.split("\n") if l.strip()]
+        out = propose_verdict(
+            pack_name=pack, verdict=verdict, note=note,
+            positives=pos, negatives=neg,
+            remedy_kind=remedy_kind, remedy_owner=remedy_owner or pack,
+            verify=verify, remedy_note=remedy_note, author=author)
+        # Only a proposal that passes every check reaches the queue. A
+        # refused one is returned with its counter-example so the author can
+        # fix it, and is NOT queued -- a review queue that fills with things
+        # a reviewer must reject is a queue a reviewer stops reading.
+        if out.get("ok"):
+            entry = pack_quarantine.propose(
+                pack_name=pack, verdict=verdict, proposed=out["proposed_pack"],
+                positives=pos, negatives=neg, author=author,
+                report={"pattern": out["pattern"],
+                        "pattern_was_generated": out["pattern_was_generated"],
+                        "shadowed_fixtures": out["shadowed_fixtures"]})
+            out["queued"] = entry is not None
+            if entry is not None:
+                pack_quarantine.save(pkpath)
+            else:
+                out["queued_note"] = "an identical proposal is already pending"
+            out.pop("proposed_pack", None)  # the queue holds it; keep the reply small
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def list_pending_pack_verdicts() -> str:
+        """Proposed failure-pack verdicts awaiting review. Each carries the
+        real log examples the author pasted, the generated pattern, and any
+        existing fixtures it would also claim -- the evidence a reviewer
+        needs. Use the index with accept/reject_pack_verdict."""
+        pend = pack_quarantine.pending()
+        return json.dumps([
+            {"index": i, "pack_name": e.pack_name, "verdict": e.verdict,
+             "author": e.author, "positives": e.positives,
+             "negatives": e.negatives, "report": e.report, "ts": e.ts}
+            for i, e in enumerate(pend)
+        ], ensure_ascii=False)
+
+    @mcp.tool()
+    def accept_pack_verdict(index: int) -> str:
+        """Write one pending verdict into the overlay pack directory and
+        reload the registry. The ONLY path from a proposal to a live
+        classifier. Re-validates first: a proposal can go stale if the pack
+        changed since, and writing one the loader would reject leaves the
+        expert with a file that silently does nothing."""
+        out = pack_quarantine.accept(index, pack_overlay_dir)
+        pack_quarantine.save(pkpath)
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def reject_pack_verdict(index: int) -> str:
+        """Discard one pending verdict proposal."""
+        out = pack_quarantine.reject(index)
+        pack_quarantine.save(pkpath)
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def test_failure_pack(pack: str, log_samples: str) -> str:
+        """Run a pack over real log samples (one per line) and report what it
+        typed, with example lines per verdict. The number that matters is
+        `coverage`: a taxonomy that types 3 of 200 real failures is not yet
+        a taxonomy of that field, however tidy it reads. Use before asking
+        for a seeded pack to be trusted."""
+        from .pack_authoring import test_pack_against_logs
+        logs = [l for l in log_samples.split("\n") if l.strip()]
+        return json.dumps(test_pack_against_logs(pack, logs), ensure_ascii=False)
+
+    @mcp.tool()
+    def export_failure_pack(pack: str) -> str:
+        """The pack as editable JSON — the exact on-disk form. Edit it and
+        save to the overlay directory (VERA_FAILURE_PACKS_DIR) to override
+        the shipped version; invalid edits are refused at load and reported
+        by list_failure_domains rather than silently dropped."""
+        from .failure_domains import get, pack_to_dict
+        dom = get(pack)
+        if dom is None:
+            return json.dumps({"error": f"unknown pack: {pack}"}, ensure_ascii=False)
+        return json.dumps(pack_to_dict(dom), ensure_ascii=False, indent=1)
+
+    @mcp.tool()
+    def record_typed_failure(domain: str, source: str, evidence: str) -> str:
+        """Classify failure evidence through the named domain pack (see
+        list_failure_domains) and record the typed verdict in the shared
+        growth-signal store, bucketed by domain:source. The generic sibling
+        of record_build_failure — use that for build logs, this for any
+        other registered field (game_qa, search_zero, data_pipeline,
+        support_kb, soc_telemetry, decision_explain, math). Returns the
+        verdict, its remedy, and the pack's maturity — a "seeded" verdict
+        is a taxonomy match, not yet an incident-validated diagnosis."""
+        from .failure_domains import get, record_typed_failure as _record
+        out = _record(growth, domain, source, evidence)
+        if "error" not in out:
+            _save_growth()
+            dom = get(domain)
+            spec = dom.remedies.get(out["verdict"]) if dom else None
+            if spec is not None:
+                out["remedy_kind"] = spec.kind
+                out["remedy_owner"] = spec.owner
+                out["verify"] = spec.verify
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def failure_stats() -> str:
+        """Histogram of typed failures across all recorded UNKNOWN buckets,
+        plus what the boundary detector currently makes of each bucket.
+        This is the 'which kind of failure dominates' view: verdict counts
+        say what keeps going wrong, classifications say what the system
+        thinks should be done about it (needs_more_facts /
+        needs_more_capacity / growth_candidate / reject_open_domain)."""
+        from . import boundary as _boundary
+        verdict_hist: dict = {}
+        class_hist: dict = {}
+        rows = []
+        for bucket in growth.buckets.values():
+            for v, n in bucket.verdict_counts.items():
+                verdict_hist[v] = verdict_hist.get(v, 0) + n
+            cls = _boundary.classify(bucket).classification
+            class_hist[cls] = class_hist.get(cls, 0) + 1
+            rows.append({"normalized": bucket.normalized,
+                         "total": bucket.total(),
+                         "dominant": bucket.dominant_verdict(),
+                         "classification": cls})
+        rows.sort(key=lambda r: -r["total"])
+        return json.dumps(
+            {"verdicts": verdict_hist, "classifications": class_hist,
+             "buckets": rows[:50]},
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def list_pending_capacity_limits() -> str:
+        """List calibrated limit increases awaiting human review. Each entry
+        carries the probe evidence: which failing queries were re-run, at
+        which multipliers, and that every one answered. Use the index with
+        accept_capacity_limit / reject_capacity_limit."""
+        pend = capacity_quarantine.pending()
+        return json.dumps(
+            [{"index": i, **e.as_dict()} for i, e in enumerate(pend)],
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def accept_capacity_limit(index: int) -> str:
+        """Apply one pending limit increase (by index) to VeraConfig. The
+        ONLY path by which a proposed limit becomes a running limit — the
+        math domain reads config per query, so it takes effect immediately,
+        no restart."""
+        out = capacity_quarantine.accept(index)
+        capacity_quarantine.save(cqpath)
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def reject_capacity_limit(index: int) -> str:
+        """Discard one pending limit increase (by index)."""
+        out = capacity_quarantine.reject(index)
+        capacity_quarantine.save(cqpath)
+        return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()
     def propose_domain_module(name: str, source_code: str, candidate_summary: str) -> str:

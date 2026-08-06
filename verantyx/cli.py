@@ -179,9 +179,23 @@ def cmd_heartbeat(args) -> int:
         else:
             drafted_out.append({"normalized": bucket.normalized, "ok": False, "verify_reports": report_dicts})
 
+    # Capacity pass — same helper the MCP heartbeat uses, so the CLI and
+    # server cannot drift apart in what a heartbeat means.
+    from .capacity_calibration import capacity_pass
+    from .capacity_ingest import CapacityQuarantine
+    from .config import VeraConfig
+
+    cqpath = store_path.with_name(store_path.stem + ".capacity_quarantine.json")
+    capacity_quarantine = CapacityQuarantine.load(cqpath)
+    capacity = capacity_pass(
+        list(growth.buckets.values()), VeraConfig.load(), capacity_quarantine)
+    if any(r.get("queued") for r in capacity):
+        capacity_quarantine.save(cqpath)
+
     growth.save(gpath)
     module_quarantine.save(mqpath)
-    _print({"drifted_cores": drifted, "growth_candidates": candidates, "drafted": drafted_out})
+    _print({"drifted_cores": drifted, "growth_candidates": candidates,
+            "drafted": drafted_out, "capacity": capacity})
     return 0
 
 
@@ -357,6 +371,8 @@ def cmd_code(args) -> int:
 
 def cmd_lab(args) -> int:
     from .consensus_forks import all_consensus_forks
+    from .cross_geometry_forks import all_cross_geometry_forks
+    from .structure_forks import all_structure_forks
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
     from .agent_forks import all_agent_forks
     from .ai_ingest_forks import all_ai_ingest_forks
@@ -369,6 +385,8 @@ def cmd_lab(args) -> int:
 
     experiments = (
         all_consensus_forks()
+        + all_cross_geometry_forks()
+        + all_structure_forks()
         + all_pour_forks()
         + all_math_sim_forks()
         + all_kripke_rewrite_forks()

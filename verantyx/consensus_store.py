@@ -195,6 +195,12 @@ def consensus_over_store(
         )
     _apply_sense_selection(store, out, query)
     _apply_coverage_gate(out, query)
+    # Polarity gate — inert by construction on stores that never ingested
+    # polar keyed facets (every store before polarity.ingest_polar existed),
+    # so wiring it unconditionally preserves historical behaviour while any
+    # store that DOES carry poles gets contradiction honesty for free.
+    from .polarity import apply_polarity_gate
+    apply_polarity_gate(store, out, query)
     return out
 
 

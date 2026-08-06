@@ -5,7 +5,11 @@ a = Analysis(
     ['vera_entry.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # The failure-domain packs are DATA now, not code. Without this the
+    # frozen binary would load two built-in packs and silently lose the
+    # twelve JSON ones — a failure that looks like 'the field packs were
+    # never written' rather than 'they were not shipped'.
+    datas=[('verantyx/failure_packs', 'verantyx/failure_packs')],
     hiddenimports=['mcp', 'mcp.server.fastmcp'],
     hookspath=[],
     hooksconfig={},
