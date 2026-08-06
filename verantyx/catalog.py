@@ -161,6 +161,7 @@ def build_catalog(paths: List[str], *, top: int = 200,
         else:
             rep.documents += one.documents
             rep.sentences += one.sentences
+            rep.sentences_seen += one.sentences_seen
             rep.cores.extend(one.cores)
             rep.polar_claims += one.polar_claims
             rep.per_source.update(one.per_source)
@@ -212,7 +213,11 @@ def build_catalog(paths: List[str], *, top: int = 200,
     # not understood.
     placed = rep.sentences
     contested_topics = sum(1 for e in entries if e.contested)
+    from .intake_quality import assess
+    intake = assess(store, rep, duplicates=len(duplicates), files=res["loaded"])
+
     coverage = {
+        "intake": intake,
         "sentences_placed": placed,
         "topics_total": len(store.crosses),
         "topics_catalogued": len(entries),
@@ -261,6 +266,17 @@ def render_catalog(catalog: Catalog, *, limit: int = 100) -> str:
         f"changed, not the method.",
         "",
     ]
+    intake = catalog.coverage.get("intake") or {}
+    if intake:
+        v = intake.get("verdict", "")
+        out += [f"Intake health: **{v}**"
+                + ("" if v == "INTAKE_OK" else
+                   " — this catalogue should be read with the findings below in mind"),
+                ""]
+        for f in intake.get("findings", []):
+            out += [f"> {f['verdict']}: {f['meaning']} "
+                    f"(measured {f.get('measured', '—')})", ""]
+
     if m.skipped:
         out += [f"{len(m.skipped)} file(s) were not read:", ""]
         for s in m.skipped[:10]:
@@ -360,9 +376,13 @@ DATA_SUFFIXES = {".json", ".csv", ".tsv"}
 #: Skipped files are named rather than dropped, so this choice stays visible.
 MAX_DOCUMENT_BYTES = 12_000_000
 
+#: Universal machine-artifact names only. An earlier version also listed
+#: this project's own store files (vera_store, growth_signals, …) — overfit
+#: residue: every one of them is a .json or .jcross and the prose-suffix
+#: restriction already excludes them on ANY corpus. Rules that encode one
+#: corpus's filenames are exactly what a general intake must not contain.
 _MACHINE_NAMES = re.compile(
-    r"(package-lock|yarn\.lock|pnpm-lock|Cargo\.lock|\.min\.|"
-    r"vera_store|growth_signals|gap_graph|_quarantine|l25_map)")
+    r"(package-lock|yarn\.lock|pnpm-lock|Cargo\.lock|\.min\.)")
 
 
 def collect(roots: List[str], *, exclude: Optional[List[str]] = None,

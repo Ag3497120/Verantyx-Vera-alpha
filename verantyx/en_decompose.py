@@ -780,6 +780,30 @@ def split_sentences(text: str) -> List[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def tag_roles(tokens) -> list:
+    """Role tags with one context rule on top of the per-token guess.
+
+    A token directly after a determiner whose next token is an auxiliary is
+    the head noun of its phrase — "the observatory is", "an animal was" —
+    whatever its suffix suggests. The suffix guesser reads -ory/-ary/-al/-ic
+    as adjectival, which is right for advisory and mandatory and wrong for a
+    large family of ordinary nouns: observatory, laboratory, library,
+    hospital, clinic, animal, capital. The miss was invisible for as long as
+    the test vocabulary happened to avoid that family, and surfaced the
+    first time a generalization corpus used fresh nouns — "The observatory
+    is closed" filed its claim under the attribution tag's noun instead.
+
+    Determiner position is grammar, not vocabulary, which is what makes this
+    a fix rather than another exception list.
+    """
+    roles = [tag_role(t) for t in tokens]
+    for i, role in enumerate(roles):
+        if (role == "ADJ" and i > 0 and roles[i - 1] == "DET"
+                and (i + 1 == len(roles) or roles[i + 1] in ("AUX", "VERB"))):
+            roles[i] = "NOUN"
+    return roles
+
+
 def tag_role(tok: str) -> str:
     """Coarse POS/role tag for a single casefolded token."""
     t = tok.casefold()
@@ -868,7 +892,7 @@ def _head_nouns(tokens: Sequence[str], roles: Sequence[str]) -> List[str]:
 
 def _decompose_rest(rest: str, *, pattern: str) -> DecomposeRecord:
     tokens = tokenize(rest)
-    roles = [tag_role(t) for t in tokens]
+    roles = tag_roles(tokens)
     content = _content_from(tokens, roles)
     heads = _head_nouns(tokens, roles)
     if not heads and content:
@@ -911,7 +935,7 @@ def decompose(text: str) -> DecomposeRecord:
             return rec
 
     tokens = tokenize(s)
-    roles = [tag_role(t) for t in tokens]
+    roles = tag_roles(tokens)
     content = _content_from(tokens, roles)
     heads = _head_nouns(tokens, roles)
     if not tokens:
@@ -994,7 +1018,7 @@ def classify_sentence(text: str) -> ClassifiedSentence:
     rec = decompose(text)
     # Full-sentence tokens for structure roles (WH wrappers keep DET/AUX/WH)
     full_tokens = tokenize(text)
-    full_roles = [tag_role(t) for t in full_tokens]
+    full_roles = tag_roles(full_tokens)
     tagged: List[ClassifiedToken] = []
     for tok, role in zip(full_tokens, full_roles):
         if is_function_role(role):

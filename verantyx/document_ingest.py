@@ -68,6 +68,11 @@ class Document:
 class IngestReport:
     documents: int = 0
     sentences: int = 0
+    #: Sentences the splitter produced, before any filter. sentences/seen is
+    #: the coverage ratio — the first number to look at on an unfamiliar
+    #: corpus, because a pipeline that silently drops most of its input
+    #: produces a store that looks fine and holds almost nothing.
+    sentences_seen: int = 0
     cores: List[str] = field(default_factory=list)
     polar_claims: int = 0
     per_source: Dict[str, int] = field(default_factory=dict)
@@ -78,6 +83,7 @@ class IngestReport:
 
     def as_dict(self) -> Dict[str, Any]:
         return {"documents": self.documents, "sentences": self.sentences,
+                "sentences_seen": self.sentences_seen,
                 "cores": sorted(set(self.cores)), "polar_claims": self.polar_claims,
                 "per_source": self.per_source, "core_lang": self.core_lang}
 
@@ -147,6 +153,9 @@ def ingest_documents(store: CrossStore, docs: List[Document],
         count = 0
         for raw in _SENT.split(doc.text or ""):
             s = raw.strip()
+            if not s:
+                continue
+            rep.sentences_seen += 1
             if len(s) < _min_chars(s):
                 continue
             tagged = f"{s} (reported by {doc.source})"
