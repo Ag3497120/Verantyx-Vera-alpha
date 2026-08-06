@@ -196,6 +196,32 @@ def main() -> int:
         failures.append("composed sentence with no stored backing")
     print()
 
+    # -- 4c. English prepositions must not read as state claims -------------
+    # From the first real-corpus run: this project's own 12 documents produced
+    # one contradiction across 251 cores and it was false — "corpus ON top"
+    # against "trade-OFF". Precision 0 of 1 on the only hit there was.
+    from .polarity import detect as detect_en
+    prepositions = ["pour a second corpus on top and counts merge",
+                    "same trade-off as any personal-secret scheme",
+                    "based on the store contents"]
+    bad = [t for t in prepositions if detect_en(t)]
+    ok = not bad
+    print(f"[{'ok  ' if ok else 'FAIL'}] on/off as prepositions produce no pole")
+    for b in bad:
+        print(f"        invented: {b} -> {detect_en(b)}")
+    if not ok:
+        failures.append("english preposition false positive")
+
+    states = [("the switch is on", "on"), ("the light was off", "off"),
+              ("turned off the feature", "off")]
+    missed = [t for t, v in states
+              if not any(val == v for _a, val, _p in detect_en(t))]
+    ok = not missed
+    print(f"[{'ok  ' if ok else 'FAIL'}] real on/off state claims still detected")
+    if not ok:
+        failures.append(f"english copula recall: {missed}")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

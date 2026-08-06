@@ -85,6 +85,20 @@ _JA_ALIASES: Dict[str, str] = {
 #: not a preceding word, so the English negator pattern cannot see it.
 _JA_NEGATED = re.compile(r"(.{2,6}?)(?:では)?(?:あり)?(?:ませ|な)ん?[^あ-ん]*?(?:ない|ません)")
 
+#: English terms that are also ordinary prepositions or parts of hyphenated
+#: words, and so need a copula in front to be a claim about a state.
+#:
+#: Measured, not guessed. Ingesting this project's own 12 documents produced
+#: exactly one contradiction across 251 cores, and it was false: "pour a
+#: second corpus ON top" against "trade-OFF", neither of which says anything
+#: is on or off. Precision was 0 of 1. The Japanese side already had a guard
+#: for the same class of error (a polar term swallowed by a compound); the
+#: English side had none.
+_REQUIRES_COPULA = {"on", "off"}
+_COPULA_BEFORE = re.compile(
+    r"\b(?:is|are|was|were|be|been|being|stays?|remains?|turned)\s+$",
+    re.IGNORECASE)
+
 _NEGATORS = re.compile(r"\b(not|never|no longer|isn't|aren't|wasn't|weren't)\s+(\w+)",
                        re.IGNORECASE)
 
@@ -204,9 +218,13 @@ def detect(sentence: str) -> List[Tuple[str, str, str]]:
     out: List[Tuple[str, str, str]] = []
     text = (sentence or "").lower()
     negated: Set[str] = {m.group(2) for m in _NEGATORS.finditer(text)}
-    for word in re.findall(r"[a-z']+", text):
+    for m in re.finditer(r"[a-z']+", text):
+        word = m.group(0)
         hit = _ASPECT_OF.get(word)
         if hit is None:
+            continue
+        if word in _REQUIRES_COPULA and not _COPULA_BEFORE.search(text[:m.start()]):
+            # "on top of", "trade-off" — the word is present, the claim is not.
             continue
         aspect, pol = hit
         if word in negated:
