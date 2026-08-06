@@ -70,6 +70,25 @@ ANTONYM_PAIRS_JA: List[Tuple[str, str]] = [
     ("使用可能", "使用不可"),
     ("復旧", "断水"),
     ("受付中", "受付終了"),
+    # Reliability-domain pairs. Every member was chosen against the
+    # compound-noun guard: 運行状況, 有効期限, 無効化, 開館時間 all continue
+    # with kanji and are therefore rejected as compounds, while the bare
+    # predicative uses (運行しています, 有効です) survive.
+    ("運行", "運休"),
+    ("有効", "無効"),
+    ("満室", "空室"),
+]
+
+#: Terms that join an EXISTING aspect rather than founding their own.
+#: 開館/閉館 describe the same underlying state as 開設/閉鎖 — whether the
+#: facility is open — and a corpus really does say 「開館しております」 in one
+#: source and 「閉鎖されました」 in another about one building. With separate
+#: aspect keys those two poles never collide and a genuine real-world
+#: contradiction is structurally invisible; the planted-truth suite caught
+#: exactly that (tier B Japanese recall fell to zero through this seam).
+_JA_ASPECT_JOIN: List[Tuple[str, str, str]] = [
+    ("開館", "開設", "+"),
+    ("閉館", "開設", "-"),
 ]
 
 #: Inflected forms that mean the same pole as a listed term. Kept separate so
@@ -95,7 +114,7 @@ _JA_ALIASES: Dict[str, str] = {
 _JA_NEG_AFTER = re.compile(
     r"^(?:さ)?(?:では|じゃ)?(?:あり)?ません"
     r"|^(?:では|じゃ)?ない"
-    r"|^(?:して|されて|できて)?(?:い)?(?:ない|ません)"
+    r"|^(?:して|されて|できて)?(?:い|おり)?(?:ない|ません)"
     r"|^できない|^できません"
 )
 
@@ -125,6 +144,8 @@ _ASPECT_OF_JA: Dict[str, Tuple[str, str]] = {}
 for _pos, _neg in ANTONYM_PAIRS_JA:
     _ASPECT_OF_JA[_pos] = (_pos, "+")
     _ASPECT_OF_JA[_neg] = (_pos, "-")
+for _term, _aspect, _pol in _JA_ASPECT_JOIN:
+    _ASPECT_OF_JA[_term] = (_aspect, _pol)
 
 #: Longest first, so 使用可能 is matched before 使用不可's shorter neighbours
 #: and 受付終了 is never read as 受付中 plus noise.
@@ -288,13 +309,31 @@ def subject_is_core(sentence: str, core: str, word: str,
     # unavailable" still matched: `sandbox` … `is unavailable`, with a whole
     # other subject in between. Commas, conjunctions and subordinators are
     # where a new subject gets introduced, so the span stops at them.
+    # Between the copula and the state word, two kinds of material are
+    # grammatical and claim-preserving, and both come from the tier B
+    # measurement (recall was 0% on English passives and adverbs while
+    # Japanese passed):
+    #
+    #   adverbs        "remains fully open", "is still closed", "was
+    #                  completely unavailable" — closed by FORM (-ly) plus
+    #                  the handful of common adverbs that lack the suffix.
+    #   small-clause   "was reported closed", "is considered dangerous" —
+    #   participles    verbs of report and judgement whose complement is a
+    #                  predicate over the SUBJECT. A closed class: adding an
+    #                  arbitrary verb here would let "was painted closed"
+    #                  through, so only verbs whose grammar guarantees the
+    #                  attachment are listed.
+    _mid = (r"(?:(?:\w+ly|still|now|again|already|once|long|almost|fully)\s+)*"
+            r"(?:(?:reported|declared|confirmed|considered|deemed|marked|"
+            r"found|kept|left|ruled|judged|presumed)\s+)?"
+            r"(?:(?:\w+ly|still|now|again)\s+)*")
     pat = re.compile(
         r"\b" + re.escape(core.replace("_", " "))
         + r"\b(?:(?!\b(?:but|and|or|if|when|while|unless|because|though|"
           r"although|which|that|where)\b)[^.,;:()\[\]])"
           r"{0,32}?\s*\b"
         r"(?:is|are|was|were|be|been|being|becomes?|became|remains?|stays?|"
-        r"turned|seems?|appears?)\s+(?:not\s+|no\s+longer\s+)?"
+        r"turned|seems?|appears?)\s+(?:not\s+|no\s+longer\s+)?" + _mid
         + re.escape(word) + r"\b", re.IGNORECASE)
     return bool(pat.search(text))
 

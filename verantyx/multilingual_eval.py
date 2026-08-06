@@ -54,6 +54,12 @@ CONTROLS: List[str] = [
     "復旧作業の説明会を開催します。",
     "危険物取扱者の資格が必要です。",
     "通行止標識を設置。",
+    # The reliability-vocabulary pairs ride the same guard; each of these
+    # contains a pair member inside a compound and must stay silent.
+    "運行状況を確認してください。",
+    "有効期限は明日までです。",
+    "無効化の手順を説明します。",
+    "開館時間は9時です。",
 ]
 
 #: (sentence, expected aspect, expected value)
@@ -65,6 +71,11 @@ POLAR: List[tuple] = [
     ("この区域は危険です。", "安全", "危険"),
     ("水道は復旧しました。", "復旧", "復旧"),
     ("受付終了しました。", "受付中", "受付終了"),
+    ("山手線は運休です。", "運行", "運休"),
+    ("このパスは無効です。", "有効", "無効"),
+    ("当館は閉館しております。", "開設", "閉館"),
+    # Humble-register negation: 〜しておりません flips the pole.
+    ("当館は開館しておりません。", "開設", "not_開館"),
 ]
 
 

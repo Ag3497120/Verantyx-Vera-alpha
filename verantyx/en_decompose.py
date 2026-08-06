@@ -823,11 +823,24 @@ def tag_role(tok: str) -> str:
         return "PART"
     if t in _ADV_COMMON or t.endswith("ly"):
         return "ADV"
+    if t in _COPULAR_VERBS:
+        # Copular and linking verbs, a closed class. Without this "remains"
+        # fell through to the noun default (no -ing/-ed/-ate ending), so
+        # "The observatory remains open" never triggered the determiner rule
+        # and the subject was mistagged ADJ again.
+        return "VERB"
     if t in _ADJ_COMMON or _looks_adj(t):
         return "ADJ"
     if t in _VERB_COMMON or _looks_verb(t):
         return "VERB"
     return "NOUN"  # residual content default
+
+
+_COPULAR_VERBS = frozenset({
+    "remains", "remained", "remain", "stays", "stayed", "stay",
+    "seems", "seemed", "seem", "appears", "appeared", "appear",
+    "becomes", "became", "become", "looks", "looked", "sounds", "sounded",
+})
 
 
 def _looks_adj(t: str) -> bool:

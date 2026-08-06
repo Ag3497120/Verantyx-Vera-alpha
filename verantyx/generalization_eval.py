@@ -56,12 +56,22 @@ _JA_NOUNS = ["水族館", "温室", "天文台", "醸造所", "灯台"]
 _EN_TIER_A = ("The {n} is open.", "The {n} is closed.")
 _JA_TIER_A = ("{n}は開設されました。", "{n}は閉鎖されました。")
 
-#: Harder phrasings of the same opposition — passive, adverbs, formal
-#: register. What the wild actually writes.
-_EN_TIER_B = ("The {n} remains fully open today.",
-              "The {n} was reported closed by staff.")
-_JA_TIER_B = ("{n}は本日も開設されたままです。",
-              "{n}につきましては閉鎖されましたのでご注意ください。")
+#: Once tier B, promoted after the fixes they motivated: adverbs between the
+#: copula and the state ("remains fully open"), small-clause participles
+#: ("was reported closed"), and Japanese formal topic marking
+#: (「につきましては」). Promotion is the tier system working as designed —
+#: a form the grammar now covers is a regression if it ever misses again.
+_EN_TIER_A2 = ("The {n} remains fully open today.",
+               "The {n} was reported closed by staff.")
+_JA_TIER_A2 = ("{n}は本日も開設されたままです。",
+               "{n}につきましては閉鎖されましたのでご注意ください。")
+
+#: The new frontier — quotative report, humble keigo, and negation scoped
+#: inside a longer predicate. What the wild writes when it is being careful.
+_EN_TIER_B = ("Staff confirmed that the {n} has been open since spring.",
+              "According to the notice, the {n} is closed indefinitely.")
+_JA_TIER_B = ("{n}は開館しておりますのでご利用いただけます。",
+              "{n}が閉鎖されたとの報告が寄せられています。")
 
 #: Traps: polar words present, no claim made. Each is a class of false
 #: positive that development actually produced, rephrased onto neutral nouns.
@@ -90,14 +100,22 @@ def _corpus() -> Tuple[List[Document], List[str], List[str]]:
     """
     a_lines, b_lines = [], []
     tier_a, tier_b = [], []
-    for n in _EN_NOUNS[:3]:
+    for n in _EN_NOUNS[:2]:
         a_lines.append(_EN_TIER_A[0].format(n=n))
         b_lines.append(_EN_TIER_A[1].format(n=n))
         tier_a.append(n)
-    for n in _JA_NOUNS[:3]:
+    for n in _JA_NOUNS[:2]:
         a_lines.append(_JA_TIER_A[0].format(n=n))
         b_lines.append(_JA_TIER_A[1].format(n=n))
         tier_a.append(n)
+    # The promoted forms ride the third noun of each language, so canonical
+    # and promoted shapes are asserted on disjoint topics.
+    a_lines.append(_EN_TIER_A2[0].format(n=_EN_NOUNS[2]))
+    b_lines.append(_EN_TIER_A2[1].format(n=_EN_NOUNS[2]))
+    tier_a.append(_EN_NOUNS[2])
+    a_lines.append(_JA_TIER_A2[0].format(n=_JA_NOUNS[2]))
+    b_lines.append(_JA_TIER_A2[1].format(n=_JA_NOUNS[2]))
+    tier_a.append(_JA_NOUNS[2])
     for n in _EN_NOUNS[3:]:
         a_lines.append(_EN_TIER_B[0].format(n=n))
         b_lines.append(_EN_TIER_B[1].format(n=n))
