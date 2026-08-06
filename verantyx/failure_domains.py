@@ -386,6 +386,11 @@ register(FailureDomain(
                 "(xcodebuild, cargo, jgen_forge, dyld).",
     patterns=list(_BUILD_PATTERNS),
     remedies={
+        "UNKNOWN_ENTITLEMENTS": RemedySpec(
+            kind="fix_content", owner="entitlements plist", verify="rerun",
+            note="AMFI parses the raw XML while Xcode normalises it first, so "
+                 "this reproduces only in the packaging path — check the plist "
+                 "is well-formed, including no double hyphen inside a comment"),
         "UNKNOWN_SIGNING": RemedySpec(
             kind="fix_code", owner="release pipeline", verify="rerun",
             note="re-sign after any binary swap; ditto does not preserve "
@@ -422,6 +427,13 @@ register(FailureDomain(
         Fixture("GDN geometry refusal", "UNKNOWN_MODEL_GEOMETRY",
                 "refusing to load — this is a hybrid (Gated DeltaNet) model, "
                 "but the sidecar names none of ssm_dt_rank / ssm_n_group",
+                "confirmed"),
+        # Third anchor because this verdict is the newest and the one the
+        # classifier itself asked for: it returned UNKNOWN_BUILD_UNCLASSIFIED
+        # on the real log before the pattern existed.
+        Fixture("AMFI entitlements parse", "UNKNOWN_ENTITLEMENTS",
+                "Failed to parse entitlements: AMFIUnserializeXML: "
+                "syntax error near line 20",
                 "confirmed"),
     ],
 ))

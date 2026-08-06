@@ -32,6 +32,20 @@ from typing import List, Optional, Tuple
 
 # (verdict, compiled_pattern, note) — first match wins, order is meaningful.
 _PATTERNS: List[Tuple[str, "re.Pattern[str]", str]] = [
+    # A malformed entitlements plist, which is NOT a signing-identity problem
+    # even though it surfaces during signing. codesign hands the file to AMFI,
+    # whose parser is stricter than Xcode's: Xcode normalises the plist first,
+    # so a file that builds locally can still be rejected by a packaging
+    # script that passes the raw XML through.
+    #
+    # Above UNKNOWN_SIGNING on purpose. The remedy is to edit a plist, not to
+    # touch a certificate or a Team ID, and a fuller log — where codesign then
+    # reports its own failure — would otherwise be typed as generic signing
+    # and send the reader to the wrong file entirely.
+    ("UNKNOWN_ENTITLEMENTS", re.compile(
+        r"Failed to parse entitlements|AMFIUnserializeXML|"
+        r"entitlements sign failed",
+        re.IGNORECASE), "entitlements plist malformed — AMFI rejected it"),
     # Signing / notarisation. Two real shapes from this project: xcodebuild's
     # CodeSign step refusing an unsigned subcomponent (a Git-LFS pointer file
     # embedded as an executable), and dyld refusing a dylib whose signature
