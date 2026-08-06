@@ -233,7 +233,19 @@ def load_path(path: str, source: Optional[str] = None) -> Dict[str, Any]:
             text = _from_docx(p)
         else:
             raw = p.read_text(encoding="utf-8", errors="replace")
-            if suffix in {".md", ".markdown"}:
+            if suffix in {".md", ".markdown", ".txt", ".log", ".rst"}:
+                # Plain-text notes get the same cleaning as Markdown.
+                # Measured on a 107,752-line notes file that is nominally
+                # .txt but full of markdown syntax and pasted code: read
+                # raw, its top "topic" was `py` (1,471 mentions), with
+                # `json` and `com` close behind; cleaned, all three vanish
+                # and the real topics (ステップ, 投稿, 実装…) keep their
+                # counts. On genuinely plain prose every one of these
+                # patterns is a no-op except the path/URL strippers, which
+                # are exactly what prose wants stripped. The known cost:
+                # indented prose paragraphs are treated as code blocks and
+                # dropped — the module's standing trade, a lost sentence
+                # over a corpus-wide fake topic.
                 text = _from_markdown(raw)
             elif suffix in {".html", ".htm"}:
                 text = _from_html(raw)

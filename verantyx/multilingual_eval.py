@@ -336,6 +336,37 @@ def main() -> int:
             failures.append("entry language labels")
     print()
 
+    # -- 4f. Duplicates count once; .txt gets the same cleaning as .md ------
+    # Measured: 1,588 of 2,633 files in the real corpus were byte-identical
+    # copies living in a second repository checkout, doubling every ranking
+    # signal. And a 107,752-line .txt notes file read raw contributed `py`
+    # (1,471 mentions) as its top topic — the file is nominally plain text
+    # and actually full of markdown and pasted code.
+    with tempfile.TemporaryDirectory() as td3:
+        root3 = Path(td3)
+        (root3 / "a.txt").write_text(
+            "設計の方針を説明します。\n```python\nimport json\n"
+            "def parse(x):\n    return json.loads(x)\n```\n"
+            "構造は決定論的であるべきです。", encoding="utf-8")
+        (root3 / "b.txt").write_text(  # byte-identical copy of a
+            (root3 / "a.txt").read_text(), encoding="utf-8")
+        cat3 = build_catalog([str(root3 / "a.txt"), str(root3 / "b.txt")])
+        dups = [x for x in cat3.manifest.skipped
+                if x.get("verdict") == "DUPLICATE"]
+        ok = len(dups) == 1 and cat3.manifest.files == 2
+        print(f"[{'ok  ' if ok else 'FAIL'}] identical files count once, and "
+              f"the duplicate is named in the manifest")
+        if not ok:
+            failures.append("dedupe")
+        topics3 = {e.topic for e in cat3.entries}
+        ok = "json" not in topics3 and "parse" not in topics3
+        print(f"[{'ok  ' if ok else 'FAIL'}] pasted code inside a .txt file "
+              f"does not become a topic")
+        if not ok:
+            print(f"        topics: {sorted(topics3)}")
+            failures.append("txt cleaning")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

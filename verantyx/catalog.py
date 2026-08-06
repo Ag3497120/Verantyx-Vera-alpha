@@ -119,7 +119,22 @@ def build_catalog(paths: List[str], *, top: int = 200,
                   facets_per_topic: int = 10) -> Catalog:
     """Read the files, place the sentences, and report what is in there."""
     res = load_paths(paths)
-    docs: List[Document] = res["documents"]
+
+    # Content-level dedupe. The corpus has whole files duplicated across
+    # repository copies (the same 7.8 MB notes file exists twice), and a
+    # duplicate is not a second document: it doubles every mention count and
+    # inflates document-frequency, which is the ranking signal. Duplicates
+    # are counted and named in the manifest rather than silently merged.
+    docs: List[Document] = []
+    seen_hash: Dict[str, str] = {}
+    duplicates: List[Dict[str, Any]] = []
+    for d in res["documents"]:
+        h = hashlib.sha256(d.text.encode("utf-8")).hexdigest()
+        if h in seen_hash:
+            duplicates.append({"path": d.source, "duplicate_of": seen_hash[h]})
+            continue
+        seen_hash[h] = d.source
+        docs.append(d)
 
     store, arms = CrossStore(), ArmIndex()
     # Per-document ingestion, so document frequency can be counted. Ranking by
@@ -186,7 +201,10 @@ def build_catalog(paths: List[str], *, top: int = 200,
         sentences=rep.sentences,
         topics=len(store.crosses),
         corpus_hash=_corpus_hash(docs),
-        skipped=res["skipped"],
+        skipped=res["skipped"] + [
+            {"path": d["path"], "verdict": "DUPLICATE",
+             "reason": f"identical content to {d['duplicate_of']}"}
+            for d in duplicates],
     )
 
     # Coverage is stated even when it is bad, because the failure mode this
