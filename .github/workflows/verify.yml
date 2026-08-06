@@ -22,8 +22,10 @@ jobs:
           python-version: "3.11"
 
       - name: Import every module
-        # A syntax error or a bad import in a module no suite happens to
-        # touch would otherwise only surface when a user hits that path.
+        # Deliberately run BEFORE any pip install: the base package depends
+        # on nothing outside the standard library, and this step is what
+        # keeps that true. A module that starts importing a third-party
+        # package at module level fails here, where the cause is obvious.
         run: |
           python -c "
           import importlib, pkgutil, sys, verantyx
@@ -38,9 +40,16 @@ jobs:
           sys.exit(1 if bad else 0)
           "
 
+      - name: Install optional extras
+        # Only the extras the suite actually exercises. `hf` and `mcp` are
+        # left out because nothing offline and deterministic needs them.
+        run: pip install -e ".[obfuscate]"
+
       - name: Fork suite (vera lab)
         # The behavioural suite: every fork states its expected outcome and
-        # returns evidence. all_pass is the gate.
+        # returns evidence. all_pass is the gate — and so is n_skipped, since
+        # a suite that silently drops checks when an extra is missing reports
+        # a green tick for coverage it no longer has.
         run: |
           python -m verantyx.cli lab > lab.json
           python -c "
@@ -50,7 +59,9 @@ jobs:
           print(f\"{d['n_forks'] - len(failed)}/{d['n_forks']} forks pass\")
           for f in failed:
               print('FAIL', f)
-          sys.exit(0 if d['all_pass'] else 1)
+          for f, why in d.get('skipped', {}).items():
+              print('SKIPPED', f, why, '- extras are installed, so this is a bug')
+          sys.exit(0 if d['all_pass'] and not d.get('skipped') else 1)
           "
 
       - name: Structural and classifier evals

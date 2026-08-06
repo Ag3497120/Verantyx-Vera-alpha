@@ -397,9 +397,16 @@ def cmd_lab(args) -> int:
         + all_obfuscate_forks()
         + all_watermark_forks()
     )
-    forks = {e["fork"]: e["pass"] for e in experiments}
+    # A fork that could not run is reported by name and kept OUT of the pass
+    # count, never folded into it. Optional extras are the usual reason (a
+    # fork needing `cryptography` on an install without it); counting an
+    # unrun check as a pass would make the suite quietly weaker on exactly
+    # the installs where it is least verified.
+    skipped = {e["fork"]: e["skipped"] for e in experiments if e.get("skipped")}
+    forks = {e["fork"]: e["pass"] for e in experiments if not e.get("skipped")}
     all_pass = all(forks.values())
-    _print({"all_pass": all_pass, "n_forks": len(forks), "forks": forks})
+    _print({"all_pass": all_pass, "n_forks": len(forks),
+            "n_skipped": len(skipped), "skipped": skipped, "forks": forks})
     return 0 if all_pass else 1
 
 

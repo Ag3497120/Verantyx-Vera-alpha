@@ -186,12 +186,37 @@ def obf_string_literals_untouched_fork() -> Dict[str, Any]:
             "result": {"obfuscated": plan.obfuscated_source}}
 
 
+def _run(fn) -> Dict[str, Any]:
+    """Run one fork, turning a missing optional extra into a named SKIP.
+
+    Catching the ImportError is deliberate rather than keeping a list of
+    "the forks that need cryptography": the dependency is also reached
+    INDIRECTLY — obfuscate_file encrypts its own sidecar — so a hand-kept
+    list goes stale the moment a fork gains a new call, and goes stale
+    silently, which is the failure mode a suite can least afford.
+
+    A skipped fork carries pass=False and a `skipped` reason. The runner
+    keeps it out of the pass count instead of scoring it, because a check
+    that never executed is neither a pass nor a failure and pretending
+    otherwise misreports coverage on exactly the installs that have least.
+    """
+    try:
+        return fn()
+    except ModuleNotFoundError as exc:
+        if exc.name != "cryptography":
+            raise
+        return {"experiment": "obfuscate",
+                "fork": fn.__name__[:-len("_fork")].upper(),
+                "pass": False, "skipped": "cryptography_not_installed",
+                "result": {"install": "pip install verantyx-vera[obfuscate]"}}
+
+
 def all_obfuscate_forks() -> List[Dict[str, Any]]:
-    return [
-        obf_rename_roundtrip_fork(),
-        obf_key_determinism_fork(),
-        obf_key_uniqueness_fork(),
-        obf_wrong_key_refuses_fork(),
-        obf_string_literals_untouched_fork(),
-        obf_end_to_end_file_fork(),
-    ]
+    return [_run(fn) for fn in (
+        obf_rename_roundtrip_fork,
+        obf_key_determinism_fork,
+        obf_key_uniqueness_fork,
+        obf_wrong_key_refuses_fork,
+        obf_string_literals_untouched_fork,
+        obf_end_to_end_file_fork,
+    )]
