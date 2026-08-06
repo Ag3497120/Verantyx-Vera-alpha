@@ -158,6 +158,44 @@ def main() -> int:
         failures.append("attribution vocabulary leak")
     print()
 
+    # -- 4b. Composition: long, grammatical, and never invented -------------
+    from .arm_schema import ArmIndex
+    from .compose import compose_digest, compose_report, unsupported_sentences
+
+    arms = ArmIndex()
+    store2 = CrossStore()
+    ingest_documents(store2, docs, arms)
+    road = compose_report(store2, "国道", arms=arms)
+
+    # The two defects the first version produced, kept as regressions.
+    # 「通行可能しています」came from inferring the predicate form from kanji
+    # count; the polar vocabulary is closed, so the form is stated per term.
+    ok = "通行可能です" in road.text and "しています" not in road.text.split("通行")[0]
+    print(f"[{'ok  ' if ok else 'FAIL'}] polar terms take their real predicate "
+          f"form, not one inferred from shape")
+    if not ok:
+        failures.append("ja predicate form")
+
+    # A claim cannot be settled and contested in the same report. Replaying a
+    # source sentence reintroduced this, because the sentence carrying the
+    # disputed word is itself a real sentence.
+    ok = not ("以下は確認された情報です。以下は" in road.text)
+    print(f"[{'ok  ' if ok else 'FAIL'}] no empty 'settled' heading when "
+          f"everything under it is contested")
+    if not ok:
+        failures.append("empty settled heading")
+
+    digest = compose_digest(store2, ["国道", "本町", "毛布", "水道"], arms=arms)
+    bad = unsupported_sentences(store2, digest)
+    ok = not bad
+    print(f"[{'ok  ' if ok else 'FAIL'}] {len(digest.text)} characters composed, "
+          f"none unsupported by the store")
+    for b in bad[:3]:
+        print(f"        invented: {b}")
+    if not ok:
+        failures.append("composed sentence with no stored backing")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
