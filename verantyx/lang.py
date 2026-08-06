@@ -63,7 +63,13 @@ def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:
     if not runs:
         return None
     core, facets = runs[0], [r for r in runs[1:] if r != runs[0]]
-    store.add(core, dict.fromkeys(facets))
+    # `source=` is what CrossStore records as provenance, and the English
+    # path has always passed it. Without it, anything reading provenance —
+    # document_ingest's source attribution, which is the entire point of
+    # ingesting several sources — got an empty answer for Japanese and could
+    # not tell that it was empty because the language was unsupported rather
+    # than because the sources agreed.
+    store.add(core, dict.fromkeys(facets), source=text.strip())
     store.n_sentences += 1
     return core
 

@@ -872,6 +872,35 @@ def serve(store_path: str) -> int:
         return render_quickstart() if quickstart else render_guide()
 
     @mcp.tool()
+    def load_documents(paths: str, ingest: bool = True) -> str:
+        """Read files (or a folder) into the store — PDF, Word, HTML, CSV,
+        JSON, plain text.
+
+        `paths` is comma-separated; a directory is walked. Files that cannot
+        be read are reported by name with the reason (UNKNOWN_NO_PARSER for a
+        format with no loader, UNKNOWN_EMPTY_DOCUMENT for a scanned PDF that
+        holds only images) and the rest still load — a batch that drops what
+        it could not read reports a smaller corpus as if it were the whole
+        one. Japanese and English are both segmented correctly."""
+        from .document_ingest import ingest_documents
+        from .document_loaders import load_directory, load_paths
+
+        items = [x.strip() for x in (paths or "").split(",") if x.strip()]
+        docs, skipped = [], []
+        for item in items:
+            res = (load_directory(item) if Path(item).is_dir()
+                   else load_paths([item]))
+            docs.extend(res["documents"])
+            skipped.extend(res["skipped"])
+        out = {"loaded": len(docs), "skipped": skipped,
+               "sources": [d.source for d in docs]}
+        if ingest and docs:
+            rep = ingest_documents(store, docs)
+            _save()
+            out["ingested"] = rep.as_dict()
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
     def goal_recipe(question: str) -> str:
         """Turn "what I want to do" into the ordered settings that get there.
 

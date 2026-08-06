@@ -32,12 +32,29 @@ from typing import Any, Dict, List, Optional
 
 from .arm_schema import ArmIndex, classify_arm
 from .cross_store import CrossStore
-from .polarity import ANTONYM_PAIRS, detect, ingest_polar
+from .polarity import (ANTONYM_PAIRS, ANTONYM_PAIRS_JA, detect,
+                       detect_ja, ingest_polar, ingest_polar_ja)
 
-_SENT = re.compile(r"(?<=[.!?。])\s+")
-#: Sentences shorter than this carry no claim worth storing (headlines
-#: fragments, bylines). Cheap filter, tuned to be permissive.
+#: Japanese does not put a space after 。, so a splitter that requires
+#: trailing whitespace treats a whole article as one sentence — and then the
+#: minimum-length filter and the English decomposer between them dropped it
+#: entirely. Measured before this was fixed: a two-source Japanese corpus
+#: ingested as zero sentences, silently, which is the worst way for the
+#: disaster-information path to fail given who needs it.
+_SENT = re.compile(r"(?<=[.!?。！？])\s*")
+
+_CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿]")
+
+#: Sentence-length floor, by script. Twelve characters of Latin text is about
+#: two words and carries nothing; twelve characters of Japanese is a full
+#: claim — 「避難所は開いています」 is eleven. Holding both to one number is
+#: how the Japanese path lost its content.
 _MIN_SENT_CHARS = 12
+_MIN_SENT_CHARS_CJK = 6
+
+
+def _min_chars(text: str) -> int:
+    return _MIN_SENT_CHARS_CJK if _CJK.search(text) else _MIN_SENT_CHARS
 
 
 @dataclass
@@ -61,6 +78,35 @@ class IngestReport:
                 "per_source": self.per_source}
 
 
+def _place(store: CrossStore, sentence: str,
+           detect_on: Optional[str] = None) -> Optional[str]:
+    """Put one sentence in the store, using the right language's segmenter.
+
+    `ingest_polar` goes through CrossStore.ingest_sentence, whose decomposer
+    is `en_decompose` — its word pattern is `[A-Za-z0-9']+`, so a Japanese
+    sentence yields no words at all and the whole string falls through as one
+    core with zero facets. Nothing then links, contradicts, or answers.
+
+    The Japanese segmenter already existed in `lang`; it simply was not on
+    this path. Routing by script is the whole fix. Polarity still runs on the
+    English path only, so a Japanese corpus gets cores and facets but not yet
+    the open/closed contradiction pairs — stated here rather than discovered
+    later, because deep_report's `disputed` list will be thinner in Japanese
+    and that is a limit, not a finding about the sources.
+    """
+    from .lang import detect
+
+    # Detect on the ORIGINAL sentence, not the one carrying the attribution
+    # suffix. `detect` compares Japanese characters against Latin ones, and
+    # "(reported by f.docx)" adds enough Latin to outvote a short Japanese
+    # sentence — which routed it to the English decomposer and turned the
+    # whole sentence into a single core with no facets. The suffix is
+    # bookkeeping; it must not get a vote on what language the claim is in.
+    if detect(detect_on or sentence) == "ja":
+        return ingest_polar_ja(store, sentence)
+    return ingest_polar(store, sentence)
+
+
 def ingest_documents(store: CrossStore, docs: List[Document],
                      arms: Optional[ArmIndex] = None) -> IngestReport:
     """Split each document into sentences and place them with source and
@@ -72,22 +118,34 @@ def ingest_documents(store: CrossStore, docs: List[Document],
     citation that lives somewhere other than the evidence tends to drift
     away from it.
     """
+    # Provenance defaults to off on CrossStore, which is fine for a store
+    # built from one source. Here it is the whole contract: "which report
+    # backed this claim" is what separates this from summarisation, and with
+    # tracking off every `sources` list came back empty — indistinguishable
+    # from sources that simply had nothing to say. Turned on rather than
+    # required, because a caller who assembled the store elsewhere should not
+    # have to know this flag exists to get attributed answers.
+    store.track_provenance = True
+
     rep = IngestReport()
     for doc in docs:
         rep.documents += 1
         count = 0
         for raw in _SENT.split(doc.text or ""):
             s = raw.strip()
-            if len(s) < _MIN_SENT_CHARS:
+            if len(s) < _min_chars(s):
                 continue
             tagged = f"{s} (reported by {doc.source})"
-            core = ingest_polar(store, tagged)
+            core = _place(store, tagged, detect_on=s)
             if core is None:
                 continue
             count += 1
             rep.sentences += 1
             rep.cores.append(core)
-            if detect(s):
+            # Counted with the same detector that placed the poles;
+            # the English one alone reported zero polar claims for a
+            # Japanese corpus whose poles were in fact placed.
+            if detect(s) or detect_ja(s):
                 rep.polar_claims += 1
             if arms is not None and classify_arm(s):
                 arms.arms.setdefault(core, {}).setdefault(
@@ -115,7 +173,12 @@ def deep_report(store: CrossStore, core: str,
     unusable for a decision: the reader cannot tell which parts are agreed,
     which are contested, and which nobody checked.
     """
-    aspect_keys = {p for p, _ in ANTONYM_PAIRS}
+    # Both languages' aspect keys. English-only here meant a Japanese
+    # corpus produced poles that were placed correctly and then never
+    # read, so every report came back "supported" no matter how hard
+    # the sources disagreed.
+    aspect_keys = ({p for p, _ in ANTONYM_PAIRS}
+                   | {p for p, _ in ANTONYM_PAIRS_JA})
     disputed: List[Dict[str, Any]] = []
     for entry in store.contradictions(core):
         if entry["key"] not in aspect_keys:
@@ -191,9 +254,28 @@ def _attribution_vocabulary(store: CrossStore, core: str) -> set:
         if not slot or len(slot) < 3:
             continue
         m = re.search(r"reported by ([^)]+)\)", str(slot[2]))
-        if m:
-            out |= {w for w in re.split(r"[^a-z0-9]+", m.group(1).lower()) if w}
+        if not m:
+            continue
+        label = m.group(1)
+        out |= {w for w in re.split(r"[^a-z0-9]+", label.lower()) if w}
+        # The Latin split treats every CJK character as a separator, so a
+        # source called 「A新聞」 contributed only "a" and 新聞 leaked into the
+        # settled facts as though the outlet's name were a fact about the
+        # shelter. Same leak that was fixed for English labels; it came back
+        # the moment Japanese reached this path, because the fix was written
+        # in a pattern that could not see Japanese.
+        out |= set(_CJK_RUN.findall(label))
+        for run in _CJK_RUN.findall(label):
+            # The segmenter emits sub-runs of a compound label, so exclude
+            # those too — otherwise 新聞 is filtered but 新 or 聞 is not.
+            out |= {run[i:j] for i in range(len(run))
+                    for j in range(i + 1, len(run) + 1)}
     return out
+
+
+#: Kanji/katakana runs — the same shape `lang.ja_content_runs` extracts, so
+#: what a source label contributes here matches what ingestion put in.
+_CJK_RUN = re.compile(r"[゠-ヿ]+|[㐀-䶿一-鿿]+")
 
 
 _ARM_QUESTION = {

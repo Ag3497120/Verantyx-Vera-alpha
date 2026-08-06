@@ -16,7 +16,8 @@ keywords = ["knowledge-graph", "symbolic", "deterministic", "mcp", "hallucinatio
 hf = ["datasets", "huggingface_hub"]
 mcp = ["mcp[cli]>=1.2,<2"]
 obfuscate = ["cryptography"]
-all = ["datasets", "huggingface_hub", "mcp[cli]>=1.2,<2", "cryptography"]
+docs = ["pypdf"]
+all = ["datasets", "huggingface_hub", "mcp[cli]>=1.2,<2", "cryptography", "pypdf"]
 
 [project.scripts]
 vera = "verantyx.cli:main"

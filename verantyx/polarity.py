@@ -49,6 +49,42 @@ ANTONYM_PAIRS: List[Tuple[str, str]] = [
     ("passable", "blocked"),
 ]
 
+#: Japanese pairs. Held to a stricter rule than the English ones, because
+#: Japanese has no word boundaries and matching is therefore by substring:
+#: every term here must be long and distinctive enough that it cannot appear
+#: inside an unrelated word. That is why 「開」 is absent — it sits inside
+#: 開始, 公開, 展開 and would manufacture a contradiction every time a
+#: document mentioned a meeting starting. Missing an opposition costs one
+#: undetected disagreement; inventing one costs the reader's trust in every
+#: contested claim the report shows.
+#:
+#: Verified against a control corpus of unrelated sentences containing the
+#: near-miss words — see polarity_ja_eval in settings-adjacent evals.
+ANTONYM_PAIRS_JA: List[Tuple[str, str]] = [
+    ("通行可能", "通行止"),
+    ("開設", "閉鎖"),
+    ("営業中", "休業"),
+    ("安全", "危険"),
+    ("実施", "中止"),
+    ("稼働", "停止"),
+    ("使用可能", "使用不可"),
+    ("復旧", "断水"),
+    ("受付中", "受付終了"),
+]
+
+#: Inflected forms that mean the same pole as a listed term. Kept separate so
+#: the pair table stays readable as pairs.
+_JA_ALIASES: Dict[str, str] = {
+    "開いています": "開設", "開いてい": "開設", "利用できます": "使用可能",
+    "閉まっています": "閉鎖", "閉鎖されました": "閉鎖",
+    "通行できません": "通行止", "通行できます": "通行可能",
+    "使用できません": "使用不可",
+}
+
+#: 〜ない / 〜ません flips the preceding term. Japanese negation is a suffix,
+#: not a preceding word, so the English negator pattern cannot see it.
+_JA_NEGATED = re.compile(r"(.{2,6}?)(?:では)?(?:あり)?(?:ませ|な)ん?[^あ-ん]*?(?:ない|ません)")
+
 _NEGATORS = re.compile(r"\b(not|never|no longer|isn't|aren't|wasn't|weren't)\s+(\w+)",
                        re.IGNORECASE)
 
@@ -56,6 +92,108 @@ _ASPECT_OF: Dict[str, Tuple[str, str]] = {}
 for _pos, _neg in ANTONYM_PAIRS:
     _ASPECT_OF[_pos] = (_pos, "+")
     _ASPECT_OF[_neg] = (_pos, "-")
+
+_ASPECT_OF_JA: Dict[str, Tuple[str, str]] = {}
+for _pos, _neg in ANTONYM_PAIRS_JA:
+    _ASPECT_OF_JA[_pos] = (_pos, "+")
+    _ASPECT_OF_JA[_neg] = (_pos, "-")
+
+#: Longest first, so 使用可能 is matched before 使用不可's shorter neighbours
+#: and 受付終了 is never read as 受付中 plus noise.
+_JA_TERMS: List[str] = sorted(
+    list(_ASPECT_OF_JA) + list(_JA_ALIASES), key=len, reverse=True)
+
+
+def detect_ja(sentence: str) -> List[Tuple[str, str, str]]:
+    """The Japanese half of `detect`, matched by substring.
+
+    Substring matching is forced by the language — there are no spaces to
+    split on — and it is why the vocabulary above is restricted to long,
+    distinctive terms. Scanning longest-first and blanking each hit stops one
+    stretch of text from being counted twice, which would otherwise let
+    使用可能 also register as a 使用不可 near-miss.
+    """
+    out: List[Tuple[str, str, str]] = []
+    text = sentence or ""
+    negated = {m.group(1) for m in _JA_NEGATED.finditer(text)}
+    seen: Set[str] = set()
+    for term in _JA_TERMS:
+        start = _standalone_index(text, term)
+        if start < 0:
+            continue
+        canonical = _JA_ALIASES.get(term, term)
+        hit = _ASPECT_OF_JA.get(canonical)
+        if hit is None or canonical in seen:
+            continue
+        seen.add(canonical)
+        aspect, pol = hit
+        # Blank the matched span so a shorter term inside it cannot match
+        # separately — 「受付終了」must not also report 「受付中」.
+        text = text[:start] + "　" * len(term) + text[start + len(term):]
+        if any(canonical.startswith(n) or n.startswith(canonical)
+               for n in negated):
+            pol = "-" if pol == "+" else "+"
+            out.append((aspect, f"not_{canonical}", pol))
+        else:
+            # Same convention as the English half: the value is the word, and
+            # `not_` appears only for an explicit negation. Naming the
+            # negative pole `not_危険` would have said "not dangerous" about a
+            # sentence that said dangerous.
+            out.append((aspect, canonical, pol))
+    return out
+
+
+def _standalone_index(text: str, term: str) -> int:
+    """Where `term` occurs as its own word, or -1.
+
+    Japanese compounds are formed by butting kanji together, so a substring
+    match alone reads 停止線 (a painted stop line) as "stopped" and 危険物
+    (hazardous materials) as "dangerous" — both were produced by the first
+    version of this, and both would have manufactured a contradiction out of
+    a sentence that made no claim at all.
+
+    The rule: reject when the next character is a kanji, because that is a
+    compound. Hiragana and katakana after the term are inflection or
+    particles and leave the meaning intact — 通行止です, 開設されました,
+    復旧し通行可能に all survive it.
+
+    Deliberately one-sided. Testing the preceding character too would reject
+    大変危険です, where the kanji before is an intensifier and the claim is
+    real. Missing a compound that leads with a polar term is the cheaper
+    error, and the vocabulary is small enough to inspect.
+    """
+    at = 0
+    while True:
+        at = text.find(term, at)
+        if at < 0:
+            return -1
+        after = text[at + len(term):at + len(term) + 1]
+        if not after or not _KANJI.match(after):
+            return at
+        at += 1
+
+
+_KANJI = re.compile(r"[㐀-䶿一-鿿]")
+
+
+def ingest_polar_ja(store: CrossStore, sentence: str) -> Optional[str]:
+    """Japanese ingest plus pole placement.
+
+    Mirrors `ingest_polar`, but segments with `lang.ja_ingest_sentence`
+    because the English decomposer's word pattern is `[A-Za-z0-9']+` and
+    returns nothing at all for Japanese. Keyed facets land on the same core
+    in the same `aspect:value` shape, so `CrossStore.contradictions()` fires
+    without knowing which language produced them.
+    """
+    from .lang import ja_ingest_sentence
+
+    core = ja_ingest_sentence(store, sentence)
+    if core is None:
+        return None
+    keyed = {f"{aspect}:{value}": None for aspect, value, _ in detect_ja(sentence)}
+    if keyed:
+        store.add(core, keyed, source=sentence.strip())
+    return core
 
 
 def detect(sentence: str) -> List[Tuple[str, str, str]]:
