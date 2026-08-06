@@ -28,13 +28,31 @@ from .cross_store import CrossStore
 
 _RE_JA = re.compile(r"[぀-ヿ一-鿿]")
 _RE_LATIN = re.compile(r"[A-Za-zÀ-ɏ]")
+_RE_KANA = re.compile(r"[ぁ-んァ-ヶー]")
+_RE_HAN = re.compile(r"[㐀-䶿一-鿿]")
 
 
 def detect(text: str) -> str:
+    """Script heuristic: "ja" | "zh" | "en" | "latin".
+
+    Chinese and Japanese share the ideographs, so counting them cannot tell
+    the languages apart — and cataloguing a real corpus showed the cost:
+    Chinese documents were routed down the Japanese path and 如果 and 配置
+    surfaced as "topics" with Chinese facets attached. What does separate
+    them is kana: running Japanese prose without any kana is close to
+    nonexistent, while Chinese never has it. Han without kana, at a length
+    where the absence is meaningful, is therefore called "zh".
+
+    Short han-only fragments (交通情報 — a headline, a label) stay "ja":
+    four characters without kana is normal Japanese, forty is not.
+    """
     t = text or ""
     n_ja = len(_RE_JA.findall(t))
     n_lat = len(_RE_LATIN.findall(t))
     if n_ja > n_lat:
+        han = len(_RE_HAN.findall(t))
+        if han >= 6 and not _RE_KANA.search(t):
+            return "zh"
         return "ja"
     if n_lat == 0:
         return "latin"
@@ -47,8 +65,29 @@ def detect(text: str) -> str:
 # Japanese (elementary, tokenizer-free)
 # ---------------------------------------------------------------------------
 
-# content run: kanji/katakana sequence, optionally trailing い/な (adjectives)
-_JA_RUN = re.compile(r"[゠-ヿ]+|[一-鿿]+[いな]?")
+# A content run is a katakana word, or an ideograph sequence that may
+# contain digits and end in one okurigana character.
+#
+# Each extension is a measured failure in a domain where the loss is fatal:
+#
+#   digits inside runs   「国道4号」 split into 国道+号 and dropped the 4;
+#                        「第3条」 became 第+条 and 「1日2錠」 became 日+錠.
+#                        A legal system that cannot say WHICH article, or a
+#                        medical one that loses the dose, is not weaker —
+#                        it is unusable, because the number was the claim.
+#   trailing okurigana   「土砂崩れ」→ 土砂崩, 「通行止め」→ 通行止. The single
+#                        trailing kana from a closed set is taken only when
+#                        what follows is a particle, punctuation, or the end,
+#                        so inflections (崩れて…) still stop at the stem.
+#
+# い/な stay unconditional as before (adjective endings); the new set is
+# conditional to avoid swallowing conjugation.
+_JA_RUN = re.compile(
+    r"[゠-ヿー]+"
+    r"|[㐀-䶿一-鿿0-9０-９]+"
+    r"(?:[いな]|[れめきちりつけ](?=[はがをにでとのへもや、。！？\s]|$))?"
+)
+_ALL_DIGITS = re.compile(r"^[0-9０-９]+$")
 #: Words that are grammatically nouns and informationally nothing — formal
 #: nouns, pronouns, and temporal/positional deictics. Excluded because a
 #: content run becomes a CORE, and a core is meant to be a topic.
@@ -80,15 +119,40 @@ _JA_QUESTION = ("何", "誰", "どこ", "いつ", "なぜ", "どう", "ですか
 
 
 def ja_content_runs(text: str) -> List[str]:
-    return [r for r in _JA_RUN.findall(text or "") if r not in _JA_STOP]
+    return [r for r in _JA_RUN.findall(text or "")
+            if r not in _JA_STOP and not _ALL_DIGITS.match(r)]
+
+
+#: The topic phrase: everything before the first は/が that follows a content
+#: character. Used to pick the head noun as the core.
+_JA_TOPIC = re.compile(
+    r"^(.*?[㐀-䶿一-鿿゠-ヿー0-9０-９][いなれめきちりつけ]?)[はが]")
 
 
 def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:
-    """First content run = core, remaining runs = facets (accumulating)."""
+    """Head of the topic phrase = core, remaining runs = facets.
+
+    Japanese is head-final: in 「本町の避難所は開設されました」 the topic is
+    本町の避難所 and its head — the thing the sentence is ABOUT — is the last
+    noun, 避難所. The old rule took the FIRST run, so the shelter's status
+    was filed under the neighbourhood: ask about 避難所 and the store had
+    nothing; every fact about it sat on 本町. For a catalogue that answers
+    "what do we know about the shelter", filing under the modifier is not a
+    rough edge, it is the wrong index key.
+
+    Sentences without a topic marker keep the first-run rule, stated rather
+    than hidden: there is no head to find without a boundary to find it in.
+    """
     runs = ja_content_runs(text)
     if not runs:
         return None
-    core, facets = runs[0], [r for r in runs[1:] if r != runs[0]]
+    core = runs[0]
+    m = _JA_TOPIC.match(text or "")
+    if m:
+        topic_runs = ja_content_runs(m.group(1))
+        if topic_runs:
+            core = topic_runs[-1]
+    facets = [r for r in runs if r != core]
     # `source=` is what CrossStore records as provenance, and the English
     # path has always passed it. Without it, anything reading provenance —
     # document_ingest's source attribution, which is the entire point of

@@ -81,9 +81,23 @@ _JA_ALIASES: Dict[str, str] = {
     "使用できません": "使用不可",
 }
 
-#: 〜ない / 〜ません flips the preceding term. Japanese negation is a suffix,
-#: not a preceding word, so the English negator pattern cannot see it.
-_JA_NEGATED = re.compile(r"(.{2,6}?)(?:では)?(?:あり)?(?:ませ|な)ん?[^あ-ん]*?(?:ない|ません)")
+#: Negation that immediately FOLLOWS the polar term. Japanese negation is a
+#: suffix on the predicate, so it is read from the characters after the
+#: matched term, not scanned for elsewhere in the sentence.
+#:
+#: The previous version tried to pre-scan the sentence for anything shaped
+#: like 〜ない and match it back to terms by prefix. Measured result:
+#: 「この道は安全ではありません」 was stored as 安全(+) — the pole INVERTED,
+#: the store asserting the road is safe where the source said it is not.
+#: For the fields this is meant to serve, a detector that silently flips
+#: negated claims is worse than no detector: every other error here loses
+#: information, this one manufactured the opposite claim with a citation.
+_JA_NEG_AFTER = re.compile(
+    r"^(?:さ)?(?:では|じゃ)?(?:あり)?ません"
+    r"|^(?:では|じゃ)?ない"
+    r"|^(?:して|されて|できて)?(?:い)?(?:ない|ません)"
+    r"|^できない|^できません"
+)
 
 #: English terms that are also ordinary prepositions or parts of hyphenated
 #: words, and so need a copula in front to be a claim about a state.
@@ -129,7 +143,6 @@ def detect_ja(sentence: str) -> List[Tuple[str, str, str]]:
     """
     out: List[Tuple[str, str, str]] = []
     text = sentence or ""
-    negated = {m.group(1) for m in _JA_NEGATED.finditer(text)}
     seen: Set[str] = set()
     for term in _JA_TERMS:
         start = _standalone_index(text, term)
@@ -141,11 +154,13 @@ def detect_ja(sentence: str) -> List[Tuple[str, str, str]]:
             continue
         seen.add(canonical)
         aspect, pol = hit
+        # Read the suffix directly after the term — that is where Japanese
+        # puts the negation, and the only place it can belong to THIS term.
+        negated_here = bool(_JA_NEG_AFTER.match(text[start + len(term):]))
         # Blank the matched span so a shorter term inside it cannot match
         # separately — 「受付終了」must not also report 「受付中」.
         text = text[:start] + "　" * len(term) + text[start + len(term):]
-        if any(canonical.startswith(n) or n.startswith(canonical)
-               for n in negated):
+        if negated_here:
             pol = "-" if pol == "+" else "+"
             out.append((aspect, f"not_{canonical}", pol))
         else:

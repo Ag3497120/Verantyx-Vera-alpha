@@ -94,7 +94,7 @@ def _place(store: CrossStore, sentence: str,
     later, because deep_report's `disputed` list will be thinner in Japanese
     and that is a limit, not a finding about the sources.
     """
-    from .lang import detect
+    from .lang import detect, ja_ingest_sentence
 
     # Detect on the ORIGINAL sentence, not the one carrying the attribution
     # suffix. `detect` compares Japanese characters against Latin ones, and
@@ -102,8 +102,18 @@ def _place(store: CrossStore, sentence: str,
     # sentence — which routed it to the English decomposer and turned the
     # whole sentence into a single core with no facets. The suffix is
     # bookkeeping; it must not get a vote on what language the claim is in.
-    if detect(detect_on or sentence) == "ja":
+    lang = detect(detect_on or sentence)
+    if lang == "ja":
         return ingest_polar_ja(store, sentence)
+    if lang == "zh":
+        # Chinese gets segmentation (the ideograph-run scanner is script-,
+        # not language-specific) but NOT the Japanese polarity pass: the
+        # shared kanji make terms like 安全 match, while the negation and
+        # predicate grammar around them is a different language's. Facts
+        # without poles is the honest depth here — the alternative, routing
+        # to the English decomposer, dropped Chinese sentences entirely,
+        # which is the same silent-zero failure Japanese had.
+        return ja_ingest_sentence(store, sentence)
     return ingest_polar(store, sentence)
 
 

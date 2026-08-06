@@ -133,9 +133,20 @@ def main() -> int:
     if not ok:
         failures.append("polar_claims counted with the English detector only")
 
-    road = deep_report(store, "国道")
+    # The core is 国道4号 with the digits INTACT — the first segmenter
+    # split it into 国道+号 and dropped the 4, which in a legal or medical
+    # corpus is the difference between citing the right article and citing
+    # nothing. The old key is asserted absent so a regression cannot pass by
+    # filing facts under both.
+    ok = "国道" not in store.crosses
+    print(f"[{'ok  ' if ok else 'FAIL'}] digits survive: the core is 国道4号, "
+          f"and the digit-stripped 国道 does not exist")
+    if not ok:
+        failures.append("digit-stripped core resurfaced")
+
+    road = deep_report(store, "国道4号")
     contested = road["confidence"] == "contested"
-    print(f"[{'ok  ' if contested else 'FAIL'}] 国道 is contested, not blended "
+    print(f"[{'ok  ' if contested else 'FAIL'}] 国道4号 is contested, not blended "
           f"into one story")
     if not contested:
         failures.append("contradiction not detected in Japanese")
@@ -165,7 +176,7 @@ def main() -> int:
     arms = ArmIndex()
     store2 = CrossStore()
     ingest_documents(store2, docs, arms)
-    road = compose_report(store2, "国道", arms=arms)
+    road = compose_report(store2, "国道4号", arms=arms)
 
     # The two defects the first version produced, kept as regressions.
     # 「通行可能しています」came from inferring the predicate form from kanji
@@ -194,6 +205,47 @@ def main() -> int:
         print(f"        invented: {b}")
     if not ok:
         failures.append("composed sentence with no stored backing")
+    print()
+
+    # -- 4b2. Head-final cores and negation ---------------------------------
+    # 「本町の避難所」is about the shelter, not the neighbourhood: Japanese is
+    # head-final, so the topic's LAST noun is the core. Before this rule the
+    # shelter's open/closed status was filed under 本町 and a query about
+    # 避難所 found nothing.
+    ok = "避難所" in store.crosses
+    shelter = deep_report(store, "避難所")
+    ok = ok and shelter["confidence"] == "contested"
+    print(f"[{'ok  ' if ok else 'FAIL'}] head-final: the shelter's dispute is "
+          f"filed under 避難所, not under its neighbourhood")
+    if not ok:
+        failures.append("head-final core")
+
+    # 「安全ではありません」 was stored as 安全(+) — the pole inverted, a safety
+    # claim manufactured from its own denial. The worst single defect found
+    # in this module, pinned hardest.
+    neg_cases = [
+        ("この道は安全ではありません。", "not_安全", "-"),
+        ("設備は稼働していません。", "not_稼働", "-"),
+        ("この道は安全です。", "安全", "+"),
+        ("設備は稼働しています。", "稼働", "+"),
+    ]
+    for sentence, value, pol in neg_cases:
+        hits = detect_ja(sentence)
+        ok = any(v == value and p == pol for _a, v, p in hits)
+        print(f"[{'ok  ' if ok else 'FAIL'}] negation: {sentence} -> "
+              f"{[(v, p) for _a, v, p in hits]}")
+        if not ok:
+            failures.append(f"negation: {sentence}")
+
+    # Chinese routes away from the Japanese path. Before: 如果 and 配置
+    # appeared as catalogue topics with Chinese facets under a "ja" label.
+    zh_ok = detect("如果配置错误，网关将无法启动。") == "zh"
+    ja_ok = detect("交通情報") == "ja"          # short han-only is normal Japanese
+    ok = zh_ok and ja_ok
+    print(f"[{'ok  ' if ok else 'FAIL'}] script split: han-without-kana prose "
+          f"is zh, a short han label stays ja")
+    if not ok:
+        failures.append("zh/ja detection")
     print()
 
     # -- 4c. English prepositions must not read as state claims -------------
