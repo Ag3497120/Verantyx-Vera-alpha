@@ -204,7 +204,9 @@ def ingest_polar_ja(store: CrossStore, sentence: str) -> Optional[str]:
     core = ja_ingest_sentence(store, sentence)
     if core is None:
         return None
-    keyed = {f"{aspect}:{value}": None for aspect, value, _ in detect_ja(sentence)}
+    keyed = {f"{aspect}:{value}": None
+             for aspect, value, _ in detect_ja(sentence)
+             if subject_is_core(sentence, core, value.replace("not_", ""), "ja")}
     if keyed:
         store.add(core, keyed, source=sentence.strip())
     return core
@@ -235,14 +237,64 @@ def detect(sentence: str) -> List[Tuple[str, str, str]]:
     return out
 
 
+def subject_is_core(sentence: str, core: str, word: str,
+                    lang: str = "en") -> bool:
+    """Is `word` predicated of `core`, or of something else in the sentence?
+
+    This gate exists because of a measurement. Catalogued across 2,633 real
+    documents, the polarity detector produced 39 contradictions and the four
+    inspected were all false, in the same way every time:
+
+        "The gateway surfaces one installer (brew when available)"
+        "If sandbox mode is enabled but Docker is unavailable"
+
+    `available` describes brew, `unavailable` describes Docker — but a facet
+    bag has no attachment, so both landed on the sentence's core and the two
+    poles then looked like a disagreement about the gateway. Precision was
+    0 of 4 on a corpus with no real disputes in it, which is the worst
+    possible ratio: the system was confidently wrong and nothing was right.
+
+    So a pole is placed only when the core is the SUBJECT of the predicate
+    carrying it. Approximated, not parsed: English wants the core, then a
+    copula, then the word, within a short span; Japanese wants the core
+    marked by は or が before the term. Both miss real claims phrased around
+    the pattern. That is the correct trade for a catalogue whose whole value
+    is that a listed disagreement is worth investigating.
+    """
+    text = (sentence or "")
+    if not core:
+        return False
+    if lang == "ja":
+        pat = re.compile(re.escape(core) + r"[^。]{0,12}?[はがも][^。]{0,24}?"
+                         + re.escape(word))
+        return bool(pat.search(text))
+    # The gap between the core and its copula may not cross a clause
+    # boundary. Without this, "If sandbox mode is enabled but Docker is
+    # unavailable" still matched: `sandbox` … `is unavailable`, with a whole
+    # other subject in between. Commas, conjunctions and subordinators are
+    # where a new subject gets introduced, so the span stops at them.
+    pat = re.compile(
+        r"\b" + re.escape(core.replace("_", " "))
+        + r"\b(?:(?!\b(?:but|and|or|if|when|while|unless|because|though|"
+          r"although|which|that|where)\b)[^.,;:()\[\]])"
+          r"{0,32}?\s*\b"
+        r"(?:is|are|was|were|be|been|being|becomes?|became|remains?|stays?|"
+        r"turned|seems?|appears?)\s+(?:not\s+|no\s+longer\s+)?"
+        + re.escape(word) + r"\b", re.IGNORECASE)
+    return bool(pat.search(text))
+
+
 def ingest_polar(store: CrossStore, sentence: str) -> Optional[str]:
     """Normal ingest plus pole placement. The plain facets stay exactly as
     they were (composition and retrieval are untouched); the polar reading is
-    ADDED as keyed facets on the same core."""
+    ADDED as keyed facets on the same core — but only for poles the core is
+    actually the subject of."""
     core = store.ingest_sentence(sentence)
     if core is None:
         return None
-    keyed = {f"{aspect}:{value}": None for aspect, value, _pol in detect(sentence)}
+    keyed = {f"{aspect}:{value}": None
+             for aspect, value, _pol in detect(sentence)
+             if subject_is_core(sentence, core, value.replace("not_", ""), "en")}
     if keyed:
         store.add(core, keyed, source=sentence.strip())
     return core

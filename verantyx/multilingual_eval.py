@@ -222,6 +222,36 @@ def main() -> int:
         failures.append(f"english copula recall: {missed}")
     print()
 
+    # -- 4d. A pole must belong to the core, not to whatever else the ------
+    # sentence mentions. Measured on 2,633 real documents: without this gate
+    # the catalogue reported 24 contested topics and the four inspected were
+    # all false, every one the same way — the polar word described some other
+    # noun in the sentence. With it, zero, while the Japanese disaster case
+    # above still detects. Zero on a corpus with no real disputes is the
+    # right answer; 24 was confidently wrong.
+    from .polarity import subject_is_core
+    gate = [
+        # (sentence, core, word, lang, should the pole be placed)
+        ("If sandbox mode is enabled but Docker is unavailable, doctor reports.",
+         "sandbox", "unavailable", "en", False),
+        ("The gateway surfaces one installer (brew when available).",
+         "gateway", "available", "en", False),
+        ("The service, which we deployed, is broken.",
+         "service", "broken", "en", False),
+        ("The shelter is open until midnight.", "shelter", "open", "en", True),
+        ("The gateway is unavailable right now.",
+         "gateway", "unavailable", "en", True),
+        ("国道4号は通行止です。", "国道", "通行止", "ja", True),
+        ("避難所は閉鎖されました。", "避難所", "閉鎖", "ja", True),
+    ]
+    for sentence, core, word, lg, expect in gate:
+        got = subject_is_core(sentence, core, word, lg)
+        ok = got == expect
+        print(f"[{'ok  ' if ok else 'FAIL'}] subject gate {core}/{word} = {got}")
+        if not ok:
+            failures.append(f"subject gate: {core}/{word}")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

@@ -75,6 +75,52 @@ def _from_html(raw: str) -> str:
     return "\n".join(p.parts)
 
 
+_FENCE = re.compile(r"^```.*?^```", re.M | re.S)
+_INDENTED_CODE = re.compile(r"^(?: {4}|\t).*$", re.M)
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")     # keep the text, drop the target
+_BARE_URL = re.compile(r"https?://\S+|www\.\S+")
+_PATH = re.compile(r"(?:[\w.\-]+/){1,}[\w.\-]+")     # a/b/c.py
+_FILENAME = re.compile(r"\b[\w\-]+\.(?:md|txt|json|ya?ml|toml|py|swift|js|ts|tsx|sh|rs|c|h|html|css|png|jpe?g|pdf|log|lock|cfg|ini)\b")
+_HEADING_MARK = re.compile(r"^#{1,6}\s*", re.M)
+_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$", re.M)
+
+
+def _from_markdown(raw: str) -> str:
+    """Prose only — code, URLs and paths removed before anything sees them.
+
+    Measured on 2,491 real documents from this author's repositories: read as
+    plain text, the highest-mass cores were `com` (2,506), `md` (2,209),
+    `json` (1,673), `ts` (1,202). Those are the tails of URLs, the extensions
+    in file paths, and the language tags on code fences. An index built from
+    that is an index of file extensions, not of what the documents are about.
+
+    Each removal is for a specific one of those:
+
+      fenced/indented code   the language tag and every identifier inside
+      inline code            `--store`, `CrossStore`, flag names
+      link targets           kept the text, dropped the URL
+      bare URLs              `example.com` contributes "com"
+      paths and filenames    `docs/DESIGN.md` contributes "docs" and "md"
+      table rows             pipe-delimited cells are data, not sentences
+
+    Aggressive on purpose. A document whose content is entirely code has
+    nothing to say to a prose index, and losing a sentence costs less than
+    letting `md` become the most-discussed topic in the corpus.
+    """
+    text = _FENCE.sub(" ", raw)
+    text = _TABLE_ROW.sub(" ", text)
+    text = _INDENTED_CODE.sub(" ", text)
+    text = _INLINE_CODE.sub(" ", text)
+    text = _MD_LINK.sub(r"\1", text)
+    text = _BARE_URL.sub(" ", text)
+    text = _FILENAME.sub(" ", text)
+    text = _PATH.sub(" ", text)
+    text = _HEADING_MARK.sub("", text)
+    # Collapse the holes so sentence splitting is not fooled by the gaps.
+    return re.sub(r"[ \t]{2,}", " ", text)
+
+
 def _from_csv(raw: str, delimiter: str = ",") -> str:
     """One row per line, `column: value` joined.
 
@@ -187,7 +233,9 @@ def load_path(path: str, source: Optional[str] = None) -> Dict[str, Any]:
             text = _from_docx(p)
         else:
             raw = p.read_text(encoding="utf-8", errors="replace")
-            if suffix in {".html", ".htm"}:
+            if suffix in {".md", ".markdown"}:
+                text = _from_markdown(raw)
+            elif suffix in {".html", ".htm"}:
                 text = _from_html(raw)
             elif suffix == ".csv":
                 text = _from_csv(raw)

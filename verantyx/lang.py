@@ -49,7 +49,33 @@ def detect(text: str) -> str:
 
 # content run: kanji/katakana sequence, optionally trailing い/な (adjectives)
 _JA_RUN = re.compile(r"[゠-ヿ]+|[一-鿿]+[いな]?")
-_JA_STOP = {"事", "物", "為", "様", "何", "誰", "所"}
+#: Words that are grammatically nouns and informationally nothing — formal
+#: nouns, pronouns, and temporal/positional deictics. Excluded because a
+#: content run becomes a CORE, and a core is meant to be a topic.
+#:
+#: Measured, not assembled from a grammar book. Ingesting 2,491 documents
+#: from this author's repositories put 次(667), 彼(552), 現在(325), 今(235)
+#: and 私(220) among the twenty most-discussed "topics" in the corpus. None
+#: of them is a topic; they are what sentences are built out of.
+#:
+#: Kept to words that are near-always function-like. 中 and 上 are omitted on
+#: purpose — 中 is genuinely ambiguous (「中止」の中 vs 「作業中」) and dropping a
+#: real topic is the more expensive error for an index whose purpose is to
+#: show what a body of work is about.
+_JA_STOP = {
+    # 形式名詞
+    "事", "物", "為", "様", "所", "際", "点", "方", "面", "由",
+    # 疑問詞
+    "何", "誰", "何処", "何時",
+    # 代名詞
+    "私", "僕", "俺", "彼", "彼女", "我々", "自分", "君", "貴方",
+    # 時間・順序の指示
+    "今", "現在", "今回", "前回", "次", "先", "後", "以前", "以降",
+    "最初", "最後", "今度", "今後", "従来", "当時",
+    # 程度・数量の一般語
+    "場合", "状態", "内容", "部分", "全体", "以上", "以下", "程度",
+    "一部", "全部", "多く", "少し",
+}
 _JA_QUESTION = ("何", "誰", "どこ", "いつ", "なぜ", "どう", "ですか", "とは")
 
 
