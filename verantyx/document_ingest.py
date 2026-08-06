@@ -71,15 +71,19 @@ class IngestReport:
     cores: List[str] = field(default_factory=list)
     polar_claims: int = 0
     per_source: Dict[str, int] = field(default_factory=dict)
+    #: core → {lang: sentence count}. Kept per core rather than per document
+    #: because one document can mix languages (this corpus does), and the
+    #: catalogue's question is "what language is this TOPIC discussed in".
+    core_lang: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
         return {"documents": self.documents, "sentences": self.sentences,
                 "cores": sorted(set(self.cores)), "polar_claims": self.polar_claims,
-                "per_source": self.per_source}
+                "per_source": self.per_source, "core_lang": self.core_lang}
 
 
 def _place(store: CrossStore, sentence: str,
-           detect_on: Optional[str] = None) -> Optional[str]:
+           detect_on: Optional[str] = None) -> tuple:
     """Put one sentence in the store, using the right language's segmenter.
 
     `ingest_polar` goes through CrossStore.ingest_sentence, whose decomposer
@@ -104,7 +108,7 @@ def _place(store: CrossStore, sentence: str,
     # bookkeeping; it must not get a vote on what language the claim is in.
     lang = detect(detect_on or sentence)
     if lang == "ja":
-        return ingest_polar_ja(store, sentence)
+        return ingest_polar_ja(store, sentence), "ja"
     if lang == "zh":
         # Chinese gets segmentation (the ideograph-run scanner is script-,
         # not language-specific) but NOT the Japanese polarity pass: the
@@ -113,8 +117,8 @@ def _place(store: CrossStore, sentence: str,
         # without poles is the honest depth here — the alternative, routing
         # to the English decomposer, dropped Chinese sentences entirely,
         # which is the same silent-zero failure Japanese had.
-        return ja_ingest_sentence(store, sentence)
-    return ingest_polar(store, sentence)
+        return ja_ingest_sentence(store, sentence), "zh"
+    return ingest_polar(store, sentence), "en"
 
 
 def ingest_documents(store: CrossStore, docs: List[Document],
@@ -146,9 +150,11 @@ def ingest_documents(store: CrossStore, docs: List[Document],
             if len(s) < _min_chars(s):
                 continue
             tagged = f"{s} (reported by {doc.source})"
-            core = _place(store, tagged, detect_on=s)
+            core, lang = _place(store, tagged, detect_on=s)
             if core is None:
                 continue
+            by_lang = rep.core_lang.setdefault(core, {})
+            by_lang[lang] = by_lang.get(lang, 0) + 1
             count += 1
             rep.sentences += 1
             rep.cores.append(core)

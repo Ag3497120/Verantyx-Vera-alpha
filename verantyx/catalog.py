@@ -54,6 +54,11 @@ class Entry:
     topic: str
     mass: int                                  # total mentions across the corpus
     documents: int = 0                         # how many distinct files mention it
+    #: Majority language of the sentences that discuss this topic. From the
+    #: per-sentence router, not guessed from the topic string — a two-kanji
+    #: word cannot be told apart from Chinese by its own characters, but the
+    #: sentences it came from already voted.
+    lang: str = "en"
     facets: List[str] = field(default_factory=list)
     sources: List[str] = field(default_factory=list)
     contested: List[Dict[str, Any]] = field(default_factory=list)
@@ -125,12 +130,17 @@ def build_catalog(paths: List[str], *, top: int = 200,
     # return to a topic is the question "what is this body of work about"
     # actually asks.
     doc_freq: Dict[str, int] = {}
+    core_lang: Dict[str, Dict[str, int]] = {}
     rep = None
     for doc in docs:
         before = set(store.crosses)
         one = ingest_documents(store, [doc], arms)
         for core in set(store.crosses) - before | set(one.cores):
             doc_freq[core] = doc_freq.get(core, 0) + 1
+        for core, langs in one.core_lang.items():
+            slot = core_lang.setdefault(core, {})
+            for lg, n in langs.items():
+                slot[lg] = slot.get(lg, 0) + n
         if rep is None:
             rep = one
         else:
@@ -155,10 +165,12 @@ def build_catalog(paths: List[str], *, top: int = 200,
     entries: List[Entry] = []
     for documents, mass, topic in ranked[:top]:
         detail = deep_report(store, topic, arms)
+        langs = core_lang.get(topic, {})
         entries.append(Entry(
             topic=topic,
             mass=mass,
             documents=documents,
+            lang=max(langs, key=langs.get) if langs else "en",
             facets=[s["claim"] for s in detail["settled"][:facets_per_topic]],
             sources=sorted({src for s in detail["settled"] for src in s["sources"]}),
             contested=[{"aspect": d["aspect"],
@@ -251,22 +263,35 @@ def render_catalog(catalog: Catalog, *, limit: int = 100) -> str:
                 out.append(f"- **{e.topic}** — {c['aspect']}: {sides}")
         out.append("")
 
+    shown = catalog.entries[:limit]
+    by_lang: Dict[str, List[Entry]] = {}
+    for e in shown:
+        by_lang.setdefault(e.lang, []).append(e)
+    _LANG_TITLE = {"en": "English", "ja": "日本語", "zh": "中文", "latin": "Other"}
     out += ["## Topics", ""]
-    for e in catalog.entries[:limit]:
-        out.append(f"### {e.topic}")
-        out.append("")
-        out.append(f"Discussed {e.mass} times.")
-        if e.facets:
-            out.append("What is said: " + ", ".join(f"`{f}`" for f in e.facets))
-        if e.sources:
-            shown = e.sources[:6]
-            more = f" (+{len(e.sources) - 6})" if len(e.sources) > 6 else ""
-            out.append("Sources: " + ", ".join(shown) + more)
-        if e.missing_arms:
-            # The Vera-shaped half: a gap that is named is a question someone
-            # can go answer, where a gap that is absent is invisible.
-            out.append("Not recorded: " + ", ".join(e.missing_arms))
-        out.append("")
+    if len(by_lang) > 1:
+        counts = " · ".join(f"{_LANG_TITLE.get(lg, lg)} {len(es)}"
+                            for lg, es in sorted(by_lang.items()))
+        out += [f"By language: {counts}. Grouped below, because a reader "
+                f"scanning for their own language should not wade through the "
+                f"others — and because 如果 sitting beside 結論 as if they were "
+                f"one language was exactly the confusion this fixes.", ""]
+    for lg in sorted(by_lang):
+        if len(by_lang) > 1:
+            out += [f"### {_LANG_TITLE.get(lg, lg)}", ""]
+        for e in by_lang[lg]:
+            out.append(f"#### {e.topic}" if len(by_lang) > 1 else f"### {e.topic}")
+            out.append("")
+            out.append(f"Discussed {e.mass} times in {e.documents} documents.")
+            if e.facets:
+                out.append("What is said: " + ", ".join(f"`{f}`" for f in e.facets))
+            if e.sources:
+                srcs = e.sources[:6]
+                more = f" (+{len(e.sources) - 6})" if len(e.sources) > 6 else ""
+                out.append("Sources: " + ", ".join(srcs) + more)
+            if e.missing_arms:
+                out.append("Not recorded: " + ", ".join(e.missing_arms))
+            out.append("")
     return "\n".join(out)
 
 

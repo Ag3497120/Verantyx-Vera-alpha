@@ -304,6 +304,38 @@ def main() -> int:
             failures.append(f"subject gate: {core}/{word}")
     print()
 
+    # -- 4e. Topics carry the language their sentences voted for ------------
+    # A topic string cannot name its own language — 如果 and 結論 are both
+    # two-ideograph words — but the sentences that produced it were already
+    # routed per-script, so the label comes from that vote, not from a guess.
+    from .catalog import build_catalog
+
+    with tempfile.TemporaryDirectory() as td2:
+        root2 = Path(td2)
+        (root2 / "ja.txt").write_text(
+            "国道4号は通行止です。避難所は開設されました。", encoding="utf-8")
+        (root2 / "en.txt").write_text(
+            "The bridge is closed for repairs. The bridge spans the river.",
+            encoding="utf-8")
+        (root2 / "zh.txt").write_text(
+            "如果配置错误，网关将无法启动。建议使用默认设置以保证稳定运行。",
+            encoding="utf-8")
+        cat = build_catalog([str(root2 / n) for n in
+                             ("ja.txt", "en.txt", "zh.txt")])
+        got = {e.topic: e.lang for e in cat.entries}
+        expect = {"国道4号": "ja", "避難所": "ja", "bridge": "en"}
+        wrong = {t: (got.get(t), lg) for t, lg in expect.items()
+                 if got.get(t) != lg}
+        zh_ok = any(lg == "zh" for lg in got.values())
+        ok = not wrong and zh_ok
+        print(f"[{'ok  ' if ok else 'FAIL'}] catalogue entries labeled by their "
+              f"sentences' language (ja/en/zh all present)")
+        if wrong:
+            print(f"        wrong: {wrong}")
+        if not ok:
+            failures.append("entry language labels")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
