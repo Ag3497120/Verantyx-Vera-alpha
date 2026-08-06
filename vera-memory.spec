@@ -9,7 +9,10 @@ a = Analysis(
     # frozen binary would load two built-in packs and silently lose the
     # twelve JSON ones — a failure that looks like 'the field packs were
     # never written' rather than 'they were not shipped'.
-    datas=[('verantyx/failure_packs', 'verantyx/failure_packs')],
+    datas=[('verantyx/failure_packs', 'verantyx/failure_packs'),
+           # The Japanese grammar is data, not code — a frozen binary
+           # without it would run with no Japanese at all, silently.
+           ('verantyx/lang_data', 'verantyx/lang_data')],
     hiddenimports=['mcp', 'mcp.server.fastmcp'],
     hookspath=[],
     hooksconfig={},

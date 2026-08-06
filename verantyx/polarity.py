@@ -60,45 +60,13 @@ ANTONYM_PAIRS: List[Tuple[str, str]] = [
 #:
 #: Verified against a control corpus of unrelated sentences containing the
 #: near-miss words — see polarity_ja_eval in settings-adjacent evals.
-ANTONYM_PAIRS_JA: List[Tuple[str, str]] = [
-    ("通行可能", "通行止"),
-    ("開設", "閉鎖"),
-    ("営業中", "休業"),
-    ("安全", "危険"),
-    ("実施", "中止"),
-    ("稼働", "停止"),
-    ("使用可能", "使用不可"),
-    ("復旧", "断水"),
-    ("受付中", "受付終了"),
-    # Reliability-domain pairs. Every member was chosen against the
-    # compound-noun guard: 運行状況, 有効期限, 無効化, 開館時間 all continue
-    # with kanji and are therefore rejected as compounds, while the bare
-    # predicative uses (運行しています, 有効です) survive.
-    ("運行", "運休"),
-    ("有効", "無効"),
-    ("満室", "空室"),
-]
-
-#: Terms that join an EXISTING aspect rather than founding their own.
-#: 開館/閉館 describe the same underlying state as 開設/閉鎖 — whether the
-#: facility is open — and a corpus really does say 「開館しております」 in one
-#: source and 「閉鎖されました」 in another about one building. With separate
-#: aspect keys those two poles never collide and a genuine real-world
-#: contradiction is structurally invisible; the planted-truth suite caught
-#: exactly that (tier B Japanese recall fell to zero through this seam).
-_JA_ASPECT_JOIN: List[Tuple[str, str, str]] = [
-    ("開館", "開設", "+"),
-    ("閉館", "開設", "-"),
-]
-
-#: Inflected forms that mean the same pole as a listed term. Kept separate so
-#: the pair table stays readable as pairs.
-_JA_ALIASES: Dict[str, str] = {
-    "開いています": "開設", "開いてい": "開設", "利用できます": "使用可能",
-    "閉まっています": "閉鎖", "閉鎖されました": "閉鎖",
-    "通行できません": "通行止", "通行できます": "通行可能",
-    "使用できません": "使用不可",
-}
+# The Japanese vocabulary is DATA, shipped as lang_data/ja_grammar.json
+# and extensible by overlay — the design rationale (2-char floor, one
+# pole per term, aspect joins) is enforced by ja_grammar.validate().
+from .ja_grammar import ALIASES as _JA_ALIASES
+from .ja_grammar import ANTONYM_PAIRS as ANTONYM_PAIRS_JA
+from .ja_grammar import ASPECT_OF as _ASPECT_OF_JA
+from .ja_grammar import TERMS as _JA_TERMS
 
 #: Negation that immediately FOLLOWS the polar term. Japanese negation is a
 #: suffix on the predicate, so it is read from the characters after the
@@ -140,17 +108,7 @@ for _pos, _neg in ANTONYM_PAIRS:
     _ASPECT_OF[_pos] = (_pos, "+")
     _ASPECT_OF[_neg] = (_pos, "-")
 
-_ASPECT_OF_JA: Dict[str, Tuple[str, str]] = {}
-for _pos, _neg in ANTONYM_PAIRS_JA:
-    _ASPECT_OF_JA[_pos] = (_pos, "+")
-    _ASPECT_OF_JA[_neg] = (_pos, "-")
-for _term, _aspect, _pol in _JA_ASPECT_JOIN:
-    _ASPECT_OF_JA[_term] = (_aspect, _pol)
-
-#: Longest first, so 使用可能 is matched before 使用不可's shorter neighbours
-#: and 受付終了 is never read as 受付中 plus noise.
-_JA_TERMS: List[str] = sorted(
-    list(_ASPECT_OF_JA) + list(_JA_ALIASES), key=len, reverse=True)
+# JA derived tables (ASPECT_OF, TERMS) come from ja_grammar above.
 
 
 def detect_ja(sentence: str) -> List[Tuple[str, str, str]]:

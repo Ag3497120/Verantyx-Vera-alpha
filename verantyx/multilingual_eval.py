@@ -378,6 +378,71 @@ def main() -> int:
             failures.append("txt cleaning")
     print()
 
+    # -- 4g. Grammar as data: bundled, overlayable, loudly validated --------
+    # The Japanese vocabulary ships as lang_data/ja_grammar.json and a user
+    # extends it with a file beside their store — no code. The validator
+    # enforces the rules this project paid for on real corpora (2-char
+    # floor, one pole per term, no dangling references), and an invalid
+    # overlay refuses to load with every problem named.
+    from . import ja_grammar
+    from .placement_explain import explain
+
+    base = ja_grammar.status()
+    ok = (base["pairs"] >= 12 and base["stopwords"] >= 50
+          and base["overlay"] is None)
+    print(f"[{'ok  ' if ok else 'FAIL'}] bundled grammar loads from data: "
+          f"{base['pairs']} pairs, {base['stopwords']} stopwords")
+    if not ok:
+        failures.append("bundled grammar")
+
+    with tempfile.TemporaryDirectory() as tdg:
+        ov = Path(tdg) / "ja_grammar.json"
+        ov.write_text('{"antonym_pairs": [["点灯", "消灯"]], '
+                      '"predicates": {"点灯": "は点灯しています。"}}',
+                      encoding="utf-8")
+        info = ja_grammar.load_overlay(ov)
+        hits = detect_ja("非常灯は点灯しています。")
+        ok = any(v == "点灯" for _a, v, _p in hits) and info["added_pairs"] == 1
+        print(f"[{'ok  ' if ok else 'FAIL'}] overlay adds a pair without code "
+              f"and detection picks it up: {hits}")
+        if not ok:
+            failures.append("overlay round-trip")
+        # The compound guard applies to overlay vocabulary too.
+        ok = not detect_ja("点灯確認の手順を説明します。")
+        print(f"[{'ok  ' if ok else 'FAIL'}] overlay vocabulary rides the same "
+              f"compound guard (点灯確認 stays silent)")
+        if not ok:
+            failures.append("overlay compound guard")
+
+        bad = Path(tdg) / "bad.json"
+        bad.write_text('{"antonym_pairs": [["開", "閉"]]}', encoding="utf-8")
+        try:
+            ja_grammar.load_overlay(bad)
+            ok = False
+        except ValueError as exc:
+            ok = "2 chars" in str(exc)
+        print(f"[{'ok  ' if ok else 'FAIL'}] a 1-char pair is refused loudly "
+              f"(開 lives inside 開始, 公開, 展開)")
+        if not ok:
+            failures.append("invalid overlay accepted")
+    ja_grammar.load()   # restore pristine bundled state for later checks
+
+    # The placement explainer: the adjustment loop's first step.
+    exp = explain("本町の避難所は閉鎖されました。")
+    ok = (exp["core"] == "避難所" and exp["core_rule"] == "head_of_topic_phrase"
+          and any(p["placed"] for p in exp["poles"]))
+    print(f"[{'ok  ' if ok else 'FAIL'}] explain_placement states core, rule "
+          f"and pole for a Japanese sentence")
+    if not ok:
+        failures.append("placement explain")
+    exp2 = explain("停止線の位置を確認してください。")
+    ok = not exp2["poles"] and "pole_note" in exp2
+    print(f"[{'ok  ' if ok else 'FAIL'}] explain_placement names WHY no pole "
+          f"was placed on a compound-noun sentence")
+    if not ok:
+        failures.append("placement explain notes")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

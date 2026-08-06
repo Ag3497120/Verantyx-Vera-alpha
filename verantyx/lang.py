@@ -101,20 +101,10 @@ _ALL_DIGITS = re.compile(r"^[0-9０-９]+$")
 #: purpose — 中 is genuinely ambiguous (「中止」の中 vs 「作業中」) and dropping a
 #: real topic is the more expensive error for an index whose purpose is to
 #: show what a body of work is about.
-_JA_STOP = {
-    # 形式名詞
-    "事", "物", "為", "様", "所", "際", "点", "方", "面", "由",
-    # 疑問詞
-    "何", "誰", "何処", "何時",
-    # 代名詞
-    "私", "僕", "俺", "彼", "彼女", "我々", "自分", "君", "貴方",
-    # 時間・順序の指示
-    "今", "現在", "今回", "前回", "次", "先", "後", "以前", "以降",
-    "最初", "最後", "今度", "今後", "従来", "当時",
-    # 程度・数量の一般語
-    "場合", "状態", "内容", "部分", "全体", "以上", "以下", "程度",
-    "一部", "全部", "多く", "少し",
-}
+# Stopwords now ship as data (lang_data/ja_grammar.json) so an expert
+# can extend them with an overlay instead of editing source. The
+# rationale for each group lives with the data's git history.
+from .ja_grammar import STOPWORDS as _JA_STOP
 _JA_QUESTION = ("何", "誰", "どこ", "いつ", "なぜ", "どう", "ですか", "とは")
 
 

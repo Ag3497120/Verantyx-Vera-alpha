@@ -73,6 +73,20 @@ def serve(store_path: str) -> int:
     from .failure_domains import BUILTIN_PACK_DIR as _BPD, reload_from as _reload
     if pack_overlay_dir.is_dir():
         _reload([_BPD, pack_overlay_dir])
+    # ── Japanese grammar overlay ─────────────────────────────────────────
+    # Same pattern as the failure packs: an expert's vocabulary lives
+    # beside their store, not inside the app bundle a reinstall replaces.
+    # An invalid overlay refuses to load with every problem named — running
+    # with half a grammar is the silent version of the same failure.
+    from . import ja_grammar as _jag
+    _grammar_overlay = path.parent / "ja_grammar.json"
+    _grammar_overlay_error = ""
+    if _grammar_overlay.is_file():
+        try:
+            _jag.load_overlay(_grammar_overlay)
+        except (ValueError, OSError) as exc:
+            _grammar_overlay_error = str(exc)
+
     ggpath = gap_graph_path(path)
     gap_graph = GapGraph.load(ggpath)
 
@@ -899,6 +913,38 @@ def serve(store_path: str) -> int:
             _save()
             out["ingested"] = rep.as_dict()
         return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def explain_placement(sentence: str) -> str:
+        """Where would this sentence land, and why — core, facets, poles,
+        the subject gate's verdict, and the arm, each with its reason.
+
+        The adjustment interface for "arrange my data": placement is a pure
+        function of text plus grammar data, so the way to change it is to
+        see the decision, extend the grammar overlay, and explain again.
+        There is deliberately no hand-reordering — hand-placed facts cannot
+        be re-derived and would break reproducibility."""
+        from .placement_explain import explain
+        return json.dumps(explain(sentence), ensure_ascii=False)
+
+    @mcp.tool()
+    def grammar_status() -> str:
+        """The Japanese grammar currently in force: bundled counts, which
+        overlay (if any) loaded from beside the store, and any overlay error
+        — an invalid overlay refuses to load with every problem named."""
+        out = _jag.status()
+        if _grammar_overlay_error:
+            out["overlay_error"] = _grammar_overlay_error
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def own_ai_guide() -> str:
+        """The build-your-own-AI guide: how placement works (core / facet /
+        pole / arm), the explain→overlay→re-explain adjustment loop, the
+        overlay file format with validation rules, and the traps the system
+        guards against. Bilingual, rendered from code so it cannot drift."""
+        from .own_ai_guide import render
+        return render()
 
     @mcp.tool()
     def goal_recipe(question: str) -> str:

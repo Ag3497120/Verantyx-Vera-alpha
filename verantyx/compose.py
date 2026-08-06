@@ -86,21 +86,10 @@ class Report:
 #: from shape produced 「通行可能しています」 and 「通行止しています」, both wrong:
 #: 通行可能 is adjectival and 通行止 is a plain noun, and no regex over kanji
 #: count distinguishes either from 配布, which does take する.
-_JA_PREDICATE: Dict[str, str] = {
-    "通行可能": "は通行可能です。", "通行止": "は通行止です。",
-    "開設": "は開設されています。", "閉鎖": "は閉鎖されています。",
-    "営業中": "は営業中です。", "休業": "は休業しています。",
-    "安全": "は安全です。", "危険": "は危険です。",
-    "実施": "は実施されています。", "中止": "は中止されています。",
-    "稼働": "は稼働しています。", "停止": "は停止しています。",
-    "使用可能": "は使用可能です。", "使用不可": "は使用できません。",
-    "復旧": "は復旧しています。", "断水": "は断水しています。",
-    "受付中": "は受付中です。", "受付終了": "は受付を終了しています。",
-    "運行": "は運行しています。", "運休": "は運休です。",
-    "有効": "は有効です。", "無効": "は無効です。",
-    "開館": "は開館しています。", "閉館": "は閉館しています。",
-    "満室": "は満室です。", "空室": "は空室があります。",
-}
+# Predicate forms ship as data with the vocabulary they describe —
+# adding a pair through the overlay and its predicate form is one
+# edit in one file, not two edits in two languages.
+from .ja_grammar import PREDICATES as _JA_PREDICATE
 
 
 def _ja_state(core: str, facet: str) -> str:
