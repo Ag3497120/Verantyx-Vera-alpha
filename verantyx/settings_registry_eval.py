@@ -104,6 +104,52 @@ def main() -> int:
         failures.append("mode families")
     print()
 
+    # Task recipes. Checked here rather than in their own suite because every
+    # step is a claim ABOUT the registry: a recipe whose steps have drifted
+    # sends a first-time user to a screen that no longer exists, which is the
+    # worst moment to be wrong.
+    from .task_recipes import RECIPES, match_goal, validate_recipes
+    errs = validate_recipes()
+    ok = not errs
+    print(f"[{'ok  ' if ok else 'FAIL'}] {len(RECIPES)} recipes: every step names "
+          f"a real setting or mode option")
+    if not ok:
+        for e in errs:
+            print(f"        {e}")
+        failures.append("recipe steps")
+    print()
+
+    goal_cases = [
+        ("独自のaiを作るやり方は", "ANSWER", "own_ai"),
+        ("how do I build my own AI", "ANSWER", "own_ai"),
+        ("完全にローカルで使いたい", "ANSWER", "fully_offline"),
+        ("2台のMacで動かしたい", "ANSWER", "two_macs"),
+        ("チームでレビューしたい", "ANSWER", "team_review"),
+        # An outcome this app has no path for. Naming the nearest goal would
+        # walk the user through settings that have nothing to do with it.
+        ("天気を教えて", "UNKNOWN_NO_RECIPE", None),
+    ]
+    for question, expect, goal in goal_cases:
+        got = match_goal(question)
+        ok = got["verdict"] == expect and (goal is None or got.get("goal") == goal)
+        print(f"[{'ok  ' if ok else 'FAIL'}] goal: {question} -> "
+              f"{got['verdict']}{'/' + got['goal'] if got.get('goal') else ''}")
+        if not ok:
+            failures.append(f"goal: {question}")
+    print()
+
+    # Steps that cannot be applied must say so. An API key is the clear case:
+    # nothing but the person should type it, and a recipe that offered to set
+    # it would be promising something it must not do.
+    unapplicable = [(r.goal, s.setting) for r in RECIPES for s in r.steps
+                    if not s.applicable]
+    ok = any(s.endswith("anthropic") for _g, s in unapplicable)
+    print(f"[{'ok  ' if ok else 'FAIL'}] {len(unapplicable)} step(s) marked "
+          f"not-applicable, including the API key")
+    if not ok:
+        failures.append("applicable flags")
+    print()
+
     # Freshness against the real checkout. Absent tree is reported, not passed.
     ide = Path.home() / "verantyx" / "cli" / "VerantyxIDE" / "Sources" / "Verantyx"
     fresh = verify_against_source(str(ide))

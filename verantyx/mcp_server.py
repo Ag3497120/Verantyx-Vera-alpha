@@ -872,6 +872,29 @@ def serve(store_path: str) -> int:
         return render_quickstart() if quickstart else render_guide()
 
     @mcp.tool()
+    def goal_recipe(question: str) -> str:
+        """Turn "what I want to do" into the ordered settings that get there.
+
+        Use this BEFORE settings_lookup when the user describes an outcome
+        ("build my own AI", "keep everything offline", "run across two Macs")
+        rather than naming a setting — a newcomer does not know the setting
+        is called inference_mode, so they cannot ask for it by name.
+
+        Returns ANSWER with numbered steps, each carrying the settings tab to
+        open, the value to set, why it matters, and whether the app may set it
+        for the user. Otherwise UNKNOWN_NO_RECIPE (with the list of goals) or
+        UNKNOWN_AMBIGUOUS_GOAL."""
+        from .task_recipes import match_goal
+        return json.dumps(match_goal(question), ensure_ascii=False)
+
+    @mcp.tool()
+    def list_goals() -> str:
+        """Every task recipe available — the "what can I actually do with
+        this" list, for a first-run screen or when goal_recipe misses."""
+        from .task_recipes import list_goals as _list
+        return json.dumps(_list(), ensure_ascii=False)
+
+    @mcp.tool()
     def failure_stats() -> str:
         """Histogram of typed failures across all recorded UNKNOWN buckets,
         plus what the boundary detector currently makes of each bucket.
