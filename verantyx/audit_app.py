@@ -43,6 +43,10 @@ from .document_loaders import SUPPORTED
 
 _MAX_BYTES = 64 * 1024 * 1024
 
+#: Where the local defect log lives. Local, like the documents: the loop is
+#: worth running on one machine even if nothing is ever sent anywhere.
+_GAP_HOME = Path.home() / ".verantyx-audit"
+
 
 def analyse(files: List[Dict[str, str]]) -> Dict[str, Any]:
     """`[{name, b64}]` in, the whole audit out.
@@ -286,9 +290,23 @@ function render(d){
         esc(r.reason||'')+'</div>';
       return;
     }
+    let g='';
+    if(r.gap){
+      g='<div class="why" style="margin-top:10px">'+
+        '<b>'+(r.gap.status==='created'?'新しい穴として記録':'既知の穴を補強')+
+        '</b>  <code>'+esc(r.gap.kind)+'</code>'+
+        (r.gap.seen>1?'  ・報告 '+r.gap.seen+' 件目':'')+
+        '<br>'+esc(r.what_next||'')+'</div>';
+    }
+    if(r.proposal){
+      g+='<div class="why" style="margin-top:8px"><b>語彙の提案</b>(適用されません。'+
+         '受け入れる前に、鳴ってはいけない文で確認してください)</div>'+
+         '<pre>'+esc(JSON.stringify(r.proposal.overlay,null,2))+'</pre>'+
+         '<div class="why">'+esc(r.proposal.control_check)+'</div>';
+    }
     box.innerHTML='<div class="why">これが報告の全文です。読んでから、'+
       'あなたの判断で送ってください。</div><pre>'+esc(r.report)+'</pre>'+
-      '<button data-copy="1">コピー / copy</button>';
+      '<button data-copy="1">コピー / copy</button>'+g;
     box.querySelector('[data-copy]').onclick=()=>{
       navigator.clipboard.writeText(r.report);
       box.querySelector('[data-copy]').textContent='コピーしました';
@@ -390,8 +408,29 @@ def _report_body(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
     except ValueError as exc:
         return {"verdict": "UNKNOWN_REDACTION_FAILED", "reason": str(exc)}
+    # File it as a gap in the same call. The report is a typed failure and
+    # `gap_graph` is where typed failures live; keeping them apart would mean
+    # a reporter's second sighting of one defect looks like a second defect.
+    #
+    # The graph is local, like everything else here — the loop is useful to
+    # the operator on their own machine even if they never send anything.
+    from .gap_graph import GapGraph, gap_graph_path
+    from .defect_gaps import GAP_KINDS, proposal, record
+
+    # Its own directory, not the store's. The audit tool has no store — it
+    # reads documents into a temporary one and throws it away — and writing
+    # into whatever store happened to be beside it would put an operator's
+    # defect log into a knowledge base they did not choose.
+    path = gap_graph_path(_GAP_HOME / "audit.json")
+    _GAP_HOME.mkdir(parents=True, exist_ok=True)
+    graph = GapGraph.load(path)
+    filed = record(graph, d, payload.get("sentences") or [])
+    graph.save(path)
+
     return {"verdict": "ANSWER", "report": render_defect(d),
-            "shapes": d.shapes}
+            "shapes": d.shapes, "gap": filed,
+            "what_next": GAP_KINDS.get(filed["kind"], ""),
+            "proposal": proposal(d)}
 
 
 def serve(port: int = 8899, open_browser: bool = True) -> int:

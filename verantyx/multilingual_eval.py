@@ -950,6 +950,72 @@ def main() -> int:
         failures.append("defect report failed to build")
     print()
 
+    # -- 4b18. A report becomes a gap, and the same defect twice becomes one --
+    # The loop this closes: a person marks a finding false, the report carries
+    # no document, and the report is a typed failure — which `gap_graph` was
+    # built for. What a report has that a growth bucket does not is the name
+    # of the RULE that decided it, and that makes aggregation a lookup.
+    #
+    # Two earlier keys failed the same way: a fixed character window and a
+    # cut-at-the-first-noun both split one defect into three, because
+    # 「閉鎖されるまでの間で」 and 「閉鎖されるまで利用できます」 differ in what
+    # follows the grammar — and what follows the grammar is not the defect.
+    from .defect_gaps import classify as _classify
+    from .defect_gaps import proposal as _proposal
+    from .defect_gaps import record as _record
+    from .defect_report import build as _bd
+    from .defect_report import frame as _frame
+    from .gap_graph import GapGraph as _GapGraph
+
+    _same = [("お住まいの市町村の避難所が閉鎖されるまでの間で", "閉鎖"),
+             ("受付が閉鎖されるまで利用できます", "閉鎖"),
+             ("工事完了まで避難所が閉鎖されるまでの期間", "閉鎖")]
+    keys = {_frame(sent, term) for sent, term in _same}
+    ok = len(keys) == 1
+    print(f"[{'ok  ' if ok else 'FAIL'}] one defect, one key -> {sorted(keys)}")
+    if not ok:
+        failures.append(f"defect key split: {keys}")
+
+    # The key must carry no text from the document — a rule name is this
+    # repository's own vocabulary.
+    key = next(iter(keys))
+    leaked = [w for w in ("避難所", "受付", "工事", "市町村") if w in key]
+    ok = not leaked
+    print(f"[{'ok  ' if ok else 'FAIL'}] the key carries no document text -> {key}")
+    if not ok:
+        failures.append(f"defect key leaked: {leaked}")
+
+    _g = _GapGraph()
+    _seen = []
+    for sent, term in _same:
+        _d = _bd("false_positive", [sent], aspect="開設", value=term)
+        _seen.append(_record(_g, _d, [sent]))
+    ok = ([r["status"] for r in _seen] == ["created", "reinforced", "reinforced"]
+          and _seen[-1]["seen"] == 3)
+    print(f"[{'ok  ' if ok else 'FAIL'}] three reports, one gap -> "
+          f"{[(r['status'], r['seen']) for r in _seen]}")
+    if not ok:
+        failures.append("defect gaps did not aggregate")
+
+    # Only a missing-vocabulary gap gets a proposal. For a rule defect the
+    # report does not contain enough — deciding what a guard should admit
+    # from one sentence is how a guard becomes too wide.
+    _vocab = _bd("false_negative", ["給水所の運営を打ち切りました。"],
+                 aspect="実施", value="打ち切り")
+    ok = (_classify(_vocab, ["給水所の運営を打ち切りました。"])
+          == "vocabulary_missing" and _proposal(_vocab) is not None)
+    print(f"[{'ok  ' if ok else 'FAIL'}] a missing term proposes an overlay")
+    if not ok:
+        failures.append("vocabulary gap did not propose")
+
+    _rule = _bd("false_positive", ["避難所が閉鎖されるまで"],
+                aspect="開設", value="閉鎖")
+    ok = _proposal(_rule) is None
+    print(f"[{'ok  ' if ok else 'FAIL'}] a rule defect proposes nothing")
+    if not ok:
+        failures.append("rule defect produced a proposal")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

@@ -104,6 +104,69 @@ def leaks(sentence: str, report: str, keep: Optional[set] = None) -> List[str]:
     return sorted(set(out))
 
 
+#: The engine's OWN rules, as the aggregation key.
+#:
+#: Two earlier attempts to key on the text failed for the same reason: a fixed
+#: window and a cut-at-the-first-noun both split one defect into three keys,
+#: because 「閉鎖されるまでの間で」 and 「閉鎖されるまで利用できます」 differ in
+#: what comes after the grammar — and what comes after the grammar is exactly
+#: the part that is not the defect.
+#:
+#: What makes two reports the same defect is not that their text matches. It
+#: is that the same RULE decided them, and the rules are already named in
+#: `polarity`. Keying on which ones fire needs no window at all, and it lands
+#: the report where a fix would go.
+_RULE_NAMES = (
+    ("until", "_JA_UNTIL"),
+    ("deeming", "_JA_DEEMING"),
+    ("negation", "_JA_NEG_AFTER"),
+    ("cell_value", "_JA_CELL_VALUE"),
+    ("cause", "_JA_CAUSE_MARK"),
+)
+
+
+def rules_fired(sentence: str, term: str) -> List[str]:
+    """Which of the engine's guards see this term's frame, by name."""
+    from . import polarity as _p
+
+    src = _ATTRIBUTION.sub("", sentence or "")
+    at = src.find(term)
+    if at < 0:
+        # A contradiction's evidence is TWO sentences and only one of them
+        # holds the reported term; the other is the side it disagrees with.
+        # Returning "none" for that one invented a second, empty key for
+        # every report — an aggregation key that means "this sentence is not
+        # about the defect" is worse than no key.
+        return []
+    tail = src[at + len(term):]
+    out = []
+    for label, attr in _RULE_NAMES:
+        rx = getattr(_p, attr, None)
+        if rx is not None and rx.match(tail):
+            out.append(label)
+    if not out:
+        out.append("none")
+    return out
+
+
+def frame(sentence: str, term: str) -> str:
+    """The aggregation key: the term's pole plus the rules that fired on it.
+
+    Carries no text from the document at all — a rule name is this
+    repository's own vocabulary — so it is safe to send even where the
+    redacted skeleton would make somebody hesitate.
+    """
+    from .ja_grammar import ALIASES, ASPECT_OF
+
+    fired = rules_fired(sentence, term)
+    if not fired:
+        return ""
+    canonical = ALIASES.get(term, term)
+    hit = ASPECT_OF.get(canonical)
+    pole = f"{hit[0]}{hit[1]}" if hit else "?"
+    return f"{pole} + {'+'.join(fired)}"
+
+
 @dataclass
 class Defect:
     """One reportable shape. No document, no identity, no counts."""
@@ -112,6 +175,8 @@ class Defect:
     aspect: str = ""               # the opposition, e.g. 開設
     value: str = ""                # the pole read, e.g. 閉鎖
     shapes: List[str] = field(default_factory=list)   # redacted sentences
+    #: The aggregation key — what makes two reports the same defect.
+    frames: List[str] = field(default_factory=list)
     note: str = ""                 # free text the reporter chooses to add
     engine: str = ""
     #: Corpus statistics carry no content and make a report actionable —
@@ -138,7 +203,15 @@ def build(kind: str, sentences: List[str], *, aspect: str = "", value: str = "",
             )
         if shape and shape not in shapes:
             shapes.append(shape)
+    frames = []
+    if value:
+        term = value.replace("not_", "")
+        for s in sentences:
+            f = frame(s, term)
+            if f and f not in frames:
+                frames.append(f)
     return Defect(kind=kind, aspect=aspect, value=value, shapes=shapes,
+                  frames=frames,
                   note=note.strip()[:400],
                   coverage=round(coverage, 3) if coverage is not None else None,
                   corpus_kind=corpus_kind)
