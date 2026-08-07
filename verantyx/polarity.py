@@ -94,6 +94,7 @@ _JA_NEG_AFTER = re.compile(
     r"|^できない|^できません"
     r"|^[ぁ-ん]?[ 　]*[：:・][ 　]*(?:なし|無し)"
     r"|^[ぁ-ん]?[ 　]*(?:なし|無し)(?![ぁ-ん])"
+    r"|^[ぁ-ん]?(?:が|を|の)?[ 　]*解除"
 )
 
 #: English terms that are also ordinary prepositions or parts of hyphenated
@@ -247,9 +248,29 @@ def _standalone_index(text: str, term: str) -> int:
         at = text.find(term, at)
         if at < 0:
             return -1
-        after = text[at + len(term):at + len(term) + 1]
+        rest = text[at + len(term):]
+        after = rest[:1]
+        # A kanji after the term means a compound — 停止線, 危険物 — and the
+        # term is being named rather than asserted. Two kinds of kanji are
+        # grammar instead: a completion suffix (復旧済) and a NEGATION
+        # (閉鎖解除). Without the second, 「滑走路閉鎖解除済」 was read as a
+        # compound and silently dropped: the guard was right that 閉鎖解 is not
+        # 閉鎖, and wrong about why. The runway had reopened.
+        # 〜中 says the state is still running, and it is safe on exactly one
+        # side. For a term that names a STATE — every negative pole here is
+        # one — 「操業停止中」 is stopped and 「断水中」 is still out. For a term
+        # that names a TRANSITION, 中 means the opposite of the word:
+        # 「復旧中」 is being restored and is NOT restored, and reading it as
+        # 復旧 would tell a reader the water is back while the source says
+        # crews are still working. Restricting it to the negative pole makes
+        # that inversion impossible by construction rather than by care.
+        ongoing = (after == "中"
+                   and (_ASPECT_OF_JA.get(_JA_ALIASES.get(term, term))
+                        or ("", ""))[1] == "-")
         if (not after or not _KANJI.match(after)
-                or after in _JA_COMPLETION):
+                or after in _JA_COMPLETION
+                or ongoing
+                or _JA_NEG_AFTER.match(rest)):
             return at
         at += 1
 
@@ -464,7 +485,12 @@ def tabular_claim_ja(text: str, word: str) -> Tuple[bool, Optional[str]]:
     if at < 0:
         return False, None
     tail = text[at + len(word):]
-    marked = bool(_JA_CELL_VALUE.match(tail) or _JA_CASE_PARTICLE.search(text))
+    # A negation is a value too. 「滑走路閉鎖解除済」 says the runway REOPENED,
+    # and the marker test looked only at the character after 閉鎖 — 解 — which
+    # is neither kana nor a completion suffix, so the row asserted nothing and
+    # the reopening was dropped.
+    marked = bool(_JA_CELL_VALUE.match(tail) or _JA_NEG_AFTER.match(tail)
+                  or _JA_CASE_PARTICLE.search(text))
     # A term followed by a list separator is being NAMED, not asserted —
     # 「避難所の開設、運営等について」 lists what the guidance covers.
     # `_anchored_ok` applies the same rule on the prose path; stated again

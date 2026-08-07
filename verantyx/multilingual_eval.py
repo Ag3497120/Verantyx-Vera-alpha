@@ -41,7 +41,7 @@ from .cross_store import CrossStore
 from .document_ingest import Document, deep_report, ingest_documents
 from .document_loaders import SUPPORTED, load_directory, load_path
 from .lang import detect
-from .polarity import detect_ja
+from .polarity import detect_ja, ingest_polar_ja
 
 #: Sentences that must NOT produce a pole. Every one contains a polar term as
 #: part of a compound noun, which is the shape that fooled the first version.
@@ -468,6 +468,63 @@ def main() -> int:
     print(f"[{'ok  ' if ok else 'FAIL'}] 有料道路 opens then closes -> {toll}")
     if not ok:
         failures.append("heading context not reaching its rows")
+    print()
+
+    # -- 4b8. Two suffixes that are grammar, not compounds ------------------
+    # The compound guard rejects any kanji after a polar term, which is right
+    # for 停止線 and 危険物 and wrong for two forms that carry the claim.
+    #
+    # 〜解除 NEGATES. 「滑走路閉鎖解除済」 says the runway reopened, and it was
+    # being dropped as a compound — the guard was right that 閉鎖解 is not 閉鎖
+    # and wrong about why. Reading it as 閉鎖 would have been far worse.
+    #
+    # 〜中 says the state is still running, and it is safe on exactly ONE side.
+    # 「操業停止中」 is stopped; 「復旧中」 is being restored and is NOT restored.
+    # Restricting 中 to the negative pole makes that inversion impossible by
+    # construction, and 復旧中 is here so it stays impossible.
+    for sentence, want in [("滑走路閉鎖解除済", "not_閉鎖"),
+                           ("通行止め解除", "not_通行止"),
+                           ("・パン製造工場では、操業停止中。", "停止"),
+                           ("４自治体において約 37,600 戸が断水中。", "断水")]:
+        hits = detect_ja(sentence)
+        ok = any(v == want for _, v, _ in hits)
+        print(f"[{'ok  ' if ok else 'FAIL'}] suffix is grammar: {sentence[:22]:24s}"
+              f" -> {hits}")
+        if not ok:
+            failures.append(f"suffix: {sentence[:18]}")
+    ok = not detect_ja("復旧中")
+    print(f"[{'ok  ' if ok else 'FAIL'}] 復旧中 is NOT 復旧 -> {detect_ja('復旧中')}")
+    if not ok:
+        failures.append("中 inverted a transition into its completed state")
+    print()
+
+    # -- 4b9. Vocabulary added from a measured gap, and what stayed out -----
+    # Measured on the four 内閣府 revisions: 308 segments held a state word and
+    # produced no pole at all. 欠航 (22 of them) and 休止 (19) were the two
+    # biggest that are unambiguous, and both are aspect joins onto pairs that
+    # already exist rather than new pairs. The gap is now 249.
+    #
+    # 障害 is the largest single entry at 114 and is deliberately absent; the
+    # control sentences at the top of this file are what keep it that way.
+    for sentence, want in [("【7 月 28 日】欠航：29 便", "欠航"),
+                           ("６金融機関 15 店舗が営業休止", "休止"),
+                           ("（八代市：44 カ所）営業中 42 カ所", "営業中")]:
+        hits = detect_ja(sentence)
+        ok = any(v == want for _, v, _ in hits)
+        print(f"[{'ok  ' if ok else 'FAIL'}] vocabulary: {sentence[:24]:26s} -> {hits}")
+        if not ok:
+            failures.append(f"vocabulary: {want}")
+    # Placement is the real gate: a plan and a possibility must reach nobody,
+    # however clearly the word is detected.
+    for sentence in ["通常営業に戻る予定です", "運休の可能性", "休止符を打つ"]:
+        one = CrossStore()
+        ingest_polar_ja(one, sentence)
+        placed = {k for f in one.crosses.values() for k in f if ":" in k}
+        ok = not placed
+        print(f"[{'ok  ' if ok else 'FAIL'}] not a claim: {sentence[:20]:22s} -> "
+              f"{placed or 'nothing placed'}")
+        if not ok:
+            failures.append(f"placed from a non-claim: {sentence[:16]}")
     print()
 
     # -- 4c. English prepositions must not read as state claims -------------
