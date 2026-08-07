@@ -621,6 +621,18 @@ def main() -> int:
         if not ok:
             failures.append("docx run joining")
 
+        # A corrupt file must not take the batch down with it. Measured:
+        # installing pypdf turned the fake PDF above from "no parser" into a
+        # real parse that raised PdfStreamError, outside the exception tuple
+        # being caught, and the whole run died. One bad file must never cost
+        # the other nine hundred.
+        good = load_path(str(root / "a.txt"))
+        ok = good["verdict"] == "ANSWER" and res["loaded"] >= 5
+        print(f"[{'ok  ' if ok else 'FAIL'}] a file that fails to parse is "
+              f"skipped by name while the rest still load")
+        if not ok:
+            failures.append("corrupt file killed the batch")
+
         # An unreadable file is a typed refusal, not an empty Document.
         missing = load_path(str(root / "nope.txt"))
         ok = missing["verdict"] == "UNKNOWN_UNREADABLE"

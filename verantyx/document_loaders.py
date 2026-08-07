@@ -306,7 +306,16 @@ def load_path(path: str, source: Optional[str] = None) -> Dict[str, Any]:
         return {"verdict": "UNKNOWN_NO_PARSER", "path": str(p), "suffix": suffix,
                 "reason": "PDF support needs the `docs` extra",
                 "install": "pip install verantyx-vera[docs]"}
-    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+    except Exception as exc:  # noqa: BLE001 — deliberate, see below
+        # Every parser failure becomes a typed refusal for THIS file, and the
+        # batch continues. Deliberately broad: third-party parsers raise
+        # their own exception hierarchies, and a list of the ones seen so far
+        # is a list that is wrong the first time a new format appears.
+        #
+        # Measured: with pypdf installed, a truncated PDF raised
+        # PdfStreamError — outside the previous (OSError, ValueError,
+        # BadZipFile) tuple — and took down the whole run. One corrupt file
+        # must never cost the other nine hundred.
         return {"verdict": "UNKNOWN_UNREADABLE", "path": str(p),
                 "reason": f"{type(exc).__name__}: {exc}"}
 
