@@ -715,6 +715,46 @@ def main() -> int:
             failures.append(f"compound particle: {ch}")
     print()
 
+    # -- 4b14. The audit app is the pipeline, not a second one --------------
+    # The tool exists so somebody OTHER than the person who wrote the fixes
+    # can read the output — every "true by reading" judgement so far was made
+    # by the party that then changed the code. It must therefore run the same
+    # pipeline: a second ingestion path is a second thing that can disagree
+    # with the first, which is the class of defect this file keeps recording.
+    import base64 as _b64
+    from .audit_app import analyse as _analyse
+    _pair = [
+        {"name": "A新聞.txt",
+         "b64": _b64.b64encode("国道4号は土砂崩れで通行止です。"
+                               "本町の避難所は開設されました。".encode()).decode()},
+        {"name": "B放送.txt",
+         "b64": _b64.b64encode("国道4号は通行可能になりました。"
+                               "本町の避難所は閉鎖されました。".encode()).decode()},
+    ]
+    got = _analyse(_pair)
+    topics = {d["topic"] for d in got.get("detections", [])}
+    ok = got.get("verdict") == "ANSWER" and topics == {"国道4号", "避難所"}
+    print(f"[{'ok  ' if ok else 'FAIL'}] audit app finds what the engine finds -> "
+          f"{sorted(topics)}")
+    if not ok:
+        failures.append("audit app diverged from the engine")
+
+    # A format with no loader is a TYPED refusal naming the file, never an
+    # empty document — an empty document is indistinguishable from one that
+    # genuinely said nothing.
+    refused = _analyse([{"name": "x.exe", "b64": "AA=="}])
+    ok = refused.get("verdict") == "UNKNOWN_NO_READABLE_DOCUMENTS"
+    print(f"[{'ok  ' if ok else 'FAIL'}] audit app refuses by type -> "
+          f"{refused.get('verdict')}")
+    if not ok:
+        failures.append("audit app did not refuse an unreadable format")
+
+    ok = _analyse([]).get("verdict") == "UNKNOWN_NO_DOCUMENTS"
+    print(f"[{'ok  ' if ok else 'FAIL'}] audit app refuses an empty request")
+    if not ok:
+        failures.append("audit app accepted an empty request")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

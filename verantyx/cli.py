@@ -416,6 +416,15 @@ def cmd_mcp(args) -> int:
     return serve(args.store)
 
 
+def cmd_audit(args) -> int:
+    """A local page for auditing documents — the tool that lets somebody
+    other than the author of the fixes read the output. Binds to 127.0.0.1
+    only: the documents may be unpublished drafts."""
+    from .audit_app import serve as serve_audit
+
+    return serve_audit(port=args.port, open_browser=not args.no_open)
+
+
 def cmd_serve(args) -> int:
     """Milestone N: HTTP+SSE daemon — Vera as the harness, the IDE (or any
     local caller) as a subscriber/tool-provider instead of an MCP client
@@ -672,6 +681,14 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser(
+        "audit",
+        help="drop documents in a browser and read what the engine did")
+    p.add_argument("--port", type=int, default=8899)
+    p.add_argument("--no-open", action="store_true",
+                   help="do not launch a browser")
+    p.set_defaults(fn=cmd_audit)
 
     p = sub.add_parser(
         "serve",
