@@ -425,6 +425,31 @@ def main() -> int:
               f"(開 lives inside 開始, 公開, 展開)")
         if not ok:
             failures.append("invalid overlay accepted")
+    # The shipped sample domain pack must stay valid against the bundled
+    # grammar — it is the document's worked example, and a worked example
+    # that no longer loads is worse than none.
+    import json as _json
+    sample = Path(ja_grammar.BUILTIN_GRAMMAR).parent / "ja_domain_disaster.json"
+    raw_sample = _json.loads(sample.read_text(encoding="utf-8"))
+    raw_sample.pop("_comment", None)
+    merged_sample = {
+        "stopwords": sorted(ja_grammar.STOPWORDS),
+        "antonym_pairs": [list(x) for x in ja_grammar.ANTONYM_PAIRS]
+                         + raw_sample.get("antonym_pairs", []),
+        "aspect_joins": [list(x) for x in ja_grammar.ASPECT_JOINS],
+        "aliases": dict(ja_grammar.ALIASES),
+        "predicates": {**ja_grammar.PREDICATES,
+                       **raw_sample.get("predicates", {})},
+    }
+    errs2 = ja_grammar.validate(merged_sample)
+    ok = not errs2
+    print(f"[{'ok  ' if ok else 'FAIL'}] the shipped sample domain pack "
+          f"validates against the bundled grammar")
+    for e in errs2:
+        print(f"        {e}")
+    if not ok:
+        failures.append("sample pack invalid")
+
     ja_grammar.load()   # restore pristine bundled state for later checks
 
     # The placement explainer: the adjustment loop's first step.

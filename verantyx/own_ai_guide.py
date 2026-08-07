@@ -74,6 +74,14 @@ Place `ja_grammar.json` beside your store; it loads at startup.
 - 無効なオーバーレイは**全部の問題を列挙して拒否**される。半分だけ
   読み込まれることはない
 
+### 見本パック / Sample domain pack
+
+`lang_data/ja_domain_disaster.json` は災害情報ドメインの見本です。
+**自動では読み込まれません** — 語彙は精度への責任を伴うので、明示的に
+ストア隣の `ja_grammar.json` へ写して有効化します。provenance は
+seeded(暫定)で、現場での確認を経て信頼される、という失敗パックと
+同じ成熟度の考え方です。
+
 ## 罠に注意 / Known traps the system guards for you
 
 - 複合語: 「停止線」「危険物」は状態主張ではない → 直後が漢字なら不採用
