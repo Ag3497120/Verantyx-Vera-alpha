@@ -70,6 +70,12 @@ class Detection:
 
 @dataclass
 class Audit:
+    """A corpus measurement. `polar_claims` is here for one reason: without
+    it, a zero-detection result is unreadable. Zero contradictions over a
+    corpus containing zero polar claims is arithmetic, not performance, and
+    reporting the first without the second invites the reader to credit a
+    detector that never had the chance to fire."""
+
     files: int
     chars: int
     sentences_seen: int
@@ -79,6 +85,8 @@ class Audit:
     intake: Dict[str, Any]
     detections: List[Detection]
     fragment_ratio: float
+    polar_claims: int = 0
+    vocabulary_seen: Dict[str, int] = field(default_factory=dict)
 
     @property
     def coverage(self) -> float:
@@ -130,12 +138,24 @@ def audit(paths: List[str]) -> Audit:
     cores = list(store.crosses)
     frag = (sum(1 for c in cores if _is_fragment(c)) / len(cores)) if cores else 0.0
 
+    # Which opposition terms the corpus actually contains, and in how many
+    # documents. A term appearing in one document can never produce a
+    # contradiction — it takes two sources to disagree — so this column is
+    # what separates "found nothing" from "had nothing to find".
+    from . import ja_grammar
+    seen: Dict[str, int] = {}
+    for term in ja_grammar.TERMS:
+        n = sum(1 for d in docs if term in d.text)
+        if n:
+            seen[term] = n
+
     return Audit(
         files=res["loaded"], chars=sum(len(d.text) for d in docs),
         sentences_seen=rep.sentences_seen, sentences_placed=rep.sentences,
         topics=len(cores), seconds=round(elapsed, 2),
         intake=assess(store, rep), detections=detections,
-        fragment_ratio=round(frag, 3))
+        fragment_ratio=round(frag, 3), polar_claims=rep.polar_claims,
+        vocabulary_seen=dict(sorted(seen.items(), key=lambda kv: -kv[1])))
 
 
 def worksheet(a: Audit, lang: str = "ja") -> str:
@@ -156,6 +176,16 @@ def worksheet(a: Audit, lang: str = "ja") -> str:
                 "disagreement) or false (a false positive)."))
     out.append("")
     if not a.detections:
+        if a.polar_claims == 0:
+            out.append(("**検出ゼロ、ただし極性を持つ主張も 0 件。** この文書群には"
+                        "状態の主張(開/閉、通行可否など)が一つも含まれていないため、"
+                        "矛盾が 0 なのは算術的な必然であり、検出器の性能とは無関係です。"
+                        "**この結果から精度は測れません。**" if ja else
+                        "**Zero detections, and zero polar claims.** These "
+                        "documents contain no state assertions at all, so zero "
+                        "contradictions is arithmetic rather than performance. "
+                        "**No precision can be read from this.**"))
+            return "\n".join(out)
         out.append(("**検出ゼロ。** これは検出器が働いた証拠ではありません。"
                     "この文書群が実際に食い違っていないだけかもしれず、"
                     "見逃しの可能性も残ります(下記のとおり再現率は測っていません)。"
@@ -193,6 +223,11 @@ def report(a: Audit, marked: Optional[List[Detection]] = None,
                f" / {'断片率' if ja else 'fragment ratio'} {a.fragment_ratio:.1%}")
     out.append(f"- {'処理' if ja else 'throughput'}: {a.chars / max(a.seconds, .01):,.0f}"
                f" {'文字/秒' if ja else 'chars/sec'} ({a.seconds}s)")
+    out.append(f"- {'極性を持つ主張' if ja else 'polar claims'}: {a.polar_claims}")
+    multi = {t: n for t, n in a.vocabulary_seen.items() if n > 1}
+    out.append(f"- {'対立語彙が2出典以上に現れた数' if ja else 'opposition terms in >1 source'}"
+               f": {len(multi)}"
+               + (f" ({', '.join(list(multi)[:6])})" if multi else ""))
     out.append(f"- {'取り込み診断' if ja else 'intake'}: **{a.intake['verdict']}**")
     for f in a.intake.get("findings", []):
         out.append(f"  - {f['verdict']}: {f.get('measured', '')}")
