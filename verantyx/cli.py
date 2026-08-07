@@ -416,6 +416,47 @@ def cmd_mcp(args) -> int:
     return serve(args.store)
 
 
+def cmd_self_audit(args) -> int:
+    """Signals a defect leaves in the store, without anybody reading output.
+
+    This is the end of the loop that still needed a person. It does NOT mark
+    anything wrong — a suspected gap is a place to look, never a verdict, and
+    it never reaches rule synthesis on its own.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .arm_schema import ArmIndex
+    from .catalog import collect as _collect
+    from .cross_store import CrossStore
+    from .document_ingest import ingest_documents
+    from .document_loaders import load_paths
+    from .self_audit import scan, summary, to_gaps
+
+    docs = load_paths(_collect(list(args.paths))["files"])["documents"]
+    if not docs:
+        print(_json.dumps({"verdict": "UNKNOWN_NO_DOCUMENTS"},
+                          ensure_ascii=False))
+        return 1
+    store, arms = CrossStore(track_provenance=True), ArmIndex()
+    ingest_documents(store, docs, arms)
+    found = scan(store, arms)
+
+    out = {"verdict": "ANSWER", "documents": len(docs), **summary(found),
+           "signals": [s.as_dict() for s in found]}
+    if args.file_gaps:
+        from .gap_graph import GapGraph, gap_graph_path
+
+        home = _Path.home() / ".verantyx-audit"
+        home.mkdir(parents=True, exist_ok=True)
+        path = gap_graph_path(home / "audit.json")
+        graph = GapGraph.load(path)
+        out["filed"] = to_gaps(graph, found)
+        graph.save(path)
+    print(_json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_audit(args) -> int:
     """A local page for auditing documents — the tool that lets somebody
     other than the author of the fixes read the output. Binds to 127.0.0.1
@@ -681,6 +722,14 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser(
+        "self-audit",
+        help="find structural signals of defects, with no person reading")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--file-gaps", action="store_true",
+                   help="record what it finds in the local gap graph")
+    p.set_defaults(fn=cmd_self_audit)
 
     p = sub.add_parser(
         "audit",

@@ -1098,6 +1098,81 @@ def main() -> int:
         failures.append("invalid suppression accepted")
     print()
 
+    # -- 4b20. Gaps from structure alone, with nobody reading ----------------
+    # The loop already ran entirely on one machine. What it still needed was a
+    # person to say "this finding is wrong" — and a person is an external
+    # connection of a different kind: the loop stops the moment nobody looks.
+    #
+    # Structure can raise the gap instead. Not by judging its own findings
+    # correct, which it cannot do, but by noticing the shapes a defect leaves
+    # in the store even when the output is never read.
+    from .self_audit import scan as _self_scan
+    from .self_audit import summary as _self_summary
+    from . import lang as _lang
+
+    _broken = CrossStore()
+    _broken.track_provenance = True
+    ingest_documents(_broken, [
+        Document("A新聞", "国道4号は通行止です。"),
+        Document("B放送", "国道4号は通行可能になりました。"),
+    ])
+    _sig = {s.signal for s in _self_scan(_broken)}
+    ok = not _sig
+    print(f"[{'ok  ' if ok else 'FAIL'}] a clean store raises nothing -> {_sig}")
+    if not ok:
+        failures.append(f"self-audit fired on clean output: {_sig}")
+
+    # Disabling the polar-core demotion is exactly the defect this project
+    # fixed twice, and it must be visible from structure alone.
+    _saved = _lang._is_polar_ja
+    _lang._is_polar_ja = lambda w: False
+    try:
+        _bad = CrossStore()
+        _bad.track_provenance = True
+        ingest_documents(_bad, [
+            Document("A", "断水が発生しています。"),
+            Document("B", "断水は復旧しました。"),
+        ])
+        _sig = {s.signal for s in _self_scan(_bad)}
+    finally:
+        _lang._is_polar_ja = _saved
+    ok = "polar_core" in _sig
+    print(f"[{'ok  ' if ok else 'FAIL'}] a polar core is visible without a "
+          f"reader -> {_sig}")
+    if not ok:
+        failures.append("self-audit missed a polar core")
+
+    # One source holding both poles is the shape of a misread, not of a
+    # document arguing with itself.
+    _self = CrossStore()
+    _self.track_provenance = True
+    ingest_documents(_self, [
+        Document("同一出典", "本町の避難所は開設されました。"
+                             "本町の避難所は閉鎖されました。"),
+    ])
+    _sig = {s.signal for s in _self_scan(_self)}
+    ok = "self_conflict" in _sig
+    print(f"[{'ok  ' if ok else 'FAIL'}] one source, both poles -> {_sig}")
+    if not ok:
+        failures.append("self-audit missed a self conflict")
+
+    # And it must never call anything wrong. Everything it raises is QUALITY
+    # and marked suspected, because the ranges overlap with correct output —
+    # the measured false positive ran 117 characters and a confirmed-true one
+    # ran 53.
+    from .gap_graph import GapGraph as _GG
+    from .self_audit import to_gaps as _to_gaps
+    _g = _GG()
+    _filed = _to_gaps(_g, _self_scan(_self))
+    nodes = [_g.get(f["gap_id"]) for f in _filed]
+    ok = all(n.severity == "QUALITY" and n.observed_transition == "suspected"
+             for n in nodes)
+    print(f"[{'ok  ' if ok else 'FAIL'}] a structural gap is suspected, never "
+          f"a verdict -> {[(n.severity, n.observed_transition) for n in nodes]}")
+    if not ok:
+        failures.append("self-audit filed a verdict")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"
