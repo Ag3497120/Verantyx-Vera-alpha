@@ -90,6 +90,13 @@ _TRAPS = [
     "If the elevator is unavailable, visitors should use the stairs.",
     "The policy values (when group access is available on your surface) are listed.",
     "エレベーターが使用不可の場合は階段を使ってください。",
+    # Both found on a real 内閣府 case-study PDF, where they met each other
+    # inside ONE document and were reported as that document contradicting
+    # itself. Narrative past is history, not a current state; a polar term
+    # inside an enumeration is being named, not asserted.
+    "避難所が閉鎖した後にPCR検査を実施したところ陽性が判明した。",
+    "避難所の開設、運営等については留意事項を発出しています。",
+    "避難所が開設された際の対応を記載しています。",
 ]
 
 _FILLER_EN = ["The {n} was founded decades ago.",

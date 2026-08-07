@@ -345,8 +345,26 @@ def _anchored_ok(text: str, noun: str, word: str, lang: str) -> bool:
         m = _ja_anchor_match(text, noun, word)
         if m is None:
             return False
-        after = text[m.end():m.end() + 8]
-        return not re.match(r"^[のでにと]?(場合|とき|なら|れば|たら)", after)
+        at = text.rfind(word, m.start(), m.end())
+        after = text[at + len(word):at + len(word) + 10] if at >= 0 else ""
+        # A hypothetical asserts nothing.
+        if re.match(r"^[のでにと]?(場合|とき|なら|れば|たら)", after):
+            return False
+        # A past incident is history, not a current state. Found on a real
+        # government case-study PDF: 「避難所が閉鎖した後にPCR検査を実施した」
+        # is one shelter's story, and reading it as "this shelter is closed"
+        # put it against a sentence elsewhere in the SAME document.
+        if re.match(r"^(した|され(た|て)|してい(た|る)?)?(後|際|時|直後|とき)", after):
+            return False
+        # A noun inside an enumeration is a topic, not a predicate:
+        # 「避難所の開設、運営等については」 lists what the guidance covers.
+        # A polar term followed by a list separator, or preceded by の, is
+        # being named rather than asserted.
+        if re.match(r"^[、，・]", after):
+            return False
+        if at >= 1 and text[at - 1] == "の":
+            return False
+        return True
     m = _en_anchor_match(text, noun, word)
     if m is None:
         return False
