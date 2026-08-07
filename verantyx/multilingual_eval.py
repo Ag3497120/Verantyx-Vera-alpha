@@ -421,6 +421,55 @@ def main() -> int:
             failures.append(f"cell value: {sentence[:18]}")
     print()
 
+    # -- 4b7. The subject in the heading, the state in the row --------------
+    # 内閣府 reports road closures as 「①高速道路」 followed by 「ア 被災による
+    # 通行止め：２路線１３区間」. The row cannot say which network it is about,
+    # and two of the five genuinely changed polarity across the four
+    # revisions — 有料道路 gained a closure on 8/6, 直轄国道 cleared after 7/29.
+    # They were the entire remaining recall gap on that corpus.
+    #
+    # The dangerous half is the heading being WRONG rather than missing. PDF
+    # extraction glues a heading to the line above it — 「…隣接区間被災②有料
+    # 道路」 — and with the heading hidden, 有料道路's row was filed under
+    # 高速道路: a network with thirteen closed sections reported as having
+    # none. A circled numeral always begins an item, so the splitter cuts
+    # before it, and that false positive is what this block pins.
+    from .polarity import heading_subject_ja
+    for text, expect in [("①高速道路", "高速道路"),
+                         ("③直轄国道（直轄高速除く）", "直轄国道"),
+                         ("【福岡県】", "福岡県"),
+                         ("ア 被災による通行止め：なし", None),
+                         ("7 0 7/28 ・復旧済", None),
+                         ("建物被害 停電 断水", None),
+                         ("①通行止め", None)]:
+        got = heading_subject_ja(text)
+        ok = got == expect
+        print(f"[{'ok  ' if ok else 'FAIL'}] heading: {text[:22]:24s} -> {got}")
+        if not ok:
+            failures.append(f"heading: {text[:18]}")
+
+    road = CrossStore()
+    road.track_provenance = True
+    ingest_documents(road, [
+        Document("内閣府 7/29",
+                 "①高速道路\nア 被災による通行止め：２路線１３区間\n"
+                 "・E77 九州中央道（嘉島 ICT～小池高山 IC）：１区間：隣接区間被災②有料道路\n"
+                 "ア 被災による通行止め：なし\n"),
+        Document("内閣府 8/6",
+                 "①高速道路\nア 被災による通行止め：２路線９区間\n"
+                 "②有料道路\nア 被災による通行止め：１路線１区間\n")])
+    fast = {k for k in road.crosses.get("高速道路", {}) if ":" in k}
+    toll = {k for k in road.crosses.get("有料道路", {}) if ":" in k}
+    ok = fast == {"通行可能:通行止"}
+    print(f"[{'ok  ' if ok else 'FAIL'}] 高速道路 is closed in both revisions -> {fast}")
+    if not ok:
+        failures.append("glued heading leaked into the previous section")
+    ok = toll == {"通行可能:not_通行止", "通行可能:通行止"}
+    print(f"[{'ok  ' if ok else 'FAIL'}] 有料道路 opens then closes -> {toll}")
+    if not ok:
+        failures.append("heading context not reaching its rows")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

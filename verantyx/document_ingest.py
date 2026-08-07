@@ -33,7 +33,14 @@ from typing import Any, Dict, List, Optional
 from .arm_schema import ArmIndex, classify_arm
 from .cross_store import CrossStore
 from .polarity import (ANTONYM_PAIRS, ANTONYM_PAIRS_JA, detect,
-                       detect_ja, ingest_polar, ingest_polar_ja)
+                       detect_ja, heading_subject_ja, ingest_polar,
+                       ingest_polar_ja)
+
+#: How many segments a section heading stays in reach. 内閣府 puts one to
+#: three lines between 「①高速道路」 and the row it governs, and the next
+#: heading arrives within a dozen; twelve is loose enough for that shape and
+#: tight enough that a heading cannot adopt a claim from the next section.
+_HEADING_REACH = 12
 
 #: Japanese does not put a space after 。, so a splitter that requires
 #: trailing whitespace treats a whole article as one sentence — and then the
@@ -48,7 +55,17 @@ from .polarity import (ANTONYM_PAIRS, ANTONYM_PAIRS_JA, detect,
 #: せん」 would be stored as 安全. With it, the rule is what lets a table row
 #: be a claim at all: cutting only at 。 made 内閣府's 259-line road table one
 #: sentence about 国土交通省.
-_SENT = re.compile(r"(?<=[.!?。！？])\s*|\n+")
+#: The third alternative is a structural marker rather than punctuation. A
+#: circled numeral ALWAYS begins an item, and PDF extraction glues it to the
+#: line above: 「・E77 九州中央道（…）：１区間：隣接区間被災②有料道路」 hid the
+#: heading 「②有料道路」 inside a detail line, so the row beneath it was filed
+#: under the previous section — 高速道路 reported as having no closures when
+#: it had thirteen. Splitting before the marker restores the heading.
+#:
+#: 〜、・ before it are excluded, because 「①〜③のとおり」 is a reference to
+#: items rather than the start of one.
+_SENT = re.compile(r"(?<=[.!?。！？])\s*|\n+"
+                   r"|(?<=[^\s〜～、・])(?=[①-⑳])")
 
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿]")
 
@@ -97,7 +114,8 @@ class IngestReport:
 
 def _place(store: CrossStore, sentence: str,
            detect_on: Optional[str] = None,
-           doc_lang: Optional[str] = None) -> tuple:
+           doc_lang: Optional[str] = None,
+           context: Optional[str] = None) -> tuple:
     """Put one sentence in the store, using the right language's segmenter.
 
     `ingest_polar` goes through CrossStore.ingest_sentence, whose decomposer
@@ -136,7 +154,8 @@ def _place(store: CrossStore, sentence: str,
     if lang == "zh" and doc_lang == "ja":
         lang = "ja"
     if lang == "ja":
-        return ingest_polar_ja(store, sentence, claim=detect_on), "ja"
+        return (ingest_polar_ja(store, sentence, claim=detect_on,
+                                context=context), "ja")
     if lang == "zh":
         # Chinese gets segmentation (the ideograph-run scanner is script-,
         # not language-specific) but NOT the Japanese polarity pass: the
@@ -180,15 +199,42 @@ def ingest_documents(store: CrossStore, docs: List[Document],
         rep.documents += 1
         count = 0
         doc_lang = _detect_lang(doc.text or "")
+        # The section a row sits under. An official document names the thing
+        # in a heading and states its condition in the rows below —
+        # 「①高速道路」 then 「ア 被災による通行止め：２路線１３区間」 — so a row
+        # that asserts a value and names no subject belongs to the heading.
+        #
+        # Bounded, not sticky. A heading is replaced by the next one and
+        # expires after HEADING_REACH segments, because a heading that stays
+        # live to the end of a document would collect every orphan claim
+        # after it, and an orphan claim on the wrong subject is the error
+        # this module spends everything else avoiding.
+        heading: Optional[str] = None
+        heading_age = 0
         for raw in _SENT.split(doc.text or ""):
             s = raw.strip()
             if not s:
                 continue
             rep.sentences_seen += 1
+            # Before the length floor, not after. A heading is SHORT by
+            # nature — 「①高速道路」 is five characters and the floor is six —
+            # so checking it after the filter meant the only headings ever
+            # seen were the long ones, and every road network resolved to the
+            # section title 道路 instead of to itself.
+            found = heading_subject_ja(s) if doc_lang == "ja" else None
+            if found:
+                heading, heading_age = found, 0
+            elif heading is not None:
+                heading_age += 1
+                if heading_age > _HEADING_REACH:
+                    heading = None
+
             if len(s) < _min_chars(s):
                 continue
+
             tagged = f"{s} (reported by {doc.source})"
-            core, lang = _place(store, tagged, detect_on=s, doc_lang=doc_lang)
+            core, lang = _place(store, tagged, detect_on=s, doc_lang=doc_lang,
+                                context=heading)
             if core is None:
                 continue
             by_lang = rep.core_lang.setdefault(core, {})

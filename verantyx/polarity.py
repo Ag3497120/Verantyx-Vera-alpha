@@ -163,7 +163,8 @@ def detect_ja(sentence: str) -> List[Tuple[str, str, str]]:
 
 def _place_poles(store: CrossStore, sentence: str, core: str,
                  hits: List[Tuple[str, str, str]], lang: str,
-                 claim: Optional[str] = None) -> None:
+                 claim: Optional[str] = None,
+                 context: Optional[str] = None) -> None:
     """Attach each detected pole to the noun it is actually predicated of.
 
     The recall half of the subject gate. The gate alone asked "is the CORE
@@ -195,7 +196,17 @@ def _place_poles(store: CrossStore, sentence: str, core: str,
         else:
             target = subject_of(read, word, lang)
             if target is None:
-                continue
+                # The row asserts a value and names no subject — the normal
+                # shape of an official document, where the subject is in the
+                # heading above. Only for THAT case: a header row or an
+                # enumeration returns (False, None) and still places nothing,
+                # which is what keeps the heading from collecting every stray
+                # word in its section.
+                asserted, _ = (tabular_claim_ja(read, word)
+                               if lang == "ja" else (False, None))
+                if not (asserted and context):
+                    continue
+                target = context
         seen_at = read.rfind(word)
         key = (target, aspect)
         if key not in latest or seen_at > latest[key][0]:
@@ -310,7 +321,8 @@ _JA_CELL_VALUE = re.compile(r"^[ぁ-ヿ]|^[" + "".join(sorted(_JA_COMPLETION)) +
 
 
 def ingest_polar_ja(store: CrossStore, sentence: str,
-                    claim: Optional[str] = None) -> Optional[str]:
+                    claim: Optional[str] = None,
+                    context: Optional[str] = None) -> Optional[str]:
     """Japanese ingest plus pole placement.
 
     Mirrors `ingest_polar`, but segments with `lang.ja_ingest_sentence`
@@ -335,7 +347,7 @@ def ingest_polar_ja(store: CrossStore, sentence: str,
     if core is None:
         return None
     _place_poles(store, sentence, core, detect_ja(sentence), "ja",
-                 claim=claim)
+                 claim=claim, context=context)
     return core
 
 
@@ -362,6 +374,122 @@ def detect(sentence: str) -> List[Tuple[str, str, str]]:
         else:
             out.append((aspect, word, pol))
     return out
+
+
+#: A section heading: a numbering marker, then a name. 内閣府 writes road
+#: closures as 「①高速道路」 followed by 「ア 被災による通行止め：２路線１３区間」,
+#: and the row alone cannot say which network it is about. Measured on four
+#: revisions: two of the five networks genuinely changed polarity across them
+#: — 有料道路 gained a closure on 8/6, 直轄国道 cleared after 7/29 — and both
+#: were unreachable, the entire remaining recall gap on that corpus.
+#:
+#: Deliberately narrow. Only markers that cannot be a data cell are accepted:
+#: ① 〜 ⑳, （2）, 3., 【福岡県】. 「7 0 7/28 ・復旧済」 also begins with a digit
+#: and a space, so that form is excluded — a heading must be unmistakable,
+#: because it is about to be handed a claim that has no subject of its own.
+_JA_HEADING_BRACKET = re.compile(r"^【([^】]{1,24})】$")
+_JA_HEADING_MARK = re.compile(
+    r"^(?:[①-⑳]|[（(]\s*[0-9０-９]{1,2}\s*[）)]|[0-9０-９]{1,2}[\.．])\s*(.+)$")
+
+
+def heading_subject_ja(text: str) -> Optional[str]:
+    """The thing a section heading names, or None if this is not a heading."""
+    from .lang import ja_content_runs
+
+    t = (text or "").strip()
+    if not t or len(t) > 40:
+        return None
+    m = _JA_HEADING_BRACKET.match(t) or _JA_HEADING_MARK.match(t)
+    if not m:
+        return None
+    rest = re.split(r"[（(【\[：:]", m.group(1))[0].strip()
+    # A heading that names a STATE is a column header, and handing rows to it
+    # would file every value under the word for the value.
+    if not rest or detect_ja(rest):
+        return None
+    runs = [r for r in ja_content_runs(rest)
+            if not is_state_word_ja(r) and not _JA_DATE_RUN.match(r)
+            and not _JA_ENUMERATOR.fullmatch(r)]
+    return runs[-1] if runs else None
+
+
+def tabular_claim_ja(text: str, word: str) -> Tuple[bool, Optional[str]]:
+    """Read a table row: (is this an asserted cell value, whose is it).
+
+    Official damage reports keep their per-place facts in tables, and a table
+    row has no particle at all — nothing marks a subject, so the prose paths
+    find nothing and the row's claim is dropped. Japanese tabular notation
+    reads head-final like the rest of the language: the state in the last
+    column is predicated of the nearest noun before it.
+
+    This is the reading convention, not an inference about one ministry's
+    layout, but a row is also the exact shape a heading has, so it is guarded:
+
+      no particle    a sentence has は or が; a row does not. This is what
+                     keeps the rule away from prose entirely.
+      last column    the state must sit in the row's final field, so a mid-row
+                     mention (「停止 断水」— 停止 is not the status) is
+                     excluded. Columns are separated by WHITESPACE, not by the
+                     term being last on the line: 「天草市 断水あり・漏水あり」 is
+                     two values in one cell, and requiring nothing after the
+                     term cost half the recall this rule exists to buy — 3 of
+                     6 restorations, measured against a water table read by
+                     hand, the three missed all having a compound cell.
+      not a quantity a subject may not end in a bare digit. 「約20,970」 is how
+                     many households lost water, not who did. 国道4号 and 第3条
+                     end in 号/条 and stay eligible.
+      value marked   a data cell says what it holds, in kana or with a
+                     completion suffix — 断水あり, 復旧済, 通行止め. A HEADER
+                     names columns with bare nouns (「建物被害 停電 断水」 is the
+                     damage table's heading; across four revisions 断水 appears
+                     bare 26 times and as 断水あり 14, the bare ones headings),
+                     and an ENUMERATION lists topics (「害、 停電、 断水、」).
+                     Prose is exempt from the marker, because a sentence may
+                     end in a bare verbal noun — 「熊本刑務所を避難所として開設」
+                     — and case particles are what tell the two apart.
+
+    The two return values are separate on purpose. `(False, None)` means this
+    is not a claim and nothing should be placed. `(True, None)` means it IS a
+    claim whose subject is not in the row — which is the normal shape of an
+    official document, 「①高速道路 / ア 被災による通行止め：２路線１３区間」, and
+    the caller can supply the heading. Collapsing both into None is what made
+    those rows unreachable.
+    """
+    from .lang import ja_content_runs
+
+    if re.search(r"[はが]", text) or re.search(
+            r"(場合|とき|なら|れば|たら|予定|見込)", text):
+        return False, None
+    at = _standalone_index(text, word)
+    if at < 0:
+        return False, None
+    tail = text[at + len(word):]
+    marked = bool(_JA_CELL_VALUE.match(tail) or _JA_CASE_PARTICLE.search(text))
+    # A term followed by a list separator is being NAMED, not asserted —
+    # 「避難所の開設、運営等について」 lists what the guidance covers.
+    # `_anchored_ok` applies the same rule on the prose path; stated again
+    # because this branch does not go through it, and because relaxing the
+    # marker for particle-bearing prose reopened exactly this hole.
+    enumerated = bool(re.match(r"^[、，]", tail))
+    if not marked or enumerated or _JA_COLUMN_GAP.search(tail):
+        return False, None
+
+    head = text[:at]
+    for run in reversed(ja_content_runs(head)):
+        if (run == word or is_state_word_ja(run)
+                or run[-1] in "0123456789０１２３４５６７８９"
+                or _JA_ENUMERATOR.fullmatch(run)
+                or _JA_DATE_RUN.match(run)):
+            continue
+        # A cause is not a subject. 「ア 被災による通行止め：なし」 and
+        # 「ア 被災による通行止め：２県６区間」 are two road networks' rows in ONE
+        # 8/6 report, each headed the same way, and taking 被災 for the subject
+        # made the document contradict itself.
+        where = head.rfind(run) + len(run)
+        if _JA_CAUSE_MARK.match(head[where:]):
+            continue
+        return True, run
+    return True, None
 
 
 def _around(text: str, run: str) -> str:
@@ -425,84 +553,8 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
                 if runs:
                     return runs[-1]
 
-        # Tabular rows: 「熊本県  熊本市 断水あり」. Official damage reports keep
-        # their per-place facts in tables, and a table row has no particle at
-        # all — nothing marks a subject, so both branches above find nothing
-        # and the row's claim is dropped. Japanese tabular notation reads
-        # head-final like the rest of the language: the state in the last
-        # column is predicated of the nearest noun before it.
-        #
-        # This is the reading convention, not an inference about one ministry's
-        # layout, but a row is also the exact shape a heading has, so it is
-        # guarded three ways:
-        #
-        #   no particle    a sentence has は or が; a row does not. This is what
-        #                  keeps the rule away from prose entirely.
-        #   last column    the state must sit in the row's final field, so a
-        #                  mid-row mention (「停止 断水」— 停止 is not the
-        #                  status) is excluded. Columns are separated by
-        #                  WHITESPACE, not by the term being the last thing on
-        #                  the line: 「天草市 断水あり・漏水あり」 is two values
-        #                  in one cell, and requiring nothing after the term
-        #                  cost half the recall this rule exists to buy —
-        #                  measured against the water table read by hand,
-        #                  3 of 6 restorations found, the three missed all
-        #                  having a compound cell.
-        #   not a quantity a subject may not end in a bare digit. 「約20,970」 is
-        #                  how many households lost water, not who did. 国道4号
-        #                  and 第3条 end in 号/条 and stay eligible.
-        #   value marked   a data cell says what it holds, in kana or with a
-        #                  completion suffix — 断水あり, 復旧済, 通行止め. Two
-        #                  other things wear the same shape and asserted
-        #                  nothing, and both produced false positives here
-        #                  before the marker was required:
-        #                    a HEADER names columns with bare nouns —
-        #                    「建物被害 停電 断水」 is the damage table's
-        #                    heading. Counted across the four revisions, 断水
-        #                    appears bare 26 times and as 断水あり 14, and the
-        #                    bare ones are headings.
-        #                    an ENUMERATION lists topics — 「害、 停電、 断水、」
-        #                    is a sentence naming what was damaged. Punctuation
-        #                    after the term is the tell, the same one
-        #                    `_anchored_ok` already uses on the prose path.
-        #                  The known cost is a data row that states its value
-        #                  with no marker at all; missing that is the cheaper
-        #                  error, on this module's standing terms.
-        if not re.search(r"[はが]", text) and not re.search(
-                r"(場合|とき|なら|れば|たら|予定|見込)", text):
-            at = _standalone_index(text, word)
-            tail = text[at + len(word):] if at >= 0 else ""
-            marked = bool(_JA_CELL_VALUE.match(tail)
-                          or _JA_CASE_PARTICLE.search(text))
-            # A term followed by a list separator is being NAMED, not
-            # asserted — 「避難所の開設、運営等について」 lists what the guidance
-            # covers. `_anchored_ok` applies the same rule on the prose path;
-            # stated again here because this branch does not go through it,
-            # and because relaxing the marker for particle-bearing prose
-            # reopened exactly this hole.
-            enumerated = bool(re.match(r"^[、，]", tail))
-            in_last_column = at >= 0 and not _JA_COLUMN_GAP.search(tail)
-            if at >= 0 and marked and in_last_column and not enumerated:
-                head = text[:at]
-                for run in reversed(ja_content_runs(head)):
-                    if (run == word or is_state_word_ja(run)
-                            or run[-1] in "0123456789０１２３４５６７８９"
-                            or _JA_ENUMERATOR.fullmatch(run)
-                            or _JA_DATE_RUN.match(run)):
-                        continue
-                    # A cause is not a subject. 「ア 被災による通行止め：なし」
-                    # and 「ア 被災による通行止め：２県６区間」 are two road
-                    # networks' rows in ONE 8/6 report, each headed the same
-                    # way, and taking 被災 for the subject made the document
-                    # contradict itself. What each row is actually about is
-                    # the network named in the section heading above it —
-                    # which the row does not contain, so the honest answer is
-                    # that there is no subject here.
-                    where = head.rfind(run) + len(run)
-                    if _JA_CAUSE_MARK.match(head[where:]):
-                        continue
-                    return run
-        return None
+        asserted, found = tabular_claim_ja(text, word)
+        return found if asserted else None
 
     # Lookahead, not consumption: in "that the lighthouse", a consuming
     # scan eats "that the" and captures "the" — the first run of this did
