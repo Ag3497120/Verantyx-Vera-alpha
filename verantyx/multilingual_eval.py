@@ -527,6 +527,43 @@ def main() -> int:
             failures.append(f"placed from a non-claim: {sentence[:16]}")
     print()
 
+    # -- 4b10. English periods that do not end sentences --------------------
+    # The Japanese side spent this whole file learning that a page's layout is
+    # not the author's punctuation. English has the same problem in one
+    # character: a period inside an abbreviation. Measured across 600
+    # documents and 82,813 segments of this author's repositories, 189
+    # segments end at an abbreviation (etc. 83, al. 75) and e.g./i.e. are cut
+    # in the middle of themselves — 「Your channels are still connected (e.」
+    # was the whole sentence the store kept, and the worksheet showed a person
+    # that fragment to judge.
+    #
+    # A sentence can lose its NEGATION the same way, which is why this is a
+    # correctness fix and not a tidiness one.
+    #
+    # The abbreviation must match as a whole TOKEN. As a bare suffix, "ed."
+    # matched every word ending in -ed. — 「The aquarium is closed.」 was
+    # joined to the sentence after it and two planted contradictions vanished.
+    # The generalization eval caught that, and both directions are pinned.
+    from .document_ingest import _SENT as _SENT_RE
+    from .document_ingest import _rejoin_abbreviations
+    split_cases = [
+        ("Your channels are still connected (e.g. Telegram). Next thing.", 2),
+        ("Supports Telegram, Discord, etc. The following applies.", 2),
+        ("Supports water, food, etc. and blankets are available.", 1),
+        ("Smith et al. showed that the valve is closed.", 1),
+        ("The aquarium is closed. The greenhouse is closed.", 2),
+        ("The road is safe. It is not closed.", 2),
+    ]
+    for text, want in split_cases:
+        parts = [x.strip() for x in _rejoin_abbreviations(_SENT_RE.split(text))
+                 if x.strip()]
+        ok = len(parts) == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] abbreviation: {text[:40]:42s} -> "
+              f"{len(parts)} sentence(s)")
+        if not ok:
+            failures.append(f"abbreviation split: {text[:24]}")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

@@ -67,6 +67,77 @@ _HEADING_REACH = 12
 _SENT = re.compile(r"(?<=[.!?。！？])\s*|\n+"
                    r"|(?<=[^\s〜～、・])(?=[①-⑳])")
 
+#: English abbreviations whose full stop is not a sentence end. Splitting at
+#: every period cut 「Your channels are still connected (e.」 out of
+#: migrating.md — the sentence lost its example and, more to the point, a
+#: sentence can lose its NEGATION the same way, which turns a claim into its
+#: opposite. Measured across 600 documents and 82,813 segments of this
+#: author's repositories: 189 segments end at an abbreviation, led by etc.
+#: (83) and al. (75), and e.g./i.e. are cut in the middle of themselves.
+#:
+#: The list is closed and the repair is conditional, because 「etc. The next
+#: point」 really is two sentences. A rejoin happens only when the following
+#: segment begins in lower case or a digit — the shape of a continuation
+#: rather than of a new sentence.
+#: Two tiers, because the repair has to be conditional for one and not the
+#: other. NEVER_FINAL abbreviations do not end sentences at all, so what
+#: follows joins whatever its case — 「(e.g. Telegram, Discord)」 continues
+#: with a proper noun, and requiring lower case left the example severed.
+#: MAY_END_SENTENCE ones genuinely can, so 「etc. The next point」 must stay
+#: two sentences and only a lower-case or digit continuation rejoins.
+_NEVER_FINAL = (
+    "e.g.", "i.e.", "cf.", "vs.", "no.", "fig.", "vol.", "pp.", "ed.",
+    "dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "mt.", "approx.",
+    "jan.", "feb.", "mar.", "apr.", "jun.", "jul.", "aug.", "sep.", "sept.",
+    "oct.", "nov.", "dec.",
+)
+_MAY_END_SENTENCE = (
+    "etc.", "al.", "inc.", "ltd.", "co.", "corp.",
+    "dept.", "univ.", "a.m.", "p.m.", "u.s.", "u.k.",
+)
+_ABBREVIATIONS = _NEVER_FINAL + _MAY_END_SENTENCE
+_INITIAL_TAIL = re.compile(r"(?:^|[^A-Za-z])[A-Za-z]\.$")
+_CONTINUES = re.compile(r"^[a-z0-9]")
+#: The trailing token, bounded. Matching the abbreviation as a bare SUFFIX
+#: read every word ending in -ed. as the abbreviation "ed." — so
+#: 「The aquarium is closed.」 was joined to the sentence after it and two
+#: planted contradictions vanished. The eval caught it, which is what the
+#: planted suite is for.
+_LAST_TOKEN = re.compile(r"(?:^|[^A-Za-z.])([A-Za-z.]{1,8}\.)$")
+
+
+def _trailing_abbreviation(prev: str) -> str:
+    m = _LAST_TOKEN.search(prev)
+    return m.group(1).lower() if m else ""
+
+
+def _rejoin_abbreviations(parts: List[str]) -> List[str]:
+    """Undo splits the period did not mean, leaving the rest untouched."""
+    out: List[str] = []
+    for part in parts:
+        if out:
+            prev = out[-1].rstrip()
+            nxt = part.lstrip()
+            # The known abbreviations are tested first. Once 「(e.」 and
+            # 「g.」 have been rejoined the result ends in a lone letter too,
+            # and the no-space rule would then swallow the space before the
+            # example itself: 「e.g.Telegram」.
+            token = _trailing_abbreviation(prev)
+            if token in _NEVER_FINAL and nxt:
+                out[-1] = prev + " " + nxt
+                continue
+            if token in _MAY_END_SENTENCE and _CONTINUES.match(nxt):
+                out[-1] = prev + " " + nxt
+                continue
+            # A lone initial is the middle of an abbreviation being cut in
+            # half — 「(e.」 + 「g. …」 — and rejoins with no space.
+            if _INITIAL_TAIL.search(prev) and nxt:
+                out[-1] = prev + nxt
+                continue
+        out.append(part)
+    return out
+
+
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿]")
 
 #: Sentence-length floor, by script. Twelve characters of Latin text is about
@@ -211,7 +282,7 @@ def ingest_documents(store: CrossStore, docs: List[Document],
         # this module spends everything else avoiding.
         heading: Optional[str] = None
         heading_age = 0
-        for raw in _SENT.split(doc.text or ""):
+        for raw in _rejoin_abbreviations(_SENT.split(doc.text or "")):
             s = raw.strip()
             if not s:
                 continue
