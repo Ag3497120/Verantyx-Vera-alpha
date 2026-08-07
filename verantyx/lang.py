@@ -129,9 +129,42 @@ from .ja_grammar import STOPWORDS as _JA_STOP
 _JA_QUESTION = ("何", "誰", "どこ", "いつ", "なぜ", "どう", "ですか", "とは")
 
 
+#: A date or a clock time. Excluded from cores for the reason the stopword
+#: list exists — a core is meant to be a topic, and 「７月29日」 is not one.
+#: Measured: 「７月29日（水）に開設した熊本刑務所の避難所につき、８月３日（月）を
+#: もって閉鎖」 cored under ７月29日, so the shelter that opened and closed had
+#: no topic to be filed under. Dates cannot be a word list, so this is a
+#: shape: digits FIRST, then a temporal kanji. 国道4号 and 第3条 carry their
+#: digit inside the name and are untouched.
+_JA_DATE = re.compile(r"[0-9０-９]+(?:[年月日時分秒][0-9０-９]*)+$")
+
+
+#: （水）（月）— a single character alone inside brackets is a label: the
+#: weekday beside a date, or an item marker. Read as content, 水 and 月 are
+#: two perfectly ordinary nouns (water, moon), and in
+#: 「７月29日（水）に開設した…８月３日（月）をもって閉鎖」 they were chosen as the
+#: subjects of 開設 and 閉鎖 — Wednesday opened the shelter and Monday closed
+#: it. Filtered here rather than in one caller, because a label is not
+#: content for any purpose.
+_JA_BRACKETS = ("（）", "()", "〔〕", "[]", "【】")
+
+
+def _bracketed_label(text: str, start: int, end: int) -> bool:
+    if end - start != 1 or start < 1 or end >= len(text):
+        return False
+    return text[start - 1] + text[end] in _JA_BRACKETS
+
+
 def ja_content_runs(text: str) -> List[str]:
-    return [r for r in _JA_RUN.findall(text or "")
-            if r not in _JA_STOP and not _ALL_DIGITS.match(r)]
+    text = text or ""
+    out: List[str] = []
+    for m in _JA_RUN.finditer(text):
+        r = m.group(0)
+        if (r in _JA_STOP or _ALL_DIGITS.match(r) or _JA_DATE.match(r)
+                or _bracketed_label(text, m.start(), m.end())):
+            continue
+        out.append(r)
+    return out
 
 
 #: The topic phrase: everything before the first は/が that follows a content

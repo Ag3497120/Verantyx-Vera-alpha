@@ -60,6 +60,17 @@ CONTROLS: List[str] = [
     "有効期限は明日までです。",
     "無効化の手順を説明します。",
     "開館時間は9時です。",
+    # A trap for a future vocabulary addition rather than for the code.
+    # Measured on 内閣府's 令和8年熊本地震 reports: 370 occurrences of state
+    # words the vocabulary does NOT hold, led by 障害 at 133 — the obvious
+    # partner for 稼働, and the one that must never be added. The compound
+    # guard rejects 障害者 and 障害物 because the next character is kanji, and
+    # lets 「障害のある方」 through, because の is a particle. Adding 障害 would
+    # read the evacuation of people with disabilities as a system failure, in
+    # the documents written for them. If a later change puts 障害 in the
+    # vocabulary, this line fails first.
+    "障害のある方の避難について",
+    "障害者への配慮が必要です。",
 ]
 
 #: (sentence, expected aspect, expected value)

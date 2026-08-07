@@ -261,6 +261,27 @@ _JA_CAUSE_MARK = re.compile(r"^(?:による|によって|により|に伴う|に
 #: characters or more — so it can be excluded by shape rather than by list.
 _JA_ENUMERATOR = re.compile(r"[ァ-ヿ]")
 
+#: A date or a clock time. 「７月29日」 is not a topic and not a subject, and
+#: it was becoming both: 「７月29日（水）に開設した熊本刑務所の避難所につき、
+#: ８月３日（月）をもって閉鎖」 cored under ７月29日 and lost the shelter.
+#: Anchored at a digit, so 国道4号 and 第3条 — where the digit is INSIDE the
+#: name — are untouched.
+_JA_DATE_RUN = re.compile(r"[0-9０-９]+(?:[年月日時分秒][0-9０-９]*)+$")
+
+#: （水）（月）— the weekday, and the general shape of a parenthesised label.
+#: In the same sentence these were chosen as the subjects of 開設 and 閉鎖:
+#: Wednesday and Monday read as "water" and "moon", each a perfectly good
+#: one-character noun with nothing to do with the claim.
+_JA_PAREN_LABEL = re.compile(r"[（(].?[）)]")
+
+#: Case particles. Their presence is what separates prose from a table row,
+#: and it decides whether a bare state word at the end is a claim or a column
+#: heading: 「熊本刑務所を避難所として開設」 ends in a bare 開設 and is a
+#: sentence; 「建物被害 停電 断水」 ends in a bare 断水 and is a heading. That
+#: one shelter opening on 8/3 and closing on 8/6 was the only miss the full
+#: candidate sweep of this corpus turned up.
+_JA_CASE_PARTICLE = re.compile(r"[をにでとへ]|から|まで|より|として")
+
 
 def is_state_word_ja(word: str) -> bool:
     """Is this word a state rather than a thing that can be in one?
@@ -343,6 +364,14 @@ def detect(sentence: str) -> List[Tuple[str, str, str]]:
     return out
 
 
+def _around(text: str, run: str) -> str:
+    """The run with the character on each side — enough to see （水）."""
+    at = text.rfind(run)
+    if at < 0:
+        return run
+    return text[max(0, at - 1):at + len(run) + 1]
+
+
 def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
     """The noun `word` is predicated of, or None if there is no clean subject.
 
@@ -368,6 +397,9 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
         from .lang import ja_content_runs
         for run in reversed(ja_content_runs(text)):
             if (run == word or is_state_word_ja(run)
+                    or _JA_DATE_RUN.match(run)
+                    or (len(run) == 1
+                        and _JA_PAREN_LABEL.match(_around(text, run)))
                     or not _anchored_ok(text, run, word, "ja")):
                 continue
             return run
@@ -440,14 +472,23 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
                 r"(場合|とき|なら|れば|たら|予定|見込)", text):
             at = _standalone_index(text, word)
             tail = text[at + len(word):] if at >= 0 else ""
-            marked = bool(_JA_CELL_VALUE.match(tail))
+            marked = bool(_JA_CELL_VALUE.match(tail)
+                          or _JA_CASE_PARTICLE.search(text))
+            # A term followed by a list separator is being NAMED, not
+            # asserted — 「避難所の開設、運営等について」 lists what the guidance
+            # covers. `_anchored_ok` applies the same rule on the prose path;
+            # stated again here because this branch does not go through it,
+            # and because relaxing the marker for particle-bearing prose
+            # reopened exactly this hole.
+            enumerated = bool(re.match(r"^[、，]", tail))
             in_last_column = at >= 0 and not _JA_COLUMN_GAP.search(tail)
-            if at >= 0 and marked and in_last_column:
+            if at >= 0 and marked and in_last_column and not enumerated:
                 head = text[:at]
                 for run in reversed(ja_content_runs(head)):
                     if (run == word or is_state_word_ja(run)
                             or run[-1] in "0123456789０１２３４５６７８９"
-                            or _JA_ENUMERATOR.fullmatch(run)):
+                            or _JA_ENUMERATOR.fullmatch(run)
+                            or _JA_DATE_RUN.match(run)):
                         continue
                     # A cause is not a subject. 「ア 被災による通行止め：なし」
                     # and 「ア 被災による通行止め：２県６区間」 are two road

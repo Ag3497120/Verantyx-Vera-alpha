@@ -105,19 +105,33 @@ class Audit:
         return d
 
 
-def _evidence(store: CrossStore, topic: str, claim: str) -> str:
+def _evidence(store: CrossStore, topic: str, claim: str,
+              aspect: str = "") -> str:
     """The sentence a claim came from, unmodified.
 
     Verbatim rather than paraphrased: the person marking this true or false
     is checking the system's reading against the source, and a paraphrase
     would be the system marking its own homework.
+
+    The KEYED facet is looked up first, and that is not a detail. A polar
+    word is also an ordinary facet of whatever sentence contained it, so
+    「７月29日（水）に開設した熊本刑務所の避難所につき、８月３日（月）をもって閉鎖」
+    puts a bare 開設 on 避難所 as well as the pole 開設:閉鎖 — and the bare one
+    won the lookup. Both sides of that detection were then shown the SAME
+    sentence, the closing one, while the opening side really came from a
+    different revision. A worksheet that shows the wrong quote invites a
+    person to mark a true detection false, which is worse than not offering
+    the quote at all.
     """
-    slot = (store.provenance.get(topic, {}) or {}).get(claim)
+    prov = store.provenance.get(topic, {}) or {}
+    slot = prov.get(f"{aspect}:{claim}") if aspect else None
     if not slot or len(slot) < 3:
-        for key, s in (store.provenance.get(topic, {}) or {}).items():
+        for key, s in prov.items():
             if key.endswith(":" + claim) and len(s) > 2:
                 slot = s
                 break
+    if not slot or len(slot) < 3:
+        slot = prov.get(claim)
     return str(slot[2]) if slot and len(slot) > 2 else ""
 
 
@@ -138,7 +152,8 @@ def audit(paths: List[str]) -> Audit:
             detections.append(Detection(
                 topic=topic, aspect=entry["aspect"], sides=sides,
                 evidence=[e for e in
-                          (_evidence(store, topic, s["claim"]) for s in sides)
+                          (_evidence(store, topic, s["claim"], entry["aspect"])
+                           for s in sides)
                           if e]))
 
     cores = list(store.crosses)
