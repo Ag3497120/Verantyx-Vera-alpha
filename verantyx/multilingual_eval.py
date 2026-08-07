@@ -892,6 +892,64 @@ def main() -> int:
         failures.append("html table row not assembled")
     print()
 
+    # -- 4b17. A defect report carries no document ---------------------------
+    # Five genres read blind, three defects each, and the rate is not falling.
+    # A release therefore has to assume defects keep arriving — which means
+    # the people who find them must be able to report them, in documents that
+    # are municipal drafts and evacuee registers.
+    #
+    # Every defect found so far is a grammatical SHAPE, not a fact about any
+    # document, so a report keeps the function words, the punctuation and the
+    # polar term (public vocabulary) and redacts everything else. The property
+    # is asserted here rather than trusted: a claim about privacy that is not
+    # tested is a hope.
+    from .defect_report import build as _build_defect
+    from .defect_report import leaks as _leaks
+    from .defect_report import skeleton as _skeleton
+
+    _private = [
+        "中央公民館の避難所は閉鎖されました。 (reported by 宇城市_避難所名簿.pdf)",
+        "熊本県  熊本市 断水あり (reported by 20260729.pdf)",
+        "お住まいの市町村の避難所が閉鎖されるまでの間で、各ホテル等が受け入れ可能",
+        "消防長又は消防署長は、火災の予防に危険であると認める物件の所有者に命ずる。",
+        "山田太郎さん宅は断水しています。電話 096-123-4567。",
+    ]
+    for sentence in _private:
+        shape = _skeleton(sentence)
+        found = _leaks(sentence, shape)
+        ok = not found
+        print(f"[{'ok  ' if ok else 'FAIL'}] redaction leaks nothing: "
+              f"{sentence[:22]:24s} -> {shape[:34]}")
+        if not ok:
+            failures.append(f"redaction leak: {found}")
+
+    # The shape must SURVIVE — a report that redacts the defect too is a
+    # report of nothing.
+    keeps = [("お住まいの市町村の避難所が閉鎖されるまでの間で", "閉鎖されるまで"),
+             ("消防長又は消防署長は、危険であると認める物件", "又は"),
+             ("公衆電話の無料化を実施しておりましたが、終了いたします。",
+              "しておりましたが")]
+    for sentence, fragment in keeps:
+        shape = _skeleton(sentence)
+        ok = fragment in shape
+        print(f"[{'ok  ' if ok else 'FAIL'}] the defect shape survives: "
+              f"{fragment} -> {shape[:34]}")
+        if not ok:
+            failures.append(f"shape lost: {fragment}")
+
+    # And the builder REFUSES rather than emitting something it cannot
+    # guarantee.
+    try:
+        _build_defect("false_positive", ["熊本市は断水しています。"],
+                      aspect="復旧", value="断水")
+        built = True
+    except ValueError:
+        built = False
+    print(f"[{'ok  ' if built else 'FAIL'}] a clean report builds")
+    if not built:
+        failures.append("defect report failed to build")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

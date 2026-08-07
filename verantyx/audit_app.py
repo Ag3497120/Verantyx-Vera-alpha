@@ -38,6 +38,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict, List
 
 from .corpus_audit import audit_paths
+from .defect_report import build as build_defect, render as render_defect
 from .document_loaders import SUPPORTED
 
 _MAX_BYTES = 64 * 1024 * 1024
@@ -132,6 +133,14 @@ blockquote{margin:8px 0 0;padding-left:12px;border-left:2px solid var(--accent);
 .judge label{cursor:pointer}
 #ratio{font-size:.9rem;margin-top:10px}
 .empty{color:var(--dim);font-size:.88rem}
+.rep{margin-top:10px}
+.rep button{margin:0;padding:6px 12px;font-size:.76rem;background:transparent;
+            color:var(--dim);border:1px solid var(--line)}
+.rep button:hover{border-color:var(--accent);color:var(--fg)}
+.rep pre{white-space:pre-wrap;word-break:break-all;background:rgba(127,127,127,.08);
+         border:1px solid var(--line);border-radius:10px;padding:12px;
+         font-size:.74rem;margin-top:8px;line-height:1.65}
+.rep .why{font-size:.74rem;color:var(--dim);margin-top:6px}
 code{font-family:ui-monospace,Menlo,monospace;font-size:.85em}
 </style>
 <main>
@@ -233,7 +242,8 @@ function render(d){
     h+='<div class="judge">この所見は正しいですか / is this real? '+
        '<label><input type="radio" name="j'+i+'" value="true"> true</label>'+
        '<label><input type="radio" name="j'+i+'" value="false"> false</label>'+
-       '</div></div>';
+       '</div>'+
+       '<div class="rep" id="rep'+i+'"></div></div>';
   });
   if(d.detections.length) h+='<div id="ratio" class="empty">判定を入れると精度が出ます。</div>';
 
@@ -245,6 +255,46 @@ function render(d){
      'so there is no denominator until a person reads the whole thing.</div>';
 
   out.innerHTML=h;
+
+  // Marking a finding false is the moment a defect becomes reportable, so the
+  // offer appears there and nowhere else.
+  out.addEventListener('change',(ev)=>{
+    const m=/^j(\d+)$/.exec(ev.target.name||'');
+    if(!m) return;
+    const i=+m[1], box=document.getElementById('rep'+i);
+    if(ev.target.value!=='false'){box.innerHTML='';return}
+    box.innerHTML='<button data-i="'+i+'">この誤りを報告用に整形する / '+
+                  'build a defect report</button>'+
+                  '<div class="why">文書の中身は入りません。内容語はすべて ◻ に置き換え、'+
+                  '送る前に全文を表示します。</div>';
+  });
+
+  out.addEventListener('click',async(ev)=>{
+    const b=ev.target.closest('.rep button'); if(!b) return;
+    const i=+b.dataset.i, x=d.detections[i];
+    b.disabled=true;b.textContent='整形中…';
+    const res=await fetch('/api/defect',{method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({kind:'false_positive',aspect:x.aspect,
+        value:(x.sides&&x.sides[0]&&x.sides[0].claim)||'',
+        sentences:x.evidence||[],coverage:d.coverage,
+        corpus_kind:d.corpus_kind})});
+    const r=await res.json();
+    const box=document.getElementById('rep'+i);
+    if(r.verdict!=='ANSWER'){
+      box.innerHTML='<div class="why"><b>'+esc(r.verdict)+'</b> — '+
+        esc(r.reason||'')+'</div>';
+      return;
+    }
+    box.innerHTML='<div class="why">これが報告の全文です。読んでから、'+
+      'あなたの判断で送ってください。</div><pre>'+esc(r.report)+'</pre>'+
+      '<button data-copy="1">コピー / copy</button>';
+    box.querySelector('[data-copy]').onclick=()=>{
+      navigator.clipboard.writeText(r.report);
+      box.querySelector('[data-copy]').textContent='コピーしました';
+    };
+  });
+
   out.addEventListener('change',()=>{
     const n=d.detections.length;let t=0,f=0;
     for(let i=0;i<n;i++){
@@ -279,6 +329,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _defect(self) -> None:
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            result = _report_body(payload)
+        except Exception as exc:  # noqa: BLE001
+            result = {"verdict": "UNKNOWN_UNREADABLE",
+                      "reason": f"{type(exc).__name__}: {exc}"}
+        self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                   "application/json; charset=utf-8")
+
     def do_GET(self) -> None:
         if self.path in ("/", "/index.html"):
             self._send(200, _PAGE.encode("utf-8"), "text/html; charset=utf-8")
@@ -286,6 +347,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:
+        if self.path == "/api/defect":
+            self._defect()
+            return
         if self.path != "/api/audit":
             self._send(404, b"not found", "text/plain")
             return
@@ -304,6 +368,30 @@ class _Handler(BaseHTTPRequestHandler):
                       "reason": f"{type(exc).__name__}: {exc}"}
         self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
                    "application/json; charset=utf-8")
+
+
+def _report_body(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a defect report, or say why it refused.
+
+    Runs on the server rather than in the page because the redaction has to
+    use the SAME segmenter the engine uses: a browser-side approximation of
+    what counts as a content word would be a second opinion about what is
+    private, and the wrong second opinion leaks.
+    """
+    try:
+        d = build_defect(
+            payload.get("kind") or "false_positive",
+            payload.get("sentences") or [],
+            aspect=payload.get("aspect") or "",
+            value=payload.get("value") or "",
+            note=payload.get("note") or "",
+            coverage=payload.get("coverage"),
+            corpus_kind=payload.get("corpus_kind") or "",
+        )
+    except ValueError as exc:
+        return {"verdict": "UNKNOWN_REDACTION_FAILED", "reason": str(exc)}
+    return {"verdict": "ANSWER", "report": render_defect(d),
+            "shapes": d.shapes}
 
 
 def serve(port: int = 8899, open_browser: bool = True) -> int:
