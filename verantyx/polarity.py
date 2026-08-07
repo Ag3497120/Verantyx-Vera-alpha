@@ -277,6 +277,10 @@ def _standalone_index(text: str, term: str) -> int:
 
 _KANJI = re.compile(r"[㐀-䶿一-鿿]")
 
+#: A date, a time span or a count — the shape of a value rather than of a
+#: column name. Its presence is what makes a row DATA.
+_JA_ROW_DATA = re.compile(r"[0-9０-９]{1,4}\s*[/／年月日時]|[0-9０-９]{2,}")
+
 #: The column separator in text extracted from a laid-out page: one or more
 #: spaces. 「天草市 断水あり・漏水あり」 is TWO values in ONE cell — ・ joins
 #: them — and treating the term as needing to be the last thing on the line
@@ -529,8 +533,15 @@ def tabular_claim_ja(text: str, word: str) -> Tuple[bool, Optional[str]]:
     # and the marker test looked only at the character after 閉鎖 — 解 — which
     # is neither kana nor a completion suffix, so the row asserted nothing and
     # the reopening was dropped.
+    # A row that carries DATA — a date, a count — is a data row even when its
+    # state word ends it bare. 「熊本市職業訓練センター 7/28(火)～7/31(金)
+    # ※8/1～開館」 is one facility's closure with its dates, and requiring kana
+    # after 開館 rejected 244 such rows on 熊本市's closure tables. A HEADING
+    # has no data in it at all — 「NO 閉鎖期間 施設名」, 「建物被害 停電 断水」 —
+    # which is what still separates the two.
     marked = bool(_JA_CELL_VALUE.match(tail) or _JA_NEG_AFTER.match(tail)
-                  or _JA_CASE_PARTICLE.search(text))
+                  or _JA_CASE_PARTICLE.search(text)
+                  or _JA_ROW_DATA.search(text))
     # A term followed by a list separator is being NAMED, not asserted —
     # 「避難所の開設、運営等について」 lists what the guidance covers.
     # `_anchored_ok` applies the same rule on the prose path; stated again

@@ -148,6 +148,16 @@ _JA_QUESTION = ("何", "誰", "どこ", "いつ", "なぜ", "どう", "ですか
 #: digit inside the name and are untouched.
 _JA_DATE = re.compile(r"[0-9０-９]+(?:[年月日時分秒][0-9０-９]*)+$")
 
+#: A date the layout has broken apart. PDF extraction spaces the digits from
+#: their unit — 「７月 30 日」 — so the run scanner sees 月 and 日 as separate
+#: single-character runs and only 日 survives, becoming the CORE. 内閣府's
+#: ferry table then filed 7/29 and 7/30 under one topic called 日 and reported
+#: them as a contradiction: two different days, read as one thing disagreeing
+#: with itself. Whether the space is there is a fact about the PDF, not about
+#: the sentence, so the run is judged on its surroundings.
+_JA_DATE_PIECE = re.compile(r"[年月日時分秒]")
+_JA_DATE_BEFORE = re.compile(r"[0-9０-９][\s ]*$")
+
 
 #: （水）（月）— a single character alone inside brackets is a label: the
 #: weekday beside a date, or an item marker. Read as content, 水 and 月 are
@@ -177,6 +187,13 @@ def _inside_compound_particle(text: str, start: int, end: int) -> bool:
     return bool(_JA_PARTICLE_TAIL.match(text[end:end + 2]))
 
 
+def _split_date_piece(text: str, run: str, start: int) -> bool:
+    """One temporal character with a digit in front of it, across a space."""
+    if len(run) != 1 or not _JA_DATE_PIECE.match(run):
+        return False
+    return bool(_JA_DATE_BEFORE.search(text[:start]))
+
+
 def _bracketed_label(text: str, start: int, end: int) -> bool:
     if end - start != 1 or start < 1 or end >= len(text):
         return False
@@ -190,7 +207,8 @@ def ja_content_runs(text: str) -> List[str]:
         r = m.group(0)
         if (r in _JA_STOP or _ALL_DIGITS.match(r) or _JA_DATE.match(r)
                 or _bracketed_label(text, m.start(), m.end())
-                or _inside_compound_particle(text, m.start(), m.end())):
+                or _inside_compound_particle(text, m.start(), m.end())
+                or _split_date_piece(text, r, m.start())):
             continue
         out.append(r)
     return out
@@ -277,8 +295,21 @@ def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:
         if found and not _is_polar_ja(found):
             core = found
         else:
-            rest = [r for r in (topic_runs or runs) if not _is_polar_ja(r)]
-            core = rest[-1] if rest else runs[0]
+            # The fallback used `topic_runs or runs`, so when the topic phrase
+            # was ENTIRELY the polar term — 「断水が発生していましたが、復旧しま
+            # した」, whose topic phrase is just 断水 — the list came back
+            # empty and the core fell back to runs[0], which is that same
+            # polar term. The demotion undid itself.
+            #
+            # Widen to the whole sentence, and if nothing there is a topic
+            # either, store nothing. A sentence with no identifiable subject
+            # is better left out than filed under the word for its state,
+            # where every other mention of that state will collide with it.
+            rest = ([r for r in topic_runs if not _is_polar_ja(r)]
+                    or [r for r in runs if not _is_polar_ja(r)])
+            if not rest:
+                return None
+            core = rest[-1]
 
     facets = [r for r in runs if r != core]
     # `source=` is what CrossStore records as provenance, and the English

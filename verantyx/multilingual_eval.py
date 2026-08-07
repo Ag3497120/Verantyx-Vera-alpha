@@ -812,6 +812,86 @@ def main() -> int:
             failures.append(f"pole agreement: {label}")
     print()
 
+    # -- 4b16. Operator announcements: a fifth genre, read blind -------------
+    # NTT West, 九州電力, 熊本市上下水道局 — the utilities' own releases, which
+    # is what a municipal officer checks their page against. Three dated NTT
+    # releases of one notice (7/29, 7/30, 8/5) made the self-consistency case
+    # explicit, and the 8/5 one announces the END of free payphone access.
+    #
+    # 終了 was not in the vocabulary. 実施/中止 covers a measure cancelled
+    # before it ran; this is one that ran and then stopped, and across five
+    # corpora 終了 appears 35 times and 再開 50 — the vocabulary of rebuilding
+    # rather than of the first days. Both are joins onto the existing 実施
+    # aspect, and 終了時刻 / 再開発 stay silent through the compound guard.
+    for sentence, want in [("無料化を終了いたします。", "終了"),
+                           ("窓口業務を再開しました。", "再開"),
+                           ("公衆電話の無料化を実施しております。", "実施")]:
+        hits = detect_ja(sentence)
+        ok = any(v == want for _, v, _ in hits)
+        print(f"[{'ok  ' if ok else 'FAIL'}] rebuilding vocabulary: {sentence[:20]:22s}"
+              f" -> {hits}")
+        if not ok:
+            failures.append(f"rebuilding vocabulary: {want}")
+    for sentence in ("終了時刻を確認する", "再開発事業の計画", "業務終了時間の変更"):
+        ok = not detect_ja(sentence)
+        print(f"[{'ok  ' if ok else 'FAIL'}] control stays silent: {sentence[:16]:18s}"
+              f" -> {detect_ja(sentence)}")
+        if not ok:
+            failures.append(f"rebuilding control: {sentence}")
+
+    # A polar core demoted itself back. The fallback used the TOPIC phrase,
+    # and when that phrase was entirely the polar term —
+    # 「断水が発生していましたが、復旧しました」 — the list came back empty and
+    # the core fell back to the same word. A sentence with no identifiable
+    # subject is better left out than filed under the word for its state.
+    from .lang import ja_ingest_sentence
+    for sentence, forbidden in [("断水が発生していましたが、復旧しました。", "断水"),
+                                ("避難所を開設していましたが、閉鎖しました。", "開設")]:
+        core = ja_ingest_sentence(CrossStore(), sentence)
+        ok = core != forbidden
+        print(f"[{'ok  ' if ok else 'FAIL'}] polar core demotion holds: "
+              f"{sentence[:22]:24s} -> {core}")
+        if not ok:
+            failures.append(f"polar core demotion: {sentence[:18]}")
+    ok = ja_ingest_sentence(CrossStore(), "断水。") is None
+    print(f"[{'ok  ' if ok else 'FAIL'}] a fragment with no subject stores nothing")
+    if not ok:
+        failures.append("subjectless fragment stored")
+
+    # A date the LAYOUT broke apart. 「７月 30 日」 spaces the digits from their
+    # unit, so 日 survived alone and became the CORE — 内閣府's ferry table
+    # filed 7/29 and 7/30 under one topic called 日 and reported them as a
+    # contradiction. Two different days, read as one thing disagreeing with
+    # itself.
+    for text, token, want in [("【７月 30 日～】欠航：なし", "日", False),
+                              ("16 時 27 分に発生", "時", False),
+                              ("日程を確認する", "日程", True),
+                              ("本日は晴れ", "本日", True)]:
+        got = token in ja_content_runs(text)
+        ok = got == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] split date piece: {token!r} in "
+              f"{text[:18]:20s} -> {got}")
+        if not ok:
+            failures.append(f"split date piece: {token}")
+
+    # An HTML table row is the unit, not a cell. Each <td> arrives as its own
+    # text node, so 熊本市's closure table gave the dates and the facility
+    # names as separate fragments — 244 rows of a state with no subject and a
+    # subject with no state. The header row says which column is the subject,
+    # because an HTML table's column ORDER is set by whoever built the page.
+    from .document_loaders import _from_html as _html
+    _table = ("<table><tbody>"
+              "<tr><td>NO</td><td>閉鎖期間</td><td>施設名</td></tr>"
+              "<tr><td>1</td><td>7/28(火)～7/31(金) ※8/1～開館</td>"
+              "<td>熊本市職業訓練センター</td></tr></tbody></table>")
+    lines = [ln for ln in _html(_table).splitlines() if ln.strip()]
+    ok = len(lines) == 1 and lines[0].startswith("熊本市職業訓練センター")
+    print(f"[{'ok  ' if ok else 'FAIL'}] html row is one line, subject first -> "
+          f"{lines}")
+    if not ok:
+        failures.append("html table row not assembled")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

@@ -80,18 +80,71 @@ class _TextExtractor(HTMLParser):
         self.parts: List[str] = []
         self._skip = 0
         self._in_link = 0
+        # A table ROW is the unit, not a cell. Each <td> arrives as its own
+        # text node, so 熊本市's closure table gave 「7/28(火)～7/31(金) ※8/1
+        # ～開館」 and 「熊本市職業訓練センター」 as separate fragments — the
+        # state with no subject and the subject with no state, 244 rows of
+        # them. The PDF path learned this from 内閣府's damage tables; HTML
+        # needed it for exactly the same reason.
+        self._row: List[str] = []
+        self._in_row = 0
+        self._subject_col: Optional[int] = None
 
     def handle_starttag(self, tag: str, attrs: Any) -> None:
         if tag in self._SKIP:
             self._skip += 1
         elif tag == "a":
             self._in_link += 1
+        elif tag == "tr":
+            self._flush_row()
+            self._in_row = 1
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._SKIP and self._skip:
             self._skip -= 1
         elif tag == "a" and self._in_link:
             self._in_link -= 1
+        elif tag == "tr":
+            self._flush_row()
+        elif tag == "table":
+            self._flush_row()
+
+    #: Column headers that name the row's subject. A Japanese table is read
+    #: head-final by the rule downstream — the state belongs to the noun
+    #: BEFORE it — but an HTML table's column ORDER is set by whoever built
+    #: the page, and 熊本市 puts 閉鎖期間 before 施設名. The header row says
+    #: which column is which, so the subject column is moved to the front and
+    #: the row then reads the way every other row in this codebase does.
+    _SUBJECT_HEADERS = ("施設名", "名称", "場所", "市町村", "自治体", "路線",
+                        "事業者", "会場", "窓口", "地区", "地域", "対象")
+
+    def _flush_row(self) -> None:
+        """Emit the cells collected so far as one line.
+
+        Joined with a space, which is what the tabular reader downstream
+        already treats as a column boundary — so an HTML row and a PDF row
+        arrive in the same shape and are read by the same rule.
+        """
+        self._in_row = 0
+        if not self._row:
+            return
+        cells, self._row = self._row, []
+
+        # A header row is remembered rather than emitted: it names nothing,
+        # and downstream it would look like a claim with no value.
+        idx = next((i for i, c in enumerate(cells)
+                    if c.strip() in self._SUBJECT_HEADERS), None)
+        if idx is not None:
+            self._subject_col = idx
+            return
+
+        col = getattr(self, "_subject_col", None)
+        if col is not None and col < len(cells) and col != 0:
+            cells = [cells[col]] + [c for i, c in enumerate(cells) if i != col]
+
+        row = " ".join(cells)
+        if len(row) >= 4:
+            self.parts.append(row)
 
     def _is_prose(self, text: str) -> bool:
         if text.endswith(self._SENTENCE_END):
@@ -108,6 +161,12 @@ class _TextExtractor(HTMLParser):
         # whole sentence is a real sentence and is kept; 「サイトマップ」 is not.
         if self._in_link and not text.endswith(self._SENTENCE_END):
             return
+        if self._in_row:
+            # Inside a row every cell is kept, prose-like or not: a facility
+            # name and a date are both short and neither ends in 。, and it is
+            # the ROW that carries the claim.
+            self._row.append(text)
+            return
         if self._is_prose(text):
             self.parts.append(text)
 
@@ -115,6 +174,7 @@ class _TextExtractor(HTMLParser):
 def _from_html(raw: str) -> str:
     p = _TextExtractor()
     p.feed(raw)
+    p._flush_row()
     return "\n".join(p.parts)
 
 
