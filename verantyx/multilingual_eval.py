@@ -1016,6 +1016,88 @@ def main() -> int:
         failures.append("rule defect produced a proposal")
     print()
 
+    # -- 4b19. A gap becomes a rule, and the rule is measured ---------------
+    # The loop was open at the far end: a defect became a GapNode and a person
+    # still had to write the rule, which makes the growth loop one only its
+    # authors can be in.
+    #
+    # Two facts close it without a model. Every reading rule this engine has
+    # is the same shape — a pattern matched after a polar term, where a match
+    # means the term asserts nothing — so it is derivable from examples. And
+    # a candidate can be MEASURED against everything already confirmed true.
+    #
+    # The boundary the module will not cross: it can say a pattern breaks
+    # nothing measured, and it cannot say the pattern is right.
+    from .rule_synthesis import derive as _derive
+    from .rule_synthesis import verify as _verify
+    from . import ja_grammar as _grammar
+
+    cand = _derive(["お住まいの市町村の避難所が閉鎖されるまでの間で",
+                    "受付が閉鎖されるまで利用できます"], "閉鎖",
+                   provenance="eval")
+    ok = cand is not None and cand.pattern == "^されるまで"
+    print(f"[{'ok  ' if ok else 'FAIL'}] a rule is derived from reports -> "
+          f"{cand.pattern if cand else None}")
+    if not ok:
+        failures.append("rule derivation")
+
+    # One report is not evidence for a rule, and a first attempt that cut at
+    # the first content run anywhere threw away 「の方向で」 — where 方向 is
+    # part of the construction, not the noun the sentence is about.
+    ok = _derive(["本館は閉鎖の方向で検討しています。"], "閉鎖") is None
+    print(f"[{'ok  ' if ok else 'FAIL'}] one report derives nothing")
+    if not ok:
+        failures.append("derived a rule from one report")
+    c2 = _derive(["本館は閉鎖の方向で検討しています。",
+                  "受付は閉鎖の方向で調整中です。"], "閉鎖")
+    ok = c2 is not None and c2.pattern == "^の方向で"
+    print(f"[{'ok  ' if ok else 'FAIL'}] grammar inside the prefix survives -> "
+          f"{c2.pattern if c2 else None}")
+    if not ok:
+        failures.append("prefix trimmed into the grammar")
+
+    # A suppression must be DATA, or the loop needs a source edit to run.
+    one = CrossStore()
+    ingest_polar_ja(one, "本館は閉鎖の方向で検討しています。")
+    before = {k for f in one.crosses.values() for k in f if ":" in k}
+    _grammar.SUPPRESSIONS.append(("^の方向で", "eval"))
+    try:
+        two = CrossStore()
+        ingest_polar_ja(two, "本館は閉鎖の方向で検討しています。")
+        after = {k for f in two.crosses.values() for k in f if ":" in k}
+        three = CrossStore()
+        ingest_polar_ja(three, "本館は閉鎖されました。")
+        intact = {k for f in three.crosses.values() for k in f if ":" in k}
+    finally:
+        _grammar.SUPPRESSIONS.remove(("^の方向で", "eval"))
+    ok = before and not after and intact
+    print(f"[{'ok  ' if ok else 'FAIL'}] a data rule changes behaviour and "
+          f"spares real claims -> {before} / {after} / {intact}")
+    if not ok:
+        failures.append("data suppression did not apply")
+
+    # And it must be REMOVABLE, or a candidate cannot be tried.
+    four = CrossStore()
+    ingest_polar_ja(four, "本館は閉鎖の方向で検討しています。")
+    ok = {k for f in four.crosses.values() for k in f if ":" in k} == before
+    print(f"[{'ok  ' if ok else 'FAIL'}] removing the rule restores the engine")
+    if not ok:
+        failures.append("suppression left residue")
+
+    # An invalid or unanchored pattern is refused by the validator, because a
+    # suppression that matches mid-sentence is not a reading rule at all.
+    errs = _grammar.validate({"suppressions": [["されるまで", "x"]]})
+    ok = any("anchor" in e for e in errs)
+    print(f"[{'ok  ' if ok else 'FAIL'}] an unanchored suppression is refused")
+    if not ok:
+        failures.append("unanchored suppression accepted")
+    errs = _grammar.validate({"suppressions": [["^(unclosed", "x"]]})
+    ok = any("regex" in e for e in errs)
+    print(f"[{'ok  ' if ok else 'FAIL'}] an invalid regex is refused")
+    if not ok:
+        failures.append("invalid suppression accepted")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

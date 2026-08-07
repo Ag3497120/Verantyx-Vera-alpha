@@ -67,7 +67,32 @@ from .ja_grammar import ALIASES as _JA_ALIASES
 from .ja_grammar import COMPLETION_SUFFIXES as _JA_COMPLETION
 from .ja_grammar import ANTONYM_PAIRS as ANTONYM_PAIRS_JA
 from .ja_grammar import ASPECT_OF as _ASPECT_OF_JA
+from .ja_grammar import SUPPRESSIONS as _JA_SUPPRESSIONS
 from .ja_grammar import TERMS as _JA_TERMS
+
+
+def _suppressed(tail: str) -> bool:
+    """A derived rule saw this frame and says the term asserts nothing.
+
+    Compiled on demand and cached by pattern, because the list is loaded from
+    an overlay and can change between calls without the module reloading.
+    """
+    import re as _re
+
+    for pattern, _why in _JA_SUPPRESSIONS:
+        rx = _SUPPRESSION_CACHE.get(pattern)
+        if rx is None:
+            try:
+                rx = _re.compile(pattern)
+            except _re.error:
+                continue
+            _SUPPRESSION_CACHE[pattern] = rx
+        if rx.match(tail):
+            return True
+    return False
+
+
+_SUPPRESSION_CACHE: Dict[str, Any] = {}
 
 #: Negation that immediately FOLLOWS the polar term. Japanese negation is a
 #: suffix on the predicate, so it is read from the characters after the
@@ -549,7 +574,8 @@ def tabular_claim_ja(text: str, word: str) -> Tuple[bool, Optional[str]]:
     # marker for particle-bearing prose reopened exactly this hole.
     enumerated = bool(re.match(r"^[、，]", tail))
     if (not marked or enumerated or _JA_COLUMN_GAP.search(tail)
-            or _JA_DEEMING.match(tail) or _JA_UNTIL.match(tail)):
+            or _JA_DEEMING.match(tail) or _JA_UNTIL.match(tail)
+            or _suppressed(tail)):
         return False, None
 
     head = text[:at]
@@ -713,6 +739,8 @@ def _anchored_ok(text: str, noun: str, word: str, lang: str) -> bool:
         if _JA_DEEMING.match(after):
             return False
         if _JA_UNTIL.match(after):
+            return False
+        if _suppressed(after):
             return False
         # A past incident is history, not a current state. Found on a real
         # government case-study PDF: 「避難所が閉鎖した後にPCR検査を実施した」

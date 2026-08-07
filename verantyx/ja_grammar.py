@@ -55,6 +55,20 @@ PREDICATES: Dict[str, str] = {}
 #: records a municipality's water coming back, and it produced no claim.
 #: Data rather than code so a domain can add its own without a release.
 COMPLETION_SUFFIXES: set = set()
+#: Suppression patterns — regexes matched against the text immediately after a
+#: polar term, where a match means the term asserts nothing.
+#:
+#: Every reading rule this engine has accumulated is that same shape: 〜される
+#: まで, 〜であると認める, 〜による. They live in `polarity` as compiled
+#: constants because they were written by hand and are proven. This list is
+#: for the ones DERIVED from defect reports, which have to arrive as data —
+#: a growth loop that requires editing source is a loop only its authors can
+#: be in.
+#:
+#: Loaded through an overlay and validated like everything else, and each one
+#: carries the gap it came from so a suppression can always be traced back to
+#: the reports that produced it.
+SUPPRESSIONS: List[Tuple[str, str]] = []   # (pattern, provenance)
 #: term → (aspect, polarity). Derived; rebuilt on every load.
 ASPECT_OF: Dict[str, Tuple[str, str]] = {}
 #: All matchable terms, longest first — the scan order substring matching
@@ -104,6 +118,17 @@ def validate(data: Dict[str, Any]) -> List[str]:
     for alias, target in (data.get("aliases") or {}).items():
         if target not in known:
             errs.append(f"alias {alias!r} points at unknown term {target!r}")
+    import re as _re
+    for item in data.get("suppressions") or []:
+        if not (isinstance(item, (list, tuple)) and item and isinstance(item[0], str)):
+            errs.append(f"suppression not a [pattern, provenance] list: {item!r}")
+            continue
+        if not item[0].startswith("^"):
+            errs.append(f"suppression must anchor at the start (^): {item[0]!r}")
+        try:
+            _re.compile(item[0])
+        except _re.error as exc:
+            errs.append(f"suppression is not a valid regex: {item[0]!r} ({exc})")
     for term in (data.get("predicates") or {}):
         if term not in known and not any(term == a for a in aspects):
             errs.append(f"predicate for unknown term {term!r} — usually a typo "
@@ -134,6 +159,11 @@ def _apply(data: Dict[str, Any]) -> None:
     ALIASES.update(data.get("aliases") or {})
     PREDICATES.update(data.get("predicates") or {})
     COMPLETION_SUFFIXES.update(data.get("completion_suffixes") or [])
+    have_s = {tuple(x) for x in SUPPRESSIONS}
+    for item in data.get("suppressions") or []:
+        pair = (item[0], item[1] if len(item) > 1 else "")
+        if pair not in have_s:
+            SUPPRESSIONS.append(pair)
     _rebuild()
 
 
@@ -152,6 +182,7 @@ def load() -> None:
     ALIASES.clear()
     PREDICATES.clear()
     COMPLETION_SUFFIXES.clear()
+    SUPPRESSIONS.clear()
     _apply(raw)
     global _loaded_overlay
     _loaded_overlay = None
