@@ -234,6 +234,32 @@ def compose_report(store: CrossStore, core: str, *, lang: str = "auto",
                 "この点は未確定です。" if lang == "ja"
                 else "This point is unresolved."))
 
+    # 2b. Updated — one story told twice, shown as a timeline, because a
+    # reopening rendered as a conflict is how the board loses its reader.
+    if detail.get("updated"):
+        rep.sentences.append(Sentence(
+            "以下は更新されました（新しい発表が古い発表を置き換えています）。"
+            if lang == "ja" else
+            "The following was updated — newer reports supersede older ones."))
+        for entry in detail["updated"]:
+            cur = entry["current"]
+            text = _state(core, cur["claim"], lang)
+            cite = _cite(cur["sources"], lang)
+            when = cur.get("when", "")
+            rep.sentences.append(Sentence(
+                text + (f"（{when} 時点{cite}）" if lang == "ja"
+                        else f" (as of {when}{cite})"),
+                evidence=cur["claim"], sources=cur["sources"]))
+            for old_side in entry["superseded"]:
+                prev = re.sub(r"(?:です|しています|されています)?[。.]$", "",
+                              _state(core, old_side["claim"], lang))
+                rep.sentences.append(Sentence(
+                    (f"（それ以前の発表では{prev}でした"
+                     f"{_cite(old_side['sources'], lang)}）") if lang == "ja"
+                    else (f"(Earlier reports said: {prev}"
+                          f"{_cite(old_side['sources'], lang)}.)"),
+                    evidence=old_side["claim"], sources=old_side["sources"]))
+
     # 3. Arms — the six questions, answered or named as unanswered
     if arms is not None:
         held = arms.arms.get(core, {})

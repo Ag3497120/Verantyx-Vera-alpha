@@ -46,6 +46,13 @@ class CrossStore:
     #   provenance[core][facet] = [first_ts, last_ts, source_snippet]
     track_provenance: bool = False
     provenance: Dict[str, Dict[str, List[Any]]] = field(default_factory=dict)
+    #: source label → {"published": free-form date string}. What makes
+    #: "update" distinguishable from "dispute": two poles of one aspect
+    #: from sources whose publication times ORDER are a supersession, not a
+    #: disagreement — a road closed at 9:00 and reopened at 15:00 is one
+    #: story, and reporting it as a conflict is how a tool loses the trust
+    #: of the first responder who reads it.
+    source_meta: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # accumulate
@@ -212,6 +219,7 @@ class CrossStore:
             "cap_stats": self.cap_stats,
             "provenance": self.provenance if self.track_provenance else {},
             "track_provenance": self.track_provenance,
+            "source_meta": self.source_meta,
         }
         # Atomic replace: the old failure mode was a half-written JSON on
         # crash mid-save, which loads as nothing — the store looked empty
@@ -240,6 +248,7 @@ class CrossStore:
                 for c, fs in d.get("provenance", {}).items()
             },
         )
+        st.source_meta = {k: dict(v) for k, v in d.get("source_meta", {}).items()}
         st.proper_lexicon = proper_lexicon_from_stats(st.cap_stats)
         return st
 
@@ -346,6 +355,7 @@ def _save_sqlite(store: "CrossStore", path: Path) -> None:
                 "source": store.source,
                 "cap_stats": json.dumps(store.cap_stats, ensure_ascii=False),
                 "track_provenance": "1" if store.track_provenance else "0",
+                "source_meta": json.dumps(store.source_meta, ensure_ascii=False),
             }
             con.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
     finally:
@@ -378,5 +388,6 @@ def _load_sqlite(cls, path: Path) -> "CrossStore":
         track_provenance=meta.get("track_provenance") == "1",
         provenance=provenance,
     )
+    st.source_meta = json.loads(meta.get("source_meta", "{}"))
     st.proper_lexicon = proper_lexicon_from_stats(st.cap_stats)
     return st

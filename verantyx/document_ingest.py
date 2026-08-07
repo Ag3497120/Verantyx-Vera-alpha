@@ -147,6 +147,10 @@ def ingest_documents(store: CrossStore, docs: List[Document],
     # have to know this flag exists to get attributed answers.
     store.track_provenance = True
 
+    for doc in docs:
+        if doc.published:
+            store.source_meta.setdefault(doc.source, {})["published"] = doc.published
+
     rep = IngestReport()
     for doc in docs:
         rep.documents += 1
@@ -177,6 +181,39 @@ def ingest_documents(store: CrossStore, docs: List[Document],
                     classify_arm(s), []).append(f"{s[:180]} — {doc.source}")
         rep.per_source[doc.source] = count
     return rep
+
+
+#: ISO, slash, and Japanese date forms, time optional. Free-form text that
+#: matches none of them parses as None — and None never orders, so an
+#: unparseable date can only ever leave a dispute standing, never invent an
+#: update. The safe failure direction, chosen on purpose.
+_WHEN = re.compile(
+    r"(?:(\d{4})[-/年])?(\d{1,2})[-/月](\d{1,2})日?"
+    r"(?:[ T　]*(\d{1,2})[:時](\d{1,2})?分?)?")
+
+
+def parse_when(text: str) -> Optional[tuple]:
+    """A publication stamp as a sortable tuple, or None.
+
+    The leading element records whether a YEAR was present: 8月7日 and
+    2026-08-07 must not order against each other, because "August 7th" of
+    an unstated year is not before or after anything. Tuples with different
+    leading flags are treated as incomparable by the caller.
+    """
+    m = _WHEN.search(text or "")
+    if not m:
+        return None
+    y, mo, d, hh, mi = m.groups()
+    return (1 if y else 0, int(y or 0), int(mo), int(d),
+            int(hh or 0), int(mi or 0))
+
+
+def _side_when(store: CrossStore, sources: List[str]) -> Optional[tuple]:
+    """The latest parseable stamp among a side's sources, or None."""
+    stamps = [parse_when((store.source_meta.get(src) or {}).get("published", ""))
+              for src in sources]
+    stamps = [t for t in stamps if t is not None]
+    return max(stamps) if stamps else None
 
 
 def _sources_for(store: CrossStore, core: str, facet: str) -> List[str]:
@@ -216,6 +253,35 @@ def deep_report(store: CrossStore, core: str,
                 "sources": _sources_for(store, core, value),
             })
         disputed.append({"aspect": entry["key"], "sides": sides})
+
+    # Update vs dispute. Two poles whose sources ORDER in time are one story
+    # told twice — 通行止 at 9:00 then 通行可能 at 15:00 is a reopening, not
+    # a disagreement, and showing it as a conflict is the mistake that makes
+    # an information officer stop trusting the board. The bar for calling it
+    # an update is deliberately high: EVERY side must carry a parseable
+    # stamp, all stamps must share the same year-known-ness, and the
+    # ordering must be strict. Anything less stays a dispute, because
+    # demoting a real conflict to an update hides exactly what this report
+    # exists to surface.
+    updated: List[Dict[str, Any]] = []
+    still_disputed: List[Dict[str, Any]] = []
+    for entry in disputed:
+        stamped = [( _side_when(store, side["sources"]), side)
+                   for side in entry["sides"]]
+        if (all(t is not None for t, _ in stamped)
+                and len({t[0] for t, _ in stamped}) == 1
+                and len({t for t, _ in stamped}) == len(stamped)):
+            ordered = sorted(stamped, key=lambda p: p[0])
+            current_when, current = ordered[-1]
+            updated.append({
+                "aspect": entry["aspect"],
+                "current": {**current, "when": "-".join(map(str, current_when[1:4]))},
+                "superseded": [{**side, "when": "-".join(map(str, t[1:4]))}
+                               for t, side in ordered[:-1]],
+            })
+        else:
+            still_disputed.append(entry)
+    disputed = still_disputed
 
     # Both the keyed form (open:closed) and the bare word (closed) must be
     # excluded. The bare word is also an ordinary facet of the sentence, so
@@ -257,9 +323,11 @@ def deep_report(store: CrossStore, core: str,
         "core": core,
         "settled": settled,
         "disputed": disputed,
+        "updated": updated,
         "missing": missing,
         # The headline number a responder actually reads first.
         "confidence": ("contested" if disputed
+                       else "updated" if updated
                        else "supported" if settled else "unknown"),
     }
 

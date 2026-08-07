@@ -487,6 +487,64 @@ def main() -> int:
             failures.append("sqlite round-trip")
     print()
 
+    # -- 4i. Update vs dispute: time orders a story, absence keeps a fight --
+    # The recognition prerequisite named by the analysis: a road closed at
+    # 9:00 and reopened at 15:00 is a supersession, and rendering it as a
+    # conflict is how an information officer stops trusting the board. The
+    # bar for "update" is deliberately high — every side stamped, stamps
+    # comparable, ordering strict — because demoting a real conflict to an
+    # update hides exactly what the report exists to surface.
+    def _road(pub_a, pub_b):
+        st_ = CrossStore()
+        ingest_documents(st_, [
+            Document("A新聞", "国道4号は通行止です。", pub_a),
+            Document("B放送", "国道4号は通行可能になりました。", pub_b)])
+        return deep_report(st_, "国道4号")
+
+    cases_t = [
+        (("2026-08-06 09:00", "2026年8月6日 15時"), "updated",
+         "both stamped and ordered → update"),
+        (("", ""), "contested", "no stamps → the dispute stands"),
+        (("2026-08-06", ""), "contested", "one side unstamped → dispute stands"),
+        (("8月6日", "2026-08-07"), "contested",
+         "yearless vs dated are incomparable → dispute stands"),
+    ]
+    for (pa, pb), expect, why in cases_t:
+        got = _road(pa, pb)["confidence"]
+        ok = got == expect
+        print(f"[{'ok  ' if ok else 'FAIL'}] temporal: {why} (got {got})")
+        if not ok:
+            failures.append(f"temporal: {why}")
+    up = _road("2026-08-06 09:00", "2026-08-06 15:00")["updated"][0]
+    ok = (up["current"]["claim"] == "通行可能"
+          and up["superseded"][0]["claim"] == "通行止"
+          and up["current"]["sources"] == ["B放送"])
+    print(f"[{'ok  ' if ok else 'FAIL'}] the newer side is current, the older "
+          f"superseded, each with its source")
+    if not ok:
+        failures.append("temporal ordering direction")
+    print()
+
+    # -- 4j. The MVP demo's pipeline is the pinned pipeline -----------------
+    # demo/app.py is what a first-time user actually runs. Its analysis half
+    # imports without gradio, so CI exercises the exact code path of the
+    # public demo — the shipped-drift lesson applied before shipping.
+    import importlib.util as _ilu
+    demo_py = Path(__file__).resolve().parent.parent / "demo" / "app.py"
+    spec = _ilu.spec_from_file_location("vera_demo_app", demo_py)
+    demo_app = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(demo_app)
+    board = demo_app.analyze_texts(
+        demo_app.SAMPLE_A, "架空新聞", "2026-08-06 09:00",
+        demo_app.SAMPLE_B, "架空放送", "2026-08-06 15:00")
+    ok = ("INTAKE_OK" in board and "🔄" in board and "通行可能" in board
+          and "架空放送" in board)
+    print(f"[{'ok  ' if ok else 'FAIL'}] the demo app's board shows the "
+          f"update with its source, from the sample corpus")
+    if not ok:
+        failures.append("demo board")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
