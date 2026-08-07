@@ -37,7 +37,11 @@ from .layer_stack import LayeredMemory
 #: as one node buries its cores under furniture (the placement-granularity
 #: finding: coarse pouring loses facet links).
 _MAX_TURN_CHARS = 400
-_SENT_SPLIT = re.compile(r"(?<=[.!?。])\s+")
+#: Japanese writes 。 with no trailing space, so a splitter that requires
+#: whitespace treated a whole Japanese turn as one sentence. The document
+#: path learned this and this path did not — the same defect, in the module
+#: whose entire job is remembering what was said.
+_SENT_SPLIT = re.compile(r"(?<=[.!?。！？])\s*")
 
 
 @dataclass
@@ -64,12 +68,38 @@ class Conversation:
         turn = Turn(speaker=speaker, text=text, index=idx)
         for sentence in self._sentences(text):
             tagged = f"{sentence} (said by {speaker} in turn {idx})"
-            out = self.memory.ingest_sentence(tagged)
+            out = self._ingest(tagged, detect_on=sentence)
             core = out.get("core")
             if core and core not in turn.cores:
                 turn.cores.append(core)
         self.turns.append(turn)
         return turn
+
+    def _ingest(self, tagged: str, *, detect_on: str) -> Dict[str, Any]:
+        """Route by script, exactly as the document path does.
+
+        `LayeredMemory.ingest_sentence` goes straight to the English
+        decomposer, whose word pattern is `[A-Za-z0-9']+`. A Japanese turn
+        therefore produced ONE core — the entire sentence — so
+        「避難所は本町に開設されました」 was stored under itself, and
+        `locate('避難所')` answered ABSENT about a topic the conversation had
+        just discussed. ABSENT is the one verdict this module must never get
+        wrong: it is the answer to "did we talk about that", and a false
+        ABSENT is the silent context loss the whole design exists to prevent.
+        Detection runs on the UNTAGGED sentence for the reason the document
+        path found: the Latin in "(said by … in turn 3)" outvotes a short
+        Japanese utterance.
+        """
+        from .lang import detect, ja_ingest_sentence
+
+        lang = detect(detect_on)
+        stacked = self.memory._maybe_stack()
+        if lang in ("ja", "zh"):
+            core = ja_ingest_sentence(self.memory.top, tagged)
+        else:
+            core = self.memory.top.ingest_sentence(tagged)
+        return {"core": core, "level": len(self.memory.levels) - 1,
+                "stacked": stacked}
 
     def _sentences(self, text: str) -> List[str]:
         t = (text or "").strip()

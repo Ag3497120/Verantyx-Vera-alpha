@@ -608,6 +608,104 @@ def main() -> int:
         failures.append("decimal period split a data row")
     print()
 
+    # -- 4b12. Conversation memory routes by script too ---------------------
+    # `LayeredMemory.ingest_sentence` goes straight to the English decomposer,
+    # so a Japanese turn produced ONE core — the whole sentence — and
+    # 「避難所は本町に開設されました」 was stored under itself. `locate('避難所')`
+    # then answered ABSENT about a topic the conversation had just discussed.
+    #
+    # ABSENT is the one verdict this module must never get wrong: it is the
+    # answer to "did we talk about that", and a false ABSENT is exactly the
+    # silent context loss the design exists to prevent. The document path
+    # learned this months ago; the conversation path had not.
+    from .conversation import Conversation as _Conversation
+    from .layer_stack import LayeredMemory as _LayeredMemory
+    conv = _Conversation(memory=_LayeredMemory())
+    for speaker, said in [("user", "国道4号は土砂崩れで通行止です。"),
+                          ("bot", "了解しました。"),
+                          ("user", "避難所は本町に開設されました。"),
+                          ("user", "毛布を配布しています。"),
+                          ("user", "The bridge is closed.")]:
+        conv.add_turn(speaker, said)
+    for topic, want in [("国道4号", "ACTIVE"), ("避難所", "ACTIVE"),
+                        ("毛布", "ACTIVE"), ("bridge", "ACTIVE"),
+                        ("橋", "ABSENT"), ("給水所", "ABSENT")]:
+        got = conv.locate(topic)["status"]
+        ok = got == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] conversation locate({topic}) -> {got}")
+        if not ok:
+            failures.append(f"conversation locate: {topic}")
+    got = conv.recall("避難所").get("verdict")
+    ok = got == "ANSWER"
+    print(f"[{'ok  ' if ok else 'FAIL'}] a Japanese turn is recallable -> {got}")
+    if not ok:
+        failures.append("conversation recall in Japanese")
+    print()
+
+    # -- 4b13. Statutes: a third genre, read blind --------------------------
+    # The first two blind corpora were both government DISASTER reports. This
+    # one is 災害対策基本法, 消防法 and their enforcement orders — 334,330
+    # characters of a genre with entirely different grammar. It produced two
+    # detections and both were false, in two ways neither disaster corpus
+    # could have shown:
+    #
+    #   Legal Japanese joins parties with 又は・若しくは・及び・並びに, and the
+    #   ideograph run swallowed the head: 「消防長又は消防署長」 became 消防長又,
+    #   a word that does not exist, and the first party to a provision was
+    #   stored under it.
+    #
+    #   A statute DEFINES when something counts as dangerous; it does not say
+    #   anything is. 「火災の予防に危険であると認める物件」 is a category, and
+    #   reading it as a claim inverts what a regulation is for.
+    #
+    #   And 「に対して」 wraps one kanji in kana. 対 is the middle of a
+    #   grammatical unit, and it was chosen as the SUBJECT of a fire-code
+    #   provision.
+    from .lang import _JA_RUN as _RUN
+    for text, want, absent in [
+        ("消防長又は消防署長", "消防長", "消防長又"),
+        ("所有者、管理者又は占有者", "管理者", "管理者又"),
+        ("消火若しくは避難", "消火", "消火若"),
+        ("市町村及び都道府県", "市町村", "市町村及"),
+        ("知事並びに市長", "知事", "知事並"),
+        ("及第点を取る", "及第点", "及"),
+        ("並木道を歩く", "並木道", "並"),
+    ]:
+        runs = _RUN.findall(text)
+        ok = want in runs and absent not in runs
+        print(f"[{'ok  ' if ok else 'FAIL'}] conjunction head: {text:16s} -> {runs}")
+        if not ok:
+            failures.append(f"conjunction head: {text}")
+
+    for sentence, want in [
+        ("火災の予防に危険であると認める物件の所有者に命ずる。", False),
+        ("人命に危険であると認める場合には、改修を命ずる。", False),
+        ("危険とみなす区域を指定する。", False),
+        ("この区域は危険です。", True),
+        ("避難所は閉鎖されました。", True),
+    ]:
+        one = CrossStore()
+        ingest_polar_ja(one, sentence)
+        placed = {k for f in one.crosses.values() for k in f if ":" in k}
+        ok = bool(placed) == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] deeming clause: {sentence[:24]:26s} -> "
+              f"{placed or 'nothing placed'}")
+        if not ok:
+            failures.append(f"deeming clause: {sentence[:20]}")
+
+    for text, ch, want in [("当該現象に対して安全な構造", "対", False),
+                           ("災害に関する情報", "関", False),
+                           ("法令に基づく措置", "基", False),
+                           ("水は使用できません", "水", True),
+                           ("火に強い建物", "火", True)]:
+        got = ch in ja_content_runs(text)
+        ok = got == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] compound particle: {ch} in "
+              f"{text[:16]:18s} -> {got}")
+        if not ok:
+            failures.append(f"compound particle: {ch}")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

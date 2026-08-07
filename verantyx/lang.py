@@ -79,6 +79,16 @@ def detect(text: str) -> str:
 #                        trailing kana from a closed set is taken only when
 #                        what follows is a particle, punctuation, or the end,
 #                        so inflections (崩れて…) still stop at the stem.
+#   conjunction heads    Legal and administrative Japanese joins nouns with
+#                        又は・若しくは・及び・並びに, and the ideograph run
+#                        swallowed the head: 「消防長又は消防署長」 became
+#                        消防長又 + 消防署長, so the first party to a statute
+#                        was stored under a word that does not exist. Found
+#                        blind on 災害対策基本法 and 消防法 — 334,330 characters
+#                        where every provision names two or three parties this
+#                        way. The head is only released when its own particle
+#                        follows (又は, 若しくは, 及び, 並びに), so 及第 and 並木
+#                        keep theirs.
 #   kanji then katakana  「水洗トイレ」 and 「仮設トイレ」 are single nouns, and
 #                        splitting at the script change filed both under
 #                        トイレ. Measured on two revisions of 内閣府's toilet
@@ -105,7 +115,7 @@ def detect(text: str) -> str:
 # and stays: 「データ」「ラーメン」 need it.
 _JA_RUN = re.compile(
     r"[ァ-ヺヽヾヿー]+"
-    r"|[㐀-䶿一-鿿0-9０-９]+[ァ-ヺヽヾヿー]*"
+    r"|(?:(?![又若及並](?:は|しく|び))[㐀-䶿一-鿿0-9０-９])+[ァ-ヺヽヾヿー]*"
     r"(?:[いな]|[れめきちりつけ](?=[はがをにでとのへもや、。！？\s]|$))?"
 )
 _ALL_DIGITS = re.compile(r"^[0-9０-９]+$")
@@ -149,6 +159,24 @@ _JA_DATE = re.compile(r"[0-9０-９]+(?:[年月日時分秒][0-9０-９]*)+$")
 _JA_BRACKETS = ("（）", "()", "〔〕", "[]", "【】")
 
 
+#: A compound particle wraps one kanji in kana — に対して、に関する、に基づく、
+#: に際して、に応じて、に沿って、に向けて、に係る. The kanji is the middle of a
+#: grammatical unit, not a noun, but a script-run scanner sees an isolated
+#: ideograph and hands it back as content. 対 was then chosen as the SUBJECT
+#: of a fire-code provision. Matched by shape rather than by list, because
+#: the shape is what makes it a particle.
+_JA_COMPOUND_PARTICLE = re.compile(r"^[にへを]$")
+_JA_PARTICLE_TAIL = re.compile(r"^(?:し|す|する|して|づ|じ|っ|わ|い|り)")
+
+
+def _inside_compound_particle(text: str, start: int, end: int) -> bool:
+    if end - start != 1 or start < 1:
+        return False
+    if not _JA_COMPOUND_PARTICLE.match(text[start - 1]):
+        return False
+    return bool(_JA_PARTICLE_TAIL.match(text[end:end + 2]))
+
+
 def _bracketed_label(text: str, start: int, end: int) -> bool:
     if end - start != 1 or start < 1 or end >= len(text):
         return False
@@ -161,7 +189,8 @@ def ja_content_runs(text: str) -> List[str]:
     for m in _JA_RUN.finditer(text):
         r = m.group(0)
         if (r in _JA_STOP or _ALL_DIGITS.match(r) or _JA_DATE.match(r)
-                or _bracketed_label(text, m.start(), m.end())):
+                or _bracketed_label(text, m.start(), m.end())
+                or _inside_compound_particle(text, m.start(), m.end())):
             continue
         out.append(r)
     return out

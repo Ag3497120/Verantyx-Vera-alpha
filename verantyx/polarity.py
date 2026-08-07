@@ -314,6 +314,16 @@ _JA_PAREN_LABEL = re.compile(r"[（(].?[）)]")
 #: candidate sweep of this corpus turned up.
 _JA_CASE_PARTICLE = re.compile(r"[をにでとへ]|から|まで|より|として")
 
+#: A DEEMING clause defines when something COUNTS as X; it does not say that
+#: anything is X. 「火災の予防に危険であると認める物件」 is a statute naming a
+#: category. Both of the statute corpus's detections were this shape.
+#:
+#: Tested on both paths. The prose path applies it through `_anchored_ok`;
+#: the tabular path does not go through that, and a legal sentence often has
+#: no は or が at all — which is exactly how the first version of this guard
+#: was bypassed by the very sentence it was written for.
+_JA_DEEMING = re.compile(r"^[ぁ-ん]{0,8}(?:と|であると|でないと)?(認め|みなす|見なす)")
+
 
 def is_state_word_ja(word: str) -> bool:
     """Is this word a state rather than a thing that can be in one?
@@ -497,7 +507,8 @@ def tabular_claim_ja(text: str, word: str) -> Tuple[bool, Optional[str]]:
     # because this branch does not go through it, and because relaxing the
     # marker for particle-bearing prose reopened exactly this hole.
     enumerated = bool(re.match(r"^[、，]", tail))
-    if not marked or enumerated or _JA_COLUMN_GAP.search(tail):
+    if (not marked or enumerated or _JA_COLUMN_GAP.search(tail)
+            or _JA_DEEMING.match(tail)):
         return False, None
 
     head = text[:at]
@@ -649,6 +660,16 @@ def _anchored_ok(text: str, noun: str, word: str, lang: str) -> bool:
         after = text[at + len(word):at + len(word) + 10] if at >= 0 else ""
         # A hypothetical asserts nothing.
         if re.match(r"^[のでにと]?(場合|とき|なら|れば|たら)", after):
+            return False
+        # A DEEMING clause defines when something counts as X; it does not say
+        # that anything is X. 「火災の予防に危険であると認める物件」 is a statute
+        # naming a category, and reading it as a claim that a物件 is dangerous
+        # inverts what a regulation is for. Found blind on 災害対策基本法 and
+        # 消防法, where both of the corpus's detections were this shape.
+        #
+        # The window is bounded and stops at a clause boundary, so a real
+        # claim followed later by an unrelated 認める is untouched.
+        if _JA_DEEMING.match(after):
             return False
         # A past incident is history, not a current state. Found on a real
         # government case-study PDF: 「避難所が閉鎖した後にPCR検査を実施した」
