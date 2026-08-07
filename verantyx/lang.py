@@ -79,6 +79,18 @@ def detect(text: str) -> str:
 #                        trailing kana from a closed set is taken only when
 #                        what follows is a particle, punctuation, or the end,
 #                        so inflections (崩れて…) still stop at the stem.
+#   kanji then katakana  「水洗トイレ」 and 「仮設トイレ」 are single nouns, and
+#                        splitting at the script change filed both under
+#                        トイレ. Measured on two revisions of 内閣府's toilet
+#                        guidance: 「汲み取り式のトイレが多数使用不可」 and
+#                        「水洗トイレが使用可能になった」 became one topic
+#                        holding both poles — a manufactured contradiction
+#                        out of a document distinguishing two kinds of
+#                        toilet, in the same paragraph, on purpose. Joining
+#                        removed it and changed nothing else across five
+#                        corpora. The join is one-way: katakana followed by
+#                        kanji stays separate, because that boundary is where
+#                        a loanword ends and the next word begins.
 #
 # い/な stay unconditional as before (adjective endings); the new set is
 # conditional to avoid swallowing conjugation.
@@ -93,7 +105,7 @@ def detect(text: str) -> str:
 # and stays: 「データ」「ラーメン」 need it.
 _JA_RUN = re.compile(
     r"[ァ-ヺヽヾヿー]+"
-    r"|[㐀-䶿一-鿿0-9０-９]+"
+    r"|[㐀-䶿一-鿿0-9０-９]+[ァ-ヺヽヾヿー]*"
     r"(?:[いな]|[れめきちりつけ](?=[はがをにでとのへもや、。！？\s]|$))?"
 )
 _ALL_DIGITS = re.compile(r"^[0-9０-９]+$")
@@ -156,11 +168,8 @@ def _is_polar_ja(word: str) -> bool:
     which is the one character the run rule can add; 開設準備 keeps its 準備 and
     stays a topic.
     """
-    polar = _polar_terms_ja()
-    if word in polar:
-        return True
-    return (len(word) > 1 and _HIRAGANA.match(word[-1] or "")
-            and word[:-1] in polar)
+    from .polarity import is_state_word_ja
+    return is_state_word_ja(word)
 
 
 def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:

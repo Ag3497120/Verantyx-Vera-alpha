@@ -177,6 +177,17 @@ def _place_poles(store: CrossStore, sentence: str, core: str,
     nothing, because a pole from a supposition is a manufactured fact.
     """
     read = claim or sentence
+    # One sentence saying both poles about one subject is a change being
+    # narrated, not a disagreement, and the later state is the current one:
+    # 「合志市 断水あり（復旧済）」 records an outage that is over, and
+    # 「一時的に断水があったが、21:40 時点で復旧が確認された」 the same. Storing
+    # both would have the store report a municipality as contradicting itself
+    # inside a single row of a single document. Later cancels earlier, which
+    # also reads 「復旧したが再び断水」 the right way round.
+    #
+    # Scoped to one subject deliberately: 「A市は断水、B市は復旧」 is two claims,
+    # and each still lands on its own noun.
+    latest: Dict[Tuple[str, str], Tuple[int, str]] = {}
     for aspect, value, _pol in hits:
         word = value.replace("not_", "")
         if subject_is_core(read, core, word, lang):
@@ -185,6 +196,12 @@ def _place_poles(store: CrossStore, sentence: str, core: str,
             target = subject_of(read, word, lang)
             if target is None:
                 continue
+        seen_at = read.rfind(word)
+        key = (target, aspect)
+        if key not in latest or seen_at > latest[key][0]:
+            latest[key] = (seen_at, value)
+
+    for (target, aspect), (_seen_at, value) in latest.items():
         store.add(target, {f"{aspect}:{value}": None},
                   source=sentence.strip())
 
@@ -227,6 +244,42 @@ def _standalone_index(text: str, term: str) -> int:
 
 
 _KANJI = re.compile(r"[㐀-䶿一-鿿]")
+
+#: The column separator in text extracted from a laid-out page: one or more
+#: spaces. 「天草市 断水あり・漏水あり」 is TWO values in ONE cell — ・ joins
+#: them — and treating the term as needing to be the last thing on the line
+#: read that as a further column and dropped the row.
+_JA_COLUMN_GAP = re.compile(r"[ \t\u3000]")
+
+_JA_HIRA_TAIL = re.compile(r"[぀-ゟ]")
+
+#: 〜による / 〜に伴う mark what CAUSED a state, and a cause is not a subject.
+_JA_CAUSE_MARK = re.compile(r"^(?:による|によって|により|に伴う|に因る|のため)")
+
+#: ア イ ウ …, the enumerator official Japanese documents label list items
+#: with. A one-character katakana run is never a noun — loanwords are two
+#: characters or more — so it can be excluded by shape rather than by list.
+_JA_ENUMERATOR = re.compile(r"[ァ-ヿ]")
+
+
+def is_state_word_ja(word: str) -> bool:
+    """Is this word a state rather than a thing that can be in one?
+
+    A state word must never be chosen as a subject or as a core. When it is,
+    the subject gate asks "is this claim about 断水?" and the answer is
+    trivially yes, so every guard downstream stops guarding. Measured twice:
+    once as a core (「４県において断水が発生」) and once as a subject
+    (「合志市 断水あり（復旧済）」, where 復旧 took 断水 for its subject and the
+    municipality's restoration was filed under the outage).
+
+    The vocabulary lists stems and the segmenter emits one okurigana with
+    them, so 通行止 must also match 通行止め. Only a trailing hiragana is
+    stripped — 開設準備 keeps its 準備 and stays an ordinary noun.
+    """
+    if word in _ASPECT_OF_JA or word in _JA_ALIASES:
+        return True
+    return bool(len(word) > 1 and _JA_HIRA_TAIL.match(word[-1])
+                and (word[:-1] in _ASPECT_OF_JA or word[:-1] in _JA_ALIASES))
 
 #: What a table cell puts after its state word when the cell holds a VALUE:
 #: kana (断水あり, 通行止め) or a completion suffix (復旧済). A bare noun is a
@@ -314,7 +367,8 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
     if lang == "ja":
         from .lang import ja_content_runs
         for run in reversed(ja_content_runs(text)):
-            if run == word or not _anchored_ok(text, run, word, "ja"):
+            if (run == word or is_state_word_ja(run)
+                    or not _anchored_ok(text, run, word, "ja")):
                 continue
             return run
         # Enumerated subjects: 「九州自動車道、南九州自動車道など通行止めが発生」.
@@ -352,9 +406,16 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
         #
         #   no particle    a sentence has は or が; a row does not. This is what
         #                  keeps the rule away from prose entirely.
-        #   term is last   nothing but the state may follow it, so 「避難所の
-        #                  開設、運営等について」 (a list of what guidance covers)
-        #                  and 「開設状況一覧」 (a heading) are both excluded.
+        #   last column    the state must sit in the row's final field, so a
+        #                  mid-row mention (「停止 断水」— 停止 is not the
+        #                  status) is excluded. Columns are separated by
+        #                  WHITESPACE, not by the term being the last thing on
+        #                  the line: 「天草市 断水あり・漏水あり」 is two values
+        #                  in one cell, and requiring nothing after the term
+        #                  cost half the recall this rule exists to buy —
+        #                  measured against the water table read by hand,
+        #                  3 of 6 restorations found, the three missed all
+        #                  having a compound cell.
         #   not a quantity a subject may not end in a bare digit. 「約20,970」 is
         #                  how many households lost water, not who did. 国道4号
         #                  and 第3条 end in 号/条 and stay eligible.
@@ -380,12 +441,24 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
             at = _standalone_index(text, word)
             tail = text[at + len(word):] if at >= 0 else ""
             marked = bool(_JA_CELL_VALUE.match(tail))
-            # 済 is part of the state, not a further column.
-            if tail[:1] in _JA_COMPLETION:
-                tail = tail[1:]
-            if at >= 0 and marked and not ja_content_runs(tail):
-                for run in reversed(ja_content_runs(text[:at])):
-                    if run == word or run[-1] in "0123456789０１２３４５６７８９":
+            in_last_column = at >= 0 and not _JA_COLUMN_GAP.search(tail)
+            if at >= 0 and marked and in_last_column:
+                head = text[:at]
+                for run in reversed(ja_content_runs(head)):
+                    if (run == word or is_state_word_ja(run)
+                            or run[-1] in "0123456789０１２３４５６７８９"
+                            or _JA_ENUMERATOR.fullmatch(run)):
+                        continue
+                    # A cause is not a subject. 「ア 被災による通行止め：なし」
+                    # and 「ア 被災による通行止め：２県６区間」 are two road
+                    # networks' rows in ONE 8/6 report, each headed the same
+                    # way, and taking 被災 for the subject made the document
+                    # contradict itself. What each row is actually about is
+                    # the network named in the section heading above it —
+                    # which the row does not contain, so the honest answer is
+                    # that there is no subject here.
+                    where = head.rfind(run) + len(run)
+                    if _JA_CAUSE_MARK.match(head[where:]):
                         continue
                     return run
         return None

@@ -300,6 +300,12 @@ def main() -> int:
         ("福岡県 大川市 断水あり・漏水あり", "・", False),
         ("データセンターのラーメン構造をチェックする", "データセンター", True),
         ("・避難所は閉鎖されました", "避難所", True),
+        # 水洗トイレ is one noun. Splitting at the script change filed it and
+        # 汲み取り式のトイレ under the same トイレ, and the guidance's own
+        # distinction between two kinds of toilet became a contradiction.
+        ("水洗トイレが使用可能になった", "水洗トイレ", True),
+        ("仮設トイレを設置", "仮設トイレ", True),
+        ("水洗トイレが使用可能になった", "トイレ", False),
     ]
     for sentence, token, want in dot_cases:
         got = token in ja_content_runs(sentence)
@@ -371,6 +377,18 @@ def main() -> int:
         ("熊本市 約20,970 0 7/28～8/3 ・復旧済", "復旧", "熊本市"),
         ("建物被害 停電 断水", "断水", None),
         ("害、 停電、 断水、", "断水", None),
+        # Compound cell values: 断水あり・漏水あり is ONE cell holding two
+        # values, and requiring nothing after the term cost 3 of 6
+        # restorations against a water table read by hand.
+        ("天草市 断水あり・漏水あり", "断水", "天草市"),
+        ("御船町 断水あり・漏水あり", "断水", "御船町"),
+        ("合志市 断水あり（復旧済）", "復旧", "合志市"),
+        # A cause is not a subject, and an enumerator is not a noun. These two
+        # rows are different road networks in ONE 8/6 report, headed the same
+        # way; taking 被災 for the subject made the document contradict itself.
+        ("ア 被災による通行止め：なし", "通行止", None),
+        ("ア 被災による通行止め：２県６区間", "通行止", None),
+        ("停止 断水", "停止", None),
         ("避難所の開設、運営等について", "開設", None),
         ("開設状況一覧", "開設", None),
         ("使用不可の場合は連絡すること", "使用不可", None),
