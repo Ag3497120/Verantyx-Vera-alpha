@@ -168,8 +168,14 @@ def audit(paths: List[str]) -> Audit:
     # because they describe a world that changed rather than a rule that was
     # refined. A corpus of guidance is the wrong shelf, and no amount of it
     # will produce a precision figure.
-    by_source: Dict[str, Dict[str, set]] = {}
-    for doc in docs:
+    # Keyed by POSITION, not by `doc.source`. The source label is a basename,
+    # and a corpus of any size repeats them: 21.6M characters of this author's
+    # repositories held four files called docker.md, so each one overwrote the
+    # last and the empty copy won. The audit then reported zero opposable
+    # pairs beside a worksheet containing a detection — a report contradicting
+    # itself, in the module whose only job is to say what was really measured.
+    by_source: Dict[int, Dict[str, set]] = {}
+    for i, doc in enumerate(docs):
         one = CrossStore()
         one.track_provenance = True
         ingest_documents(one, [doc])
@@ -178,7 +184,7 @@ def audit(paths: List[str]) -> Audit:
             for f in facets:
                 if ":" in f:
                     held.setdefault(f"{core}\t{f.split(':', 1)[0]}", set()).add(f)
-        by_source[doc.source] = held
+        by_source[i] = held
 
     opposable = 0
     keys = set().union(*(set(h) for h in by_source.values())) if by_source else set()

@@ -47,6 +47,14 @@ ANTONYM_PAIRS: List[Tuple[str, str]] = []
 ASPECT_JOINS: List[Tuple[str, str, str]] = []
 ALIASES: Dict[str, str] = {}
 PREDICATES: Dict[str, str] = {}
+#: Kanji that follow a polar term without making it a compound noun. The
+#: compound guard rejects any following kanji, which is right for 復旧作業 (a
+#: restoration EFFORT is not a restored state) and wrong for 復旧済, where the
+#: kanji is a grammatical suffix meaning the state has been reached. Measured
+#: on 内閣府's 令和8年熊本地震 damage tables: 「熊本市 … ・復旧済」 is the row that
+#: records a municipality's water coming back, and it produced no claim.
+#: Data rather than code so a domain can add its own without a release.
+COMPLETION_SUFFIXES: set = set()
 #: term → (aspect, polarity). Derived; rebuilt on every load.
 ASPECT_OF: Dict[str, Tuple[str, str]] = {}
 #: All matchable terms, longest first — the scan order substring matching
@@ -125,6 +133,7 @@ def _apply(data: Dict[str, Any]) -> None:
             ASPECT_JOINS.append((join[0], join[1], join[2]))
     ALIASES.update(data.get("aliases") or {})
     PREDICATES.update(data.get("predicates") or {})
+    COMPLETION_SUFFIXES.update(data.get("completion_suffixes") or [])
     _rebuild()
 
 
@@ -142,6 +151,7 @@ def load() -> None:
     ASPECT_JOINS.clear()
     ALIASES.clear()
     PREDICATES.clear()
+    COMPLETION_SUFFIXES.clear()
     _apply(raw)
     global _loaded_overlay
     _loaded_overlay = None

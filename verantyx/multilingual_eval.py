@@ -285,6 +285,113 @@ def main() -> int:
             failures.append(f"enumerated subject: {sentence[:20]}")
     print()
 
+    # -- 4b4. ・ is punctuation that lives in the katakana block -------------
+    # The four-revision 内閣府 corpus produced exactly one contradiction and it
+    # was false: every line of a government damage report is bulleted with ・,
+    # the block range took it as a katakana word, and it became a CORE — so an
+    # unrelated 復旧 sentence and an unrelated 断水 table were filed as opposing
+    # claims about the same subject.
+    #
+    # ー (U+30FC) sits in the same block and IS a letter. Dropping it would
+    # shred every loanword, so both directions are pinned here.
+    from .lang import ja_content_runs
+    dot_cases = [
+        ("・今後、施設の復旧を進める。", "・", False),
+        ("福岡県 大川市 断水あり・漏水あり", "・", False),
+        ("データセンターのラーメン構造をチェックする", "データセンター", True),
+        ("・避難所は閉鎖されました", "避難所", True),
+    ]
+    for sentence, token, want in dot_cases:
+        got = token in ja_content_runs(sentence)
+        ok = got == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] katakana-block punctuation: "
+              f"{token!r} in {sentence[:18]}… -> {got}")
+        if not ok:
+            failures.append(f"katakana-block punctuation: {token}")
+    print()
+
+    # -- 4b5. A polar term is a predicate and never a core -------------------
+    # 「４県において断水が発生」 puts 断水 before が, so the head-final rule made
+    # 断水 the core — and a core of 断水 makes `subject_is_core` ask whether the
+    # claim is about 断水, which is trivially true. Every guard downstream
+    # becomes a no-op, which is how the one detection 内閣府's damage reports
+    # produced got through: 復旧 and 断水 on the core 断水, from two sentences
+    # about different places.
+    #
+    # 開設準備 is the control. The vocabulary lists stems (通行止, not 通行止め),
+    # so the test strips one trailing hiragana — and must not strip its way
+    # into demoting a real topic that merely starts with a state word.
+    from .cross_store import CrossStore as _CS
+    from .lang import ja_ingest_sentence as _ingest
+    core_cases = [
+        ("○４県（15 自治体）において断水が発生（最大断水戸数約 108,100 戸）。", "断水"),
+        ("九州自動車道、南九州自動車道など通行止めが発生しております。", "通行止め"),
+        ("本町の避難所は開設されました。", None),
+        ("開設準備が進んでいます。", None),
+    ]
+    for sentence, forbidden in core_cases:
+        got = _ingest(_CS(), sentence)
+        ok = got is not None and got != forbidden
+        print(f"[{'ok  ' if ok else 'FAIL'}] core is a topic, not a state: "
+              f"{sentence[:24]}… -> {got}")
+        if not ok:
+            failures.append(f"polar core: {sentence[:20]}")
+    # The road case is the one a person can check by reading: 「九州自動車道…など
+    # 通行止め」 must file under the road, because that is what it says.
+    road = _ingest(_CS(), "九州自動車道、南九州自動車道など通行止めが発生しております。")
+    ok = road == "九州自動車道"
+    print(f"[{'ok  ' if ok else 'FAIL'}] the closure is filed under the road -> {road}")
+    if not ok:
+        failures.append("closure filed under the road")
+    print()
+
+    # -- 4b6. Table rows, and the two ways they lie ------------------------
+    # Official damage reports keep their per-place facts in tables, and a row
+    # has no particle: nothing marks a subject, so every row's claim used to
+    # be dropped. Japanese tabular notation reads head-final like the rest of
+    # the language — the state in the last column belongs to the noun before
+    # it — and turning that on is what finally produced a true positive on
+    # real documents (熊本市 断水 on 7/29, 復旧済 on 8/6, one agency, both
+    # published).
+    #
+    # It also admitted two errors that this block exists to keep out.
+    #
+    # A HEADER is the same shape as a row. 「建物被害 停電 断水」 names three
+    # columns and asserts nothing; a data cell marks its value (断水あり,
+    # 復旧済), a header does not.
+    #
+    # A cell can NEGATE. 「ア 被災による通行止め：なし」 says there are no
+    # closures, and reading it as 通行止 inverts the claim while attaching a
+    # government citation to it — worse, by this module's standing terms, than
+    # reporting nothing at all.
+    from .polarity import detect_ja as detect_polar_ja
+    row_cases = [
+        ("熊本県  熊本市 断水あり", "断水", "熊本市"),
+        ("太良町 断水あり", "断水", "太良町"),
+        ("熊本市 約20,970 0 7/28～8/3 ・復旧済", "復旧", "熊本市"),
+        ("建物被害 停電 断水", "断水", None),
+        ("害、 停電、 断水、", "断水", None),
+        ("避難所の開設、運営等について", "開設", None),
+        ("開設状況一覧", "開設", None),
+        ("使用不可の場合は連絡すること", "使用不可", None),
+    ]
+    for sentence, word, expect in row_cases:
+        got = subject_of(sentence, word, "ja")
+        ok = got == expect
+        print(f"[{'ok  ' if ok else 'FAIL'}] table row: {sentence[:24]:26s} -> {got}")
+        if not ok:
+            failures.append(f"table row: {sentence[:18]}")
+    for sentence, want in [("ア 被災による通行止め：なし", "not_通行止"),
+                           ("通行止めなし", "not_通行止"),
+                           ("通行止め：あり", "通行止"),
+                           ("熊本市 約20,970 0 7/28～8/3 ・復旧済", "復旧")]:
+        hits = detect_polar_ja(sentence)
+        ok = any(v == want for _, v, _ in hits)
+        print(f"[{'ok  ' if ok else 'FAIL'}] cell value: {sentence[:24]:26s} -> {hits}")
+        if not ok:
+            failures.append(f"cell value: {sentence[:18]}")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

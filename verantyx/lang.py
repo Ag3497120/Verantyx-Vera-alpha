@@ -82,8 +82,17 @@ def detect(text: str) -> str:
 #
 # い/な stay unconditional as before (adjective endings); the new set is
 # conditional to avoid swallowing conjugation.
+#
+# The katakana class is spelled out rather than written as the block range
+# ゠-ヿ because two characters in that block are punctuation, not letters:
+# ・ (U+30FB) and ゠ (U+30A0). Taking the block wholesale made ・ a content
+# run of its own, and 内閣府's damage reports bullet every line with it — so
+# ・ became a CORE, and 「・今後、…復旧を進める」 and 「…断水あり・漏水あり」 were
+# filed as claims about the same subject. That was the only detection the
+# four-revision corpus produced, and it was false. ー (U+30FC) is a letter
+# and stays: 「データ」「ラーメン」 need it.
 _JA_RUN = re.compile(
-    r"[゠-ヿー]+"
+    r"[ァ-ヺヽヾヿー]+"
     r"|[㐀-䶿一-鿿0-9０-９]+"
     r"(?:[いな]|[れめきちりつけ](?=[はがをにでとのへもや、。！？\s]|$))?"
 )
@@ -116,7 +125,42 @@ def ja_content_runs(text: str) -> List[str]:
 #: The topic phrase: everything before the first は/が that follows a content
 #: character. Used to pick the head noun as the core.
 _JA_TOPIC = re.compile(
-    r"^(.*?[㐀-䶿一-鿿゠-ヿー0-9０-９][いなれめきちりつけ]?)[はが]")
+    r"^(.*?[㐀-䶿一-鿿ァ-ヺヽヾヿー0-9０-９][いなれめきちりつけ]?)[はが]")
+
+
+_POLAR_JA: Optional[frozenset] = None
+
+
+def _polar_terms_ja() -> frozenset:
+    """The words that are states rather than subjects.
+
+    Imported late on purpose: `polarity` imports this module, so naming it at
+    the top would be a cycle.
+    """
+    global _POLAR_JA
+    if _POLAR_JA is None:
+        from .polarity import ANTONYM_PAIRS_JA
+        _POLAR_JA = frozenset(w for pair in ANTONYM_PAIRS_JA for w in pair)
+    return _POLAR_JA
+
+
+_HIRAGANA = re.compile(r"[぀-ゟ]")
+
+
+def _is_polar_ja(word: str) -> bool:
+    """The vocabulary lists stems; the segmenter emits one okurigana with them.
+
+    通行止 is the listed term and 通行止め is what a sentence contains, so a
+    bare membership test misses exactly the word that started this — the road
+    closure that became its own topic. Only a trailing HIRAGANA is stripped,
+    which is the one character the run rule can add; 開設準備 keeps its 準備 and
+    stays a topic.
+    """
+    polar = _polar_terms_ja()
+    if word in polar:
+        return True
+    return (len(word) > 1 and _HIRAGANA.match(word[-1] or "")
+            and word[:-1] in polar)
 
 
 def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:
@@ -132,16 +176,39 @@ def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:
 
     Sentences without a topic marker keep the first-run rule, stated rather
     than hidden: there is no head to find without a boundary to find it in.
+
+    A polar term is never the core, because a core is a topic and a polar term
+    is a predicate. This is not tidiness — it is what keeps the subject gate
+    working at all. 「４県において断水が発生」 puts 断水 before が, so the
+    head-final rule made 断水 the core; and then `subject_is_core` asks whether
+    the claim is about 断水 and the answer is trivially yes, so every guard
+    downstream is a no-op. Measured on 内閣府's 令和8年熊本地震 reports: the
+    only detection the corpus produced was 断水 against 復旧 on the core 断水,
+    from two sentences about different places — a government office whose
+    supply had already come back, and fifteen municipalities where it had not.
     """
     runs = ja_content_runs(text)
     if not runs:
         return None
     core = runs[0]
+    topic_runs: List[str] = []
     m = _JA_TOPIC.match(text or "")
     if m:
         topic_runs = ja_content_runs(m.group(1))
         if topic_runs:
             core = topic_runs[-1]
+
+    if _is_polar_ja(core):
+        # Ask the polarity module who the subject is — the same question it
+        # asks before placing a pole, so the index key and the gate agree.
+        from .polarity import subject_of
+        found = subject_of(text, core, "ja")
+        if found and not _is_polar_ja(found):
+            core = found
+        else:
+            rest = [r for r in (topic_runs or runs) if not _is_polar_ja(r)]
+            core = rest[-1] if rest else runs[0]
+
     facets = [r for r in runs if r != core]
     # `source=` is what CrossStore records as provenance, and the English
     # path has always passed it. Without it, anything reading provenance —

@@ -41,7 +41,14 @@ from .polarity import (ANTONYM_PAIRS, ANTONYM_PAIRS_JA, detect,
 #: entirely. Measured before this was fixed: a two-source Japanese corpus
 #: ingested as zero sentences, silently, which is the worst way for the
 #: disaster-information path to fail given who needs it.
-_SENT = re.compile(r"(?<=[.!?。！？])\s*")
+#:
+#: A newline is a boundary too, which is only safe because the loaders rejoin
+#: lines the page merely wrapped (`document_loaders.unwrap_layout`). Without
+#: that pairing this would shred prose at the column edge, and 「安全ではありま /
+#: せん」 would be stored as 安全. With it, the rule is what lets a table row
+#: be a claim at all: cutting only at 。 made 内閣府's 259-line road table one
+#: sentence about 国土交通省.
+_SENT = re.compile(r"(?<=[.!?。！？])\s*|\n+")
 
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿]")
 
@@ -89,7 +96,8 @@ class IngestReport:
 
 
 def _place(store: CrossStore, sentence: str,
-           detect_on: Optional[str] = None) -> tuple:
+           detect_on: Optional[str] = None,
+           doc_lang: Optional[str] = None) -> tuple:
     """Put one sentence in the store, using the right language's segmenter.
 
     `ingest_polar` goes through CrossStore.ingest_sentence, whose decomposer
@@ -113,8 +121,22 @@ def _place(store: CrossStore, sentence: str,
     # whole sentence into a single core with no facets. The suffix is
     # bookkeeping; it must not get a vote on what language the claim is in.
     lang = detect(detect_on or sentence)
+    # Han without kana is the signal that separates Chinese from Japanese, and
+    # a Japanese TABLE ROW has no kana either: 「熊本市 約20,970 0 7/28～8/3
+    # ・復旧済」 is six ideographs and not one syllabary character, so it was
+    # called Chinese and routed to the path that deliberately places no poles.
+    # That row is a municipality's water supply coming back, and it is the
+    # other half of the update this corpus was fetched to test.
+    #
+    # A document has one language; a row inside it does not get its own. Where
+    # the segment is script-ambiguous and the document as a whole — where kana
+    # is plentiful — reads as Japanese, the document wins. A genuinely Chinese
+    # document still detects as zh at document level, so its rows still route
+    # to zh, which is the case the original rule was added for.
+    if lang == "zh" and doc_lang == "ja":
+        lang = "ja"
     if lang == "ja":
-        return ingest_polar_ja(store, sentence), "ja"
+        return ingest_polar_ja(store, sentence, claim=detect_on), "ja"
     if lang == "zh":
         # Chinese gets segmentation (the ideograph-run scanner is script-,
         # not language-specific) but NOT the Japanese polarity pass: the
@@ -151,10 +173,13 @@ def ingest_documents(store: CrossStore, docs: List[Document],
         if doc.published:
             store.source_meta.setdefault(doc.source, {})["published"] = doc.published
 
+    from .lang import detect as _detect_lang
+
     rep = IngestReport()
     for doc in docs:
         rep.documents += 1
         count = 0
+        doc_lang = _detect_lang(doc.text or "")
         for raw in _SENT.split(doc.text or ""):
             s = raw.strip()
             if not s:
@@ -163,7 +188,7 @@ def ingest_documents(store: CrossStore, docs: List[Document],
             if len(s) < _min_chars(s):
                 continue
             tagged = f"{s} (reported by {doc.source})"
-            core, lang = _place(store, tagged, detect_on=s)
+            core, lang = _place(store, tagged, detect_on=s, doc_lang=doc_lang)
             if core is None:
                 continue
             by_lang = rep.core_lang.setdefault(core, {})
@@ -367,8 +392,11 @@ def _attribution_vocabulary(store: CrossStore, core: str) -> set:
 
 
 #: Kanji/katakana runs — the same shape `lang.ja_content_runs` extracts, so
-#: what a source label contributes here matches what ingestion put in.
-_CJK_RUN = re.compile(r"[゠-ヿ]+|[㐀-䶿一-鿿]+")
+#: what a source label contributes here matches what ingestion put in. The
+#: katakana class excludes ・ and ゠ for the reason given there: they sit in
+#: the katakana block but are punctuation, and taking the block whole turned
+#: a bullet point into a topic.
+_CJK_RUN = re.compile(r"[ァ-ヺヽヾヿ]+|[㐀-䶿一-鿿]+")
 
 
 _ARM_QUESTION = {

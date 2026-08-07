@@ -64,6 +64,7 @@ ANTONYM_PAIRS: List[Tuple[str, str]] = [
 # and extensible by overlay — the design rationale (2-char floor, one
 # pole per term, aspect joins) is enforced by ja_grammar.validate().
 from .ja_grammar import ALIASES as _JA_ALIASES
+from .ja_grammar import COMPLETION_SUFFIXES as _JA_COMPLETION
 from .ja_grammar import ANTONYM_PAIRS as ANTONYM_PAIRS_JA
 from .ja_grammar import ASPECT_OF as _ASPECT_OF_JA
 from .ja_grammar import TERMS as _JA_TERMS
@@ -79,11 +80,20 @@ from .ja_grammar import TERMS as _JA_TERMS
 #: For the fields this is meant to serve, a detector that silently flips
 #: negated claims is worse than no detector: every other error here loses
 #: information, this one manufactured the opposite claim with a citation.
+#: The last alternative is the label-value form a table uses:
+#: 「ア 被災による通行止め：なし」 means there are NO closures, and without it
+#: the sentence was stored as 通行止 — the claim inverted, with a government
+#: citation attached, which is the one failure this module calls worse than
+#: silence. Found in 内閣府's 令和8年熊本地震 reports while checking what tabular
+#: reading had started to admit. The separator is optional because 「通行止め
+#: なし」 occurs bare, and 「通行止め：あり」 is untouched and stays positive.
 _JA_NEG_AFTER = re.compile(
     r"^(?:さ)?(?:では|じゃ)?(?:あり)?ません"
     r"|^(?:では|じゃ)?ない"
     r"|^(?:して|されて|できて)?(?:い|おり)?(?:ない|ません)"
     r"|^できない|^できません"
+    r"|^[ぁ-ん]?[ 　]*[：:・][ 　]*(?:なし|無し)"
+    r"|^[ぁ-ん]?[ 　]*(?:なし|無し)(?![ぁ-ん])"
 )
 
 #: English terms that are also ordinary prepositions or parts of hyphenated
@@ -152,7 +162,8 @@ def detect_ja(sentence: str) -> List[Tuple[str, str, str]]:
 
 
 def _place_poles(store: CrossStore, sentence: str, core: str,
-                 hits: List[Tuple[str, str, str]], lang: str) -> None:
+                 hits: List[Tuple[str, str, str]], lang: str,
+                 claim: Optional[str] = None) -> None:
     """Attach each detected pole to the noun it is actually predicated of.
 
     The recall half of the subject gate. The gate alone asked "is the CORE
@@ -165,12 +176,13 @@ def _place_poles(store: CrossStore, sentence: str, core: str,
     (「使用不可の場合」, "if the elevator is unavailable") still places
     nothing, because a pole from a supposition is a manufactured fact.
     """
+    read = claim or sentence
     for aspect, value, _pol in hits:
         word = value.replace("not_", "")
-        if subject_is_core(sentence, core, word, lang):
+        if subject_is_core(read, core, word, lang):
             target = core
         else:
-            target = subject_of(sentence, word, lang)
+            target = subject_of(read, word, lang)
             if target is None:
                 continue
         store.add(target, {f"{aspect}:{value}": None},
@@ -195,6 +207,12 @@ def _standalone_index(text: str, term: str) -> int:
     大変危険です, where the kanji before is an intensifier and the claim is
     real. Missing a compound that leads with a polar term is the cheaper
     error, and the vocabulary is small enough to inspect.
+
+    The one exception is a closed set of completion suffixes shipped as
+    grammar data (`ja_grammar.COMPLETION_SUFFIXES`). 済 is a kanji but not a
+    compound head: 復旧作業 is an effort and 復旧済 is the state itself, and
+    government damage tables record a municipality's water coming back with
+    exactly that word.
     """
     at = 0
     while True:
@@ -202,15 +220,23 @@ def _standalone_index(text: str, term: str) -> int:
         if at < 0:
             return -1
         after = text[at + len(term):at + len(term) + 1]
-        if not after or not _KANJI.match(after):
+        if (not after or not _KANJI.match(after)
+                or after in _JA_COMPLETION):
             return at
         at += 1
 
 
 _KANJI = re.compile(r"[㐀-䶿一-鿿]")
 
+#: What a table cell puts after its state word when the cell holds a VALUE:
+#: kana (断水あり, 通行止め) or a completion suffix (復旧済). A bare noun is a
+#: column heading and punctuation is a list, and neither asserts anything.
+_JA_CELL_VALUE = re.compile(r"^[ぁ-ヿ]|^[" + "".join(sorted(_JA_COMPLETION)) + r"]"
+                            if _JA_COMPLETION else r"^[ぁ-ヿ]")
 
-def ingest_polar_ja(store: CrossStore, sentence: str) -> Optional[str]:
+
+def ingest_polar_ja(store: CrossStore, sentence: str,
+                    claim: Optional[str] = None) -> Optional[str]:
     """Japanese ingest plus pole placement.
 
     Mirrors `ingest_polar`, but segments with `lang.ja_ingest_sentence`
@@ -218,13 +244,24 @@ def ingest_polar_ja(store: CrossStore, sentence: str) -> Optional[str]:
     returns nothing at all for Japanese. Keyed facets land on the same core
     in the same `aspect:value` shape, so `CrossStore.contradictions()` fires
     without knowing which language produced them.
+
+    `claim` is the sentence WITHOUT its attribution suffix, when the caller
+    has it. Structure is read from the claim and provenance is stored with
+    the citation, which had been the same string until a rule needed to know
+    where the sentence ENDS: the tabular-row reading requires the state to be
+    the last column, and 「熊本市 … ・復旧済 (reported by 内閣府 8/6)」 has the
+    citation sitting in that column. Detection already had its own version of
+    this problem — the Latin in the suffix outvoted a short Japanese sentence
+    and sent it to the English decomposer — so the suffix now stays out of
+    both votes.
     """
     from .lang import ja_ingest_sentence
 
     core = ja_ingest_sentence(store, sentence)
     if core is None:
         return None
-    _place_poles(store, sentence, core, detect_ja(sentence), "ja")
+    _place_poles(store, sentence, core, detect_ja(sentence), "ja",
+                 claim=claim)
     return core
 
 
@@ -301,6 +338,56 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
                 runs = ja_content_runs(items[0])
                 if runs:
                     return runs[-1]
+
+        # Tabular rows: 「熊本県  熊本市 断水あり」. Official damage reports keep
+        # their per-place facts in tables, and a table row has no particle at
+        # all — nothing marks a subject, so both branches above find nothing
+        # and the row's claim is dropped. Japanese tabular notation reads
+        # head-final like the rest of the language: the state in the last
+        # column is predicated of the nearest noun before it.
+        #
+        # This is the reading convention, not an inference about one ministry's
+        # layout, but a row is also the exact shape a heading has, so it is
+        # guarded three ways:
+        #
+        #   no particle    a sentence has は or が; a row does not. This is what
+        #                  keeps the rule away from prose entirely.
+        #   term is last   nothing but the state may follow it, so 「避難所の
+        #                  開設、運営等について」 (a list of what guidance covers)
+        #                  and 「開設状況一覧」 (a heading) are both excluded.
+        #   not a quantity a subject may not end in a bare digit. 「約20,970」 is
+        #                  how many households lost water, not who did. 国道4号
+        #                  and 第3条 end in 号/条 and stay eligible.
+        #   value marked   a data cell says what it holds, in kana or with a
+        #                  completion suffix — 断水あり, 復旧済, 通行止め. Two
+        #                  other things wear the same shape and asserted
+        #                  nothing, and both produced false positives here
+        #                  before the marker was required:
+        #                    a HEADER names columns with bare nouns —
+        #                    「建物被害 停電 断水」 is the damage table's
+        #                    heading. Counted across the four revisions, 断水
+        #                    appears bare 26 times and as 断水あり 14, and the
+        #                    bare ones are headings.
+        #                    an ENUMERATION lists topics — 「害、 停電、 断水、」
+        #                    is a sentence naming what was damaged. Punctuation
+        #                    after the term is the tell, the same one
+        #                    `_anchored_ok` already uses on the prose path.
+        #                  The known cost is a data row that states its value
+        #                  with no marker at all; missing that is the cheaper
+        #                  error, on this module's standing terms.
+        if not re.search(r"[はが]", text) and not re.search(
+                r"(場合|とき|なら|れば|たら|予定|見込)", text):
+            at = _standalone_index(text, word)
+            tail = text[at + len(word):] if at >= 0 else ""
+            marked = bool(_JA_CELL_VALUE.match(tail))
+            # 済 is part of the state, not a further column.
+            if tail[:1] in _JA_COMPLETION:
+                tail = tail[1:]
+            if at >= 0 and marked and not ja_content_runs(tail):
+                for run in reversed(ja_content_runs(text[:at])):
+                    if run == word or run[-1] in "0123456789０１２３４５６７８９":
+                        continue
+                    return run
         return None
 
     # Lookahead, not consumption: in "that the lighthouse", a consuming

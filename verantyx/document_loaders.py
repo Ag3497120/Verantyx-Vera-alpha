@@ -235,6 +235,78 @@ def _from_docx(path: Path) -> str:
     return "\n".join(paragraphs)
 
 
+# ---------------------------------------------------------------------------
+# Physical lines vs logical lines
+# ---------------------------------------------------------------------------
+
+#: In extracted text a wrapped line and a finished line look identical — both
+#: end in "\n" — and telling them apart decides whether a document is read at
+#: all. The sentence splitter cuts at 。, tables have no 。, so a table is one
+#: sentence. Measured on four revisions of 内閣府's 令和8年熊本地震 damage
+#: report: 77.8% of 267,064 characters sat inside segments spanning four lines
+#: or more, the largest being 259 lines and 5,836 characters filed under the
+#: single core 国土交通省. The per-municipality facts those tables carry —
+#: 「熊本県 熊本市 断水あり」 on 7/29, 「熊本市 … ・復旧済」 on 8/6 — never became
+#: claims about 熊本市, which is why the corpus reported zero opposable pairs
+#: while plainly containing an update.
+#:
+#: The signal is the page's own geometry rather than anything linguistic: a
+#: laid-out column breaks a line only when the line is FULL, so a short line
+#: ended on purpose and a full-width line continues into the next. The width
+#: is measured per document, because a PDF column, a hard-wrapped .md file and
+#: a plain-text note each wrap somewhere different.
+#:
+#: Deliberately not applied to CSV, TSV, JSON or HTML: those arrive as logical
+#: lines already, and a wide CSV row would be glued to the row beneath it.
+_WRAP_KEEP = 0.90        # a line this fraction of full width is still filling
+_WRAP_MIN_LINES = 8      # below this there is no distribution to measure
+_WRAP_MIN_WIDTH = 20     # below this, "full width" is not a meaningful idea
+_LINE_ENDS = ("。", "．", ".", "！", "!", "？", "?", "」", "）", ")", "：", ":")
+_CJK_CHAR = re.compile(r"[぀-ヿ㐀-䶿一-鿿]")
+
+
+def _column_width(lines: List[str]) -> int:
+    lengths = sorted(len(ln) for ln in lines if ln.strip())
+    if len(lengths) < _WRAP_MIN_LINES:
+        return 0
+    return lengths[int(len(lengths) * 0.90)]
+
+
+def _join_wrapped(head: str, tail: str) -> str:
+    if not head:
+        return tail
+    # Japanese wraps mid-word and takes no space; English needs one back.
+    if _CJK_CHAR.search(head[-1]) or _CJK_CHAR.search(tail[:1] or " "):
+        return head + tail
+    return head + " " + tail
+
+
+def unwrap_layout(text: str) -> str:
+    """Rejoin lines the page broke, so the remaining newlines mean something."""
+    lines = (text or "").split("\n")
+    width = _column_width(lines)
+    if width < _WRAP_MIN_WIDTH:
+        return text
+    full = width * _WRAP_KEEP
+
+    out: List[str] = []
+    buf = ""
+    for raw in lines:
+        line = raw.rstrip()
+        if not line.strip():
+            if buf:
+                out.append(buf)
+                buf = ""
+            continue
+        buf = _join_wrapped(buf, line.strip() if buf else line)
+        if len(line) < full or line.rstrip().endswith(_LINE_ENDS):
+            out.append(buf)
+            buf = ""
+    if buf:
+        out.append(buf)
+    return "\n".join(out)
+
+
 def _from_pdf(path: Path) -> str:
     if importlib.util.find_spec("pypdf") is None:
         # `name=` matters: the caller distinguishes this from any other
@@ -269,6 +341,10 @@ def load_path(path: str, source: Optional[str] = None) -> Dict[str, Any]:
                 "reason": f"no loader for '{suffix}'",
                 "supported": sorted(SUPPORTED)}
 
+    # Formats whose newlines come from page layout rather than from the
+    # author. See `unwrap_layout`.
+    laid_out = suffix in {".pdf", ".docx", ".md", ".markdown",
+                          ".txt", ".log", ".rst"}
     try:
         if suffix == ".pdf":
             text = _from_pdf(p)
@@ -318,6 +394,9 @@ def load_path(path: str, source: Optional[str] = None) -> Dict[str, Any]:
         # must never cost the other nine hundred.
         return {"verdict": "UNKNOWN_UNREADABLE", "path": str(p),
                 "reason": f"{type(exc).__name__}: {exc}"}
+
+    if laid_out:
+        text = unwrap_layout(text)
 
     if not text.strip():
         # Distinct from a parse failure, and it matters: a scanned PDF is an
