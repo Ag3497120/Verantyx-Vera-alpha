@@ -468,6 +468,25 @@ def main() -> int:
         failures.append("placement explain notes")
     print()
 
+    # -- 4h. SQLite checkpoint: identical contents, crash-safe format -------
+    # Chosen for the failure mode, not the speed: the JSON checkpoint
+    # rewrites the whole store as one string (208 MB measured on an
+    # accumulated store) and a crash mid-write parses as nothing. WAL rolls
+    # back instead. Same store, either suffix, equal contents — asserted.
+    with tempfile.TemporaryDirectory() as tds:
+        pj, ps = Path(tds) / "s.json", Path(tds) / "s.sqlite"
+        store.save(pj); store.save(ps)
+        a, b = CrossStore.load(pj), CrossStore.load(ps)
+        ok = (a.crosses == b.crosses == store.crosses
+              and a.provenance == b.provenance == store.provenance
+              and a.core_count == b.core_count
+              and a.n_sentences == b.n_sentences)
+        print(f"[{'ok  ' if ok else 'FAIL'}] JSON and SQLite checkpoints "
+              f"round-trip to identical stores")
+        if not ok:
+            failures.append("sqlite round-trip")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

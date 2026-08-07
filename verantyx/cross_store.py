@@ -200,6 +200,9 @@ class CrossStore:
     def save(self, path: Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix.lower() in _SQLITE_SUFFIXES:
+            _save_sqlite(self, path)
+            return
         payload = {
             "crosses": self.crosses,
             "core_count": self.core_count,
@@ -210,11 +213,20 @@ class CrossStore:
             "provenance": self.provenance if self.track_provenance else {},
             "track_provenance": self.track_provenance,
         }
-        path.write_text(json.dumps(payload, ensure_ascii=False))
+        # Atomic replace: the old failure mode was a half-written JSON on
+        # crash mid-save, which loads as nothing — the store looked empty
+        # rather than damaged. Correctness over speed, per the operating
+        # decision: a slow save that cannot corrupt beats a fast one that can.
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False))
+        tmp.replace(path)
 
     @classmethod
     def load(cls, path: Path) -> "CrossStore":
-        d = json.loads(Path(path).read_text())
+        path = Path(path)
+        if path.suffix.lower() in _SQLITE_SUFFIXES:
+            return _load_sqlite(cls, path)
+        d = json.loads(path.read_text())
         st = cls(
             crosses={k: dict(v) for k, v in d.get("crosses", {}).items()},
             core_count=dict(d.get("core_count", {})),
@@ -275,3 +287,96 @@ def pour_corpus(
     if checkpoint_path is not None:
         st.save(checkpoint_path)
     return st, rep
+
+
+# ---------------------------------------------------------------------------
+# SQLite persistence — chosen for crash-safety, not speed
+# ---------------------------------------------------------------------------
+#
+# The JSON checkpoint rewrites the whole store as one string; measured at
+# 208 MB on an accumulated store, every save serialised a fifth of a
+# gigabyte and a crash mid-write left a file that parses as nothing. SQLite
+# fixes the failure mode first: WAL journaling means a crash mid-transaction
+# rolls back to the previous good state, and readers are never blocked by a
+# writer. The write is still a full rewrite inside one transaction —
+# incremental upserts are a later optimisation, deliberately deferred,
+# because "works and cannot corrupt" was the requirement and clever partial
+# writes are where corruption bugs live.
+#
+# Store paths ending in .sqlite / .sqlite3 / .db use this backend; .json
+# keeps the original format, so existing stores and sidecar tooling are
+# untouched. One store, either format, identical contents — the round-trip
+# equality is pinned in the eval suite.
+
+_SQLITE_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
+
+
+def _save_sqlite(store: "CrossStore", path: Path) -> None:
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA synchronous=NORMAL")
+        with con:
+            con.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+            con.execute("CREATE TABLE IF NOT EXISTS crosses ("
+                        "core TEXT, facet TEXT, n INTEGER, "
+                        "PRIMARY KEY (core, facet))")
+            con.execute("CREATE TABLE IF NOT EXISTS provenance ("
+                        "core TEXT, facet TEXT, slot TEXT, "
+                        "PRIMARY KEY (core, facet))")
+            con.execute("DELETE FROM crosses")
+            con.execute("DELETE FROM provenance")
+            con.execute("DELETE FROM meta")
+            con.executemany(
+                "INSERT INTO crosses VALUES (?, ?, ?)",
+                ((c, f, n) for c, fs in store.crosses.items()
+                 for f, n in fs.items()))
+            if store.track_provenance:
+                con.executemany(
+                    "INSERT INTO provenance VALUES (?, ?, ?)",
+                    ((c, f, json.dumps(list(slot), ensure_ascii=False))
+                     for c, fs in store.provenance.items()
+                     for f, slot in fs.items()))
+            meta = {
+                "core_count": json.dumps(store.core_count, ensure_ascii=False),
+                "n_sentences": str(store.n_sentences),
+                "n_rows": str(store.n_rows),
+                "source": store.source,
+                "cap_stats": json.dumps(store.cap_stats, ensure_ascii=False),
+                "track_provenance": "1" if store.track_provenance else "0",
+            }
+            con.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
+    finally:
+        con.close()
+
+
+def _load_sqlite(cls, path: Path) -> "CrossStore":
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    try:
+        meta = dict(con.execute("SELECT k, v FROM meta"))
+        crosses: dict = {}
+        for core, facet, n in con.execute("SELECT core, facet, n FROM crosses"):
+            crosses.setdefault(core, {})[facet] = n
+        provenance: dict = {}
+        for core, facet, slot in con.execute(
+                "SELECT core, facet, slot FROM provenance"):
+            provenance.setdefault(core, {})[facet] = json.loads(slot)
+    finally:
+        con.close()
+    st = cls(
+        crosses=crosses,
+        core_count=json.loads(meta.get("core_count", "{}")),
+        n_sentences=int(meta.get("n_sentences", "0")),
+        n_rows=int(meta.get("n_rows", "0")),
+        source=meta.get("source", ""),
+        cap_stats={k: list(v) for k, v in
+                   json.loads(meta.get("cap_stats", "{}")).items()},
+        track_provenance=meta.get("track_provenance") == "1",
+        provenance=provenance,
+    )
+    st.proper_lexicon = proper_lexicon_from_stats(st.cap_stats)
+    return st

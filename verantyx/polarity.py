@@ -151,6 +151,32 @@ def detect_ja(sentence: str) -> List[Tuple[str, str, str]]:
     return out
 
 
+def _place_poles(store: CrossStore, sentence: str, core: str,
+                 hits: List[Tuple[str, str, str]], lang: str) -> None:
+    """Attach each detected pole to the noun it is actually predicated of.
+
+    The recall half of the subject gate. The gate alone asked "is the CORE
+    the subject?" and threw the pole away otherwise — correct for precision,
+    and it cost every quotative claim: "Staff confirmed that the lighthouse
+    has been open" cores under staff, so the lighthouse's state vanished.
+    Now the pole follows its subject: on the core when the core is the
+    subject (the common case, unchanged), on the subject's own cross when it
+    is some other noun, and nowhere when no noun passes — a hypothetical
+    (「使用不可の場合」, "if the elevator is unavailable") still places
+    nothing, because a pole from a supposition is a manufactured fact.
+    """
+    for aspect, value, _pol in hits:
+        word = value.replace("not_", "")
+        if subject_is_core(sentence, core, word, lang):
+            target = core
+        else:
+            target = subject_of(sentence, word, lang)
+            if target is None:
+                continue
+        store.add(target, {f"{aspect}:{value}": None},
+                  source=sentence.strip())
+
+
 def _standalone_index(text: str, term: str) -> int:
     """Where `term` occurs as its own word, or -1.
 
@@ -198,11 +224,7 @@ def ingest_polar_ja(store: CrossStore, sentence: str) -> Optional[str]:
     core = ja_ingest_sentence(store, sentence)
     if core is None:
         return None
-    keyed = {f"{aspect}:{value}": None
-             for aspect, value, _ in detect_ja(sentence)
-             if subject_is_core(sentence, core, value.replace("not_", ""), "ja")}
-    if keyed:
-        store.add(core, keyed, source=sentence.strip())
+    _place_poles(store, sentence, core, detect_ja(sentence), "ja")
     return core
 
 
@@ -229,6 +251,52 @@ def detect(sentence: str) -> List[Tuple[str, str, str]]:
         else:
             out.append((aspect, word, pol))
     return out
+
+
+def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
+    """The noun `word` is predicated of, or None if there is no clean subject.
+
+    This generalizes the subject gate from a yes/no about the core into
+    finding the actual subject — the recall half of the same coin. Measured
+    need: "Staff confirmed that the lighthouse has been open" files its core
+    under staff, so a gate that only asks "is the core the subject?" throws
+    the claim away. The claim is real; it just belongs to the lighthouse.
+    Now the pole is placed on whichever noun IS the subject.
+
+    Two refusals, both learned from planted traps:
+
+      conditionals   "If the elevator is unavailable, …" and 「使用不可の
+                     場合は…」 assert nothing — they suppose. A subject whose
+                     clause opens with if/when/unless (EN) or whose predicate
+                     is followed by 場合/なら/れば (JA) is rejected, because a
+                     pole from a hypothetical is a manufactured fact.
+      no subject     when no noun passes the anchored test, the answer is
+                     None and no pole is placed anywhere — same as before.
+    """
+    text = sentence or ""
+    if lang == "ja":
+        from .lang import ja_content_runs
+        for run in reversed(ja_content_runs(text)):
+            if run == word or not _anchored_ok(text, run, word, "ja"):
+                continue
+            return run
+        return None
+
+    # Lookahead, not consumption: in "that the lighthouse", a consuming
+    # scan eats "that the" and captures "the" — the first run of this did
+    # exactly that. Overlapping matches let "the lighthouse" be seen too.
+    for m in reversed(list(re.finditer(
+            r"(?=\b(?:the|a|an|this|that|its|their|our)\s+([A-Za-z][\w-]*))",
+            text, re.IGNORECASE))):
+        cand = m.group(1)
+        if cand.lower() in {"the", "a", "an", "this", "that", "these",
+                            "those", "same", "other", "first", "last",
+                            word.lower()}:
+            continue
+        if not _anchored_ok(text, cand, word, "en"):
+            continue
+        return cand.casefold()
+    return None
 
 
 def subject_is_core(sentence: str, core: str, word: str,
@@ -258,10 +326,34 @@ def subject_is_core(sentence: str, core: str, word: str,
     text = (sentence or "")
     if not core:
         return False
+    return _anchored_ok(text, core if lang == "ja" else core.replace("_", " "),
+                        word, lang)
+
+
+def _anchored_ok(text: str, noun: str, word: str, lang: str) -> bool:
+    """Anchor match plus the conditional guard AT the matched position.
+
+    One helper for both the core route and the subject search, because the
+    two drifted: the conditional check lived only in subject_of, so a
+    sentence whose CORE happened to be the noun inside a when-clause placed
+    a pole from a hypothetical. Found on a real document — "The group
+    policy values (when group access is available…)" cored as group, the
+    core route anchored inside the parenthetical, and a supposition met a
+    genuine claim from the same file as a manufactured dispute.
+    """
     if lang == "ja":
-        pat = re.compile(re.escape(core) + r"[^。]{0,12}?[はがも][^。]{0,24}?"
-                         + re.escape(word))
-        return bool(pat.search(text))
+        m = _ja_anchor_match(text, noun, word)
+        if m is None:
+            return False
+        after = text[m.end():m.end() + 8]
+        return not re.match(r"^[のでにと]?(場合|とき|なら|れば|たら)", after)
+    m = _en_anchor_match(text, noun, word)
+    if m is None:
+        return False
+    clause_start = max(text.rfind(ch, 0, m.start()) for ch in ".,;:(")
+    clause = text[clause_start + 1:m.start()]
+    return not re.search(r"\b(if|when|unless|while|whether|suppose|assuming)\b",
+                         clause, re.IGNORECASE)
     # The gap between the core and its copula may not cross a clause
     # boundary. Without this, "If sandbox mode is enabled but Docker is
     # unavailable" still matched: `sandbox` … `is unavailable`, with a whole
@@ -281,19 +373,36 @@ def subject_is_core(sentence: str, core: str, word: str,
     #                  arbitrary verb here would let "was painted closed"
     #                  through, so only verbs whose grammar guarantees the
     #                  attachment are listed.
+def _ja_anchor(text: str, noun: str, word: str) -> bool:
+    return _ja_anchor_match(text, noun, word) is not None
+
+
+def _ja_anchor_match(text: str, noun: str, word: str):
+    pat = re.compile(re.escape(noun)
+                     + r"(?:に関して|について|につきまして)?"
+                     + r"[^。]{0,12}?[はがも][^。]{0,24}?" + re.escape(word))
+    return pat.search(text)
+
+
+def _en_anchor(text: str, noun: str, word: str) -> bool:
+    return _en_anchor_match(text, noun, word) is not None
+
+
+def _en_anchor_match(text: str, noun: str, word: str):
     _mid = (r"(?:(?:\w+ly|still|now|again|already|once|long|almost|fully)\s+)*"
             r"(?:(?:reported|declared|confirmed|considered|deemed|marked|"
             r"found|kept|left|ruled|judged|presumed)\s+)?"
             r"(?:(?:\w+ly|still|now|again)\s+)*")
     pat = re.compile(
-        r"\b" + re.escape(core.replace("_", " "))
+        r"\b" + re.escape(noun)
         + r"\b(?:(?!\b(?:but|and|or|if|when|while|unless|because|though|"
           r"although|which|that|where)\b)[^.,;:()\[\]])"
           r"{0,32}?\s*\b"
-        r"(?:is|are|was|were|be|been|being|becomes?|became|remains?|stays?|"
+        r"(?:is|are|was|were|be|been|being|has\s+been|have\s+been|"
+        r"becomes?|became|remains?|stays?|"
         r"turned|seems?|appears?)\s+(?:not\s+|no\s+longer\s+)?" + _mid
         + re.escape(word) + r"\b", re.IGNORECASE)
-    return bool(pat.search(text))
+    return pat.search(text)
 
 
 def ingest_polar(store: CrossStore, sentence: str) -> Optional[str]:
@@ -304,11 +413,7 @@ def ingest_polar(store: CrossStore, sentence: str) -> Optional[str]:
     core = store.ingest_sentence(sentence)
     if core is None:
         return None
-    keyed = {f"{aspect}:{value}": None
-             for aspect, value, _pol in detect(sentence)
-             if subject_is_core(sentence, core, value.replace("not_", ""), "en")}
-    if keyed:
-        store.add(core, keyed, source=sentence.strip())
+    _place_poles(store, sentence, core, detect(sentence), "en")
     return core
 
 

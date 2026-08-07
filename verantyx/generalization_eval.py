@@ -82,6 +82,14 @@ _TRAPS = [
     "危険物の保管庫が敷地内にあります。",
     "停止線の位置を確認してください。",
     "開始時刻は未定です。",
+    # Hypotheticals assert nothing. Both shapes produced a placed pole at
+    # some point during development — the second one on a real document,
+    # where the parenthetical "(when group access is available…)" met a
+    # genuine "was not available" claim from the SAME file and the file
+    # appeared to contradict itself.
+    "If the elevator is unavailable, visitors should use the stairs.",
+    "The policy values (when group access is available on your surface) are listed.",
+    "エレベーターが使用不可の場合は階段を使ってください。",
 ]
 
 _FILLER_EN = ["The {n} was founded decades ago.",
