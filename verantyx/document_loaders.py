@@ -46,27 +46,70 @@ SUPPORTED = TEXT_SUFFIXES | {".html", ".htm", ".csv", ".tsv", ".json",
 
 
 class _TextExtractor(HTMLParser):
-    """Visible text only. script/style contents are markup that happens to be
-    made of words, and ingesting them fills the store with variable names."""
+    """Body prose only — separated from navigation by what the text IS.
 
-    _SKIP = {"script", "style", "noscript", "head"}
+    Two structural attempts failed on real government pages, each for its
+    own reason, and two failures from different causes are evidence the
+    approach is wrong rather than unlucky. Counting nesting broke on void
+    elements (<br> incremented and never decremented); counting same-named
+    tags broke on the mismatched <div>s that real pages ship. Both assumed
+    well-formed markup, which the web does not supply.
+
+    So the distinction is drawn on the text instead, using the property that
+    actually separates the two: navigation is link labels — short, no
+    sentence-ending punctuation, and inside <a>. Body prose is sentences.
+    Neither test can be defeated by malformed HTML, because neither reads
+    the tree.
+
+    Measured on five real 内閣府 pages: 「サイトマップ」「English」「内閣府
+    ホーム」 drop out, and the paragraphs about 指定緊急避難場所 and
+    プッシュ型支援 stay.
+    """
+
+    _SKIP = {"script", "style", "noscript", "head", "select", "option", "svg"}
+
+    #: A line is prose if it ends like a sentence, or is long enough that it
+    #: cannot be a menu label. Both thresholds are script-aware: Japanese
+    #: carries far more meaning per character, so the length bar is lower.
+    _SENTENCE_END = ("。", "．", ".", "！", "!", "？", "?", "」", "）", ")")
+    _MIN_PROSE_CJK = 16
+    _MIN_PROSE_LATIN = 40
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: List[str] = []
-        self._depth = 0
+        self._skip = 0
+        self._in_link = 0
 
     def handle_starttag(self, tag: str, attrs: Any) -> None:
         if tag in self._SKIP:
-            self._depth += 1
+            self._skip += 1
+        elif tag == "a":
+            self._in_link += 1
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in self._SKIP and self._depth:
-            self._depth -= 1
+        if tag in self._SKIP and self._skip:
+            self._skip -= 1
+        elif tag == "a" and self._in_link:
+            self._in_link -= 1
+
+    def _is_prose(self, text: str) -> bool:
+        if text.endswith(self._SENTENCE_END):
+            return True
+        floor = (self._MIN_PROSE_CJK if re.search(r"[぀-ヿ㐀-䶿一-鿿]", text)
+                 else self._MIN_PROSE_LATIN)
+        return len(text) >= floor
 
     def handle_data(self, data: str) -> None:
-        if self._depth == 0 and data.strip():
-            self.parts.append(data.strip())
+        text = data.strip()
+        if not text or self._skip:
+            return
+        # Link text is a label until proven otherwise. A link whose text is a
+        # whole sentence is a real sentence and is kept; 「サイトマップ」 is not.
+        if self._in_link and not text.endswith(self._SENTENCE_END):
+            return
+        if self._is_prose(text):
+            self.parts.append(text)
 
 
 def _from_html(raw: str) -> str:

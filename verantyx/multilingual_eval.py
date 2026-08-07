@@ -545,6 +545,36 @@ def main() -> int:
         failures.append("demo board")
     print()
 
+    # -- 4k. HTML: prose kept, navigation dropped ---------------------------
+    # From five real government pages. Two structural attempts failed first
+    # — nesting counters broke on void elements, same-name counters broke on
+    # the mismatched <div>s real pages ship — so the split is drawn on what
+    # the text IS: navigation is short link labels, body is sentences.
+    from .document_loaders import _from_html
+    page = ("<html><head><title>T</title><style>.a{}</style></head><body>"
+            "<div id=headerArea><ul><li><a href=#>サイトマップ</a>"
+            "<li><a href=#>English</a><li><a href=#>内閣府ホーム</a></ul></div>"
+            "<div id=main><p>指定緊急避難場所は、災害の危険から命を守るために"
+            "緊急的に避難をする場所です。<br><p>内閣府では手引きを作成しています。"
+            "</div></body></html>")
+    got = _from_html(page)
+    ok = ("指定緊急避難場所" in got and "手引き" in got
+          and "サイトマップ" not in got and "English" not in got
+          and "T" not in got.split("\n")[0])
+    print(f"[{'ok  ' if ok else 'FAIL'}] HTML keeps the paragraphs and drops "
+          f"the navigation, on unclosed <li> and <p>")
+    if not ok:
+        print(f"        got: {got!r}")
+        failures.append("html chrome")
+    # A link whose text is a whole sentence is a sentence, not a label.
+    got2 = _from_html("<p><a href=#>この道路は現在通行止めです。</a></p>")
+    ok = "通行止め" in got2
+    print(f"[{'ok  ' if ok else 'FAIL'}] a link whose text is a full sentence "
+          f"is kept")
+    if not ok:
+        failures.append("sentence link dropped")
+    print()
+
     # -- 5. File loaders ---------------------------------------------------
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
