@@ -70,7 +70,7 @@ jobs:
           for m in boundary_eval rewrite_eval build_failure_eval \
                    failure_domains_eval consensus_ab_eval \
                    settings_registry_eval multilingual_eval \
-                   generalization_eval; do
+                   generalization_eval field_reports_eval; do
             echo "--- $m ---"
             python -m verantyx.$m
           done

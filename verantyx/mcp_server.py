@@ -915,6 +915,80 @@ def serve(store_path: str) -> int:
         return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()
+    def field_report_categories(lang: str = "ja") -> str:
+        """The posting categories and their closed status sets, with how many
+        minutes each takes to go stale.
+
+        Statuses are CHOSEN, never typed: measured on ten realistic resident
+        postings, free-text status yielded a usable state zero times, because
+        residents write 「ここ給水やってる」 and the engine reads formal
+        announcements. Choosing removes the parse instead of climbing it."""
+        from .field_reports import category_list
+        return json.dumps(category_list(lang), ensure_ascii=False)
+
+    @mcp.tool()
+    def field_report_needs(lang: str = "ja") -> str:
+        """What someone might need, and which categories answer it.
+
+        Keyed on NEED, never on who the person is. Asking whether someone is
+        elderly or disabled classifies people in order to help them, and that
+        fails three ways: some will not answer, some do not recognise
+        themselves in the label, and holding the answer creates a duty to
+        protect it."""
+        from .field_reports import need_list
+        return json.dumps(need_list(lang), ensure_ascii=False)
+
+    @mcp.tool()
+    def assess_field_reports(reports_json: str, now: int,
+                             needs: str = "") -> str:
+        """Turn structured field reports into typed findings.
+
+        `reports_json` is a list of {place, category, status, at, reporter,
+        note, official}; `now` and `at` are minutes on one shared clock.
+        Pass `needs` (comma-separated) to select by what someone needs.
+
+        Verdicts: CONFIRMED (several reporters, recently), REPORTED (one),
+        CONFLICT (fresh reports disagree — no side preferred, none outvoted,
+        including the official one), SUPERSEDED, EXPIRED (nothing recent
+        enough to stand behind — NOT the same as closed), UNKNOWN_NO_REPORT.
+
+        No confidence score is returned, deliberately: a number performs a
+        precision nobody has and a reader takes it as permission."""
+        from .field_reports import Report, assess, for_needs, validate
+        try:
+            raw = json.loads(reports_json)
+        except json.JSONDecodeError as exc:
+            return json.dumps({"verdict": "UNKNOWN_BAD_INPUT",
+                               "reason": str(exc)}, ensure_ascii=False)
+        reports, errors = [], []
+        for i, d in enumerate(raw if isinstance(raw, list) else []):
+            r = Report(place=str(d.get("place", "")),
+                       category=str(d.get("category", "")),
+                       status=str(d.get("status", "")),
+                       at=int(d.get("at", 0)),
+                       reporter=str(d.get("reporter", "resident")),
+                       note=str(d.get("note", "")),
+                       official=bool(d.get("official", False)))
+            errs = validate(r)
+            if errs:
+                errors.append({"index": i, "errors": errs})
+            else:
+                reports.append(r)
+        want = [n.strip() for n in (needs or "").split(",") if n.strip()]
+        if want:
+            out = {"findings": for_needs(reports, int(now), want)}
+        else:
+            places = sorted({(r.place, r.category) for r in reports})
+            out = {"findings": [assess(reports, int(now), p, c).as_dict()
+                                for p, c in places]}
+        # Rejected postings are named rather than dropped: a board that
+        # silently ignores malformed input reports a smaller world as if it
+        # were the whole one.
+        if errors:
+            out["rejected"] = errors
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
     def explain_placement(sentence: str) -> str:
         """Where would this sentence land, and why — core, facets, poles,
         the subject gate's verdict, and the arm, each with its reason.
