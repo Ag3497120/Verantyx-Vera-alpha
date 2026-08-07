@@ -259,6 +259,32 @@ def main() -> int:
         failures.append("zh/ja detection")
     print()
 
+    # -- 4b3. Enumerated subjects, from a real miss -------------------------
+    # 「九州自動車道、南九州自動車道など通行止めが発生しております」— the one
+    # government release in the live-disaster corpus that actually reported a
+    # closure, and the gate placed nothing: the road names sit in a list and
+    # 通行止め itself carries が. A person reads it as the road being closed.
+    #
+    # The pair below is the whole point: the polar term INSIDE a list is being
+    # named (「開設、運営等については」), the polar term AFTER a list closed by
+    # など/等 is predicated of the items. Both must keep working.
+    from .polarity import subject_of
+    enum_cases = [
+        ("九州自動車道、南九州自動車道など通行止めが発生しております。",
+         "通行止", "九州自動車道"),
+        ("国道4号、県道7号など通行止が続いています。", "通行止", "国道4号"),
+        ("避難所の開設、運営等については留意事項を発出しています。", "開設", None),
+        ("避難所が閉鎖した後にPCR検査を実施した。", "閉鎖", None),
+    ]
+    for sentence, word, expect in enum_cases:
+        got = subject_of(sentence, word, "ja")
+        ok = got == expect
+        print(f"[{'ok  ' if ok else 'FAIL'}] enumerated subject: {sentence[:26]}… "
+              f"-> {got}")
+        if not ok:
+            failures.append(f"enumerated subject: {sentence[:20]}")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

@@ -280,6 +280,27 @@ def subject_of(sentence: str, word: str, lang: str = "en") -> Optional[str]:
             if run == word or not _anchored_ok(text, run, word, "ja"):
                 continue
             return run
+        # Enumerated subjects: 「九州自動車道、南九州自動車道など通行止めが発生」.
+        # A real miss, found by reading the one government release in the
+        # corpus that actually reported a closure — a person reads it as
+        # "九州自動車道 is closed" and the gate saw no subject at all,
+        # because the road names sit in a list and the polar term is what
+        # carries が.
+        #
+        # Structurally distinct from the enumeration FALSE positive that the
+        # guard above rejects: there, the polar term is INSIDE the list
+        # (「開設、運営等については」— 開設 is one of the things being listed);
+        # here it FOLLOWS a list closed by など/等 and is predicated of every
+        # item in it. Inside versus after is the whole distinction, and it is
+        # visible in the characters.
+        m = re.search(r"((?:[^、，。\s]+[、，]){1,6}[^、，。\s]*?)(?:など|等)\s*"
+                      + re.escape(word), text)
+        if m:
+            items = [x for x in re.split(r"[、，]", m.group(1)) if x.strip()]
+            if items:
+                runs = ja_content_runs(items[0])
+                if runs:
+                    return runs[-1]
         return None
 
     # Lookahead, not consumption: in "that the lighthouse", a consuming
