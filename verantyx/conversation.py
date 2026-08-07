@@ -134,14 +134,53 @@ class Conversation:
         return loc
 
     def recall(self, query: str, *, carry: str = "A") -> Dict[str, Any]:
-        """Answer from the conversation's own memory, across all layers."""
+        """Answer from the conversation's own memory, across all layers.
+
+        Routed by script, like ingestion. `layered_ask` runs the English
+        consensus decomposer at every level, so a Japanese query returned
+        UNKNOWN_NO_EVIDENCE about a core that was sitting in the store —
+        while `locate()` on the same word answered ACTIVE. Two APIs
+        disagreeing about the same memory is worse than either being wrong
+        alone: the caller has no way to tell which one to believe, and the
+        typed verdict this module exists to provide stops meaning anything.
+        """
+        from .lang import detect, ja_ask
         from .layer_stack import layered_ask
+
+        if detect(query) in ("ja", "zh"):
+            return self._recall_ja(query)
         out = layered_ask(self.memory, query, carry=carry)
         # Attach where the answer's topic lives — the context-status the
         # caller usually wants alongside the answer itself.
         if out.get("core"):
             out["location"] = self.locate(out["core"])
         return out
+
+    def _recall_ja(self, query: str) -> Dict[str, Any]:
+        """Walk the stack newest-first and report WHICH layer answered.
+
+        Newest first because a conversation's later turns supersede its
+        earlier ones, and the layer index is returned so a caller can see
+        whether the answer came from live context or from a frozen layer —
+        the distinction FROZEN exists to draw.
+        """
+        from .lang import ja_ask
+
+        trace: List[Dict[str, Any]] = []
+        for level in range(len(self.memory.levels) - 1, -1, -1):
+            out = dict(ja_ask(self.memory.levels[level], query))
+            trace.append({"level": level, "verdict": out.get("verdict"),
+                          "core": out.get("core")})
+            if out.get("verdict") == "ANSWER":
+                out["level"] = level
+                out["frozen"] = level < len(self.memory.levels) - 1
+                out["trace"] = trace
+                if out.get("core"):
+                    out["location"] = self.locate(out["core"])
+                return out
+        return {"verdict": "UNKNOWN_NO_EVIDENCE", "core": None, "text": "",
+                "reason": "no_candidate_cross", "trace": trace,
+                "location": self.locate(query)}
 
     def stats(self) -> Dict[str, Any]:
         return {

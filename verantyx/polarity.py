@@ -418,6 +418,20 @@ def detect(sentence: str) -> List[Tuple[str, str, str]]:
 #: ① 〜 ⑳, （2）, 3., 【福岡県】. 「7 0 7/28 ・復旧済」 also begins with a digit
 #: and a space, so that form is excluded — a heading must be unmistakable,
 #: because it is about to be handed a claim that has no subject of its own.
+#: An article number. In a statute this is not decoration — it is the
+#: citation key, the only way anyone refers to a provision, and the unit a
+#: version diff compares. e-Gov emits it as its own line, so it arrived as a
+#: separate segment, fell under the minimum length, and every provision in
+#: 334,330 characters of 災害対策基本法 and 消防法 was stored with no way to
+#: say which article it came from.
+#:
+#: 「第六十条の二」 and 「第六十条第二項」 are distinct provisions and keep
+#: their full form; 「２」 and 「３」 alone are paragraph numbers WITHIN an
+#: article, so they refine the current heading rather than replacing it.
+_JA_ARTICLE = re.compile(r"^第[一二三四五六七八九十百千0-9０-９]+条"
+                         r"(?:の[一二三四五六七八九十0-9０-９]+)?"
+                         r"(?:第[一二三四五六七八九十0-9０-９]+項)?$")
+
 _JA_HEADING_BRACKET = re.compile(r"^【([^】]{1,24})】$")
 _JA_HEADING_MARK = re.compile(
     r"^(?:[①-⑳]|[（(]\s*[0-9０-９]{1,2}\s*[）)]|[0-9０-９]{1,2}[\.．])\s*(.+)$")
@@ -430,6 +444,10 @@ def heading_subject_ja(text: str) -> Optional[str]:
     t = (text or "").strip()
     if not t or len(t) > 40:
         return None
+    # An article number is its own heading, and unlike the others it IS the
+    # subject rather than naming one.
+    if _JA_ARTICLE.match(t):
+        return t
     m = _JA_HEADING_BRACKET.match(t) or _JA_HEADING_MARK.match(t)
     if not m:
         return None

@@ -635,11 +635,20 @@ def main() -> int:
         print(f"[{'ok  ' if ok else 'FAIL'}] conversation locate({topic}) -> {got}")
         if not ok:
             failures.append(f"conversation locate: {topic}")
-    got = conv.recall("避難所").get("verdict")
-    ok = got == "ANSWER"
-    print(f"[{'ok  ' if ok else 'FAIL'}] a Japanese turn is recallable -> {got}")
-    if not ok:
-        failures.append("conversation recall in Japanese")
+    # locate() and recall() must agree. `layered_ask` runs the English
+    # consensus decomposer at every level, so a Japanese query returned
+    # UNKNOWN_NO_EVIDENCE about a core sitting in the store while locate()
+    # answered ACTIVE on the same word. Two APIs disagreeing about one memory
+    # is worse than either being wrong alone — the caller cannot tell which to
+    # believe, and the typed verdict stops meaning anything.
+    for topic in ("国道4号", "避難所", "毛布", "bridge", "橋", "給水所"):
+        loc = conv.locate(topic)["status"]
+        rec = conv.recall(topic).get("verdict")
+        agree = (loc == "ABSENT") == (rec == "UNKNOWN_NO_EVIDENCE")
+        print(f"[{'ok  ' if agree else 'FAIL'}] locate/recall agree on {topic}: "
+              f"{loc} / {rec}")
+        if not agree:
+            failures.append(f"locate/recall disagree: {topic}")
     print()
 
     # -- 4b13. Statutes: a third genre, read blind --------------------------

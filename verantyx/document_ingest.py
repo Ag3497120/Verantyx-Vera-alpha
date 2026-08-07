@@ -42,6 +42,10 @@ from .polarity import (ANTONYM_PAIRS, ANTONYM_PAIRS_JA, detect,
 #: tight enough that a heading cannot adopt a claim from the next section.
 _HEADING_REACH = 12
 
+#: Recognised here as well as in `polarity`, because what makes an article
+#: number special on THIS side is that it needs qualifying by its document.
+_JA_ARTICLE_CORE = re.compile(r"^第[一二三四五六七八九十百千0-9０-９]+条")
+
 #: Japanese does not put a space after 。, so a splitter that requires
 #: trailing whitespace treats a whole article as one sentence — and then the
 #: minimum-length filter and the English decomposer between them dropped it
@@ -302,6 +306,13 @@ def ingest_documents(store: CrossStore, docs: List[Document],
             # section title 道路 instead of to itself.
             found = heading_subject_ja(s) if doc_lang == "ja" else None
             if found:
+                # An article number is only a citation key WITH its statute.
+                # 第一条 exists in every law; five of them collapsed onto one
+                # core, so the provision a reader was pointed at could be from
+                # any of five documents. The source label is the discriminator
+                # and it is already here.
+                if _JA_ARTICLE_CORE.match(found):
+                    found = f"{doc.source} {found}"
                 heading, heading_age = found, 0
             elif heading is not None:
                 heading_age += 1
