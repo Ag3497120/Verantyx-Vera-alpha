@@ -87,6 +87,12 @@ class Audit:
     fragment_ratio: float
     polar_claims: int = 0
     vocabulary_seen: Dict[str, int] = field(default_factory=dict)
+    #: (core, aspect) pairs where two DIFFERENT sources placed poles. This is
+    #: the true upper bound on detectable contradictions: zero here means a
+    #: zero detection count carries no information about the detector, no
+    #: matter how many polar claims the corpus contains.
+    opposable_pairs: int = 0
+    corpus_kind: str = ""
 
     @property
     def coverage(self) -> float:
@@ -149,7 +155,43 @@ def audit(paths: List[str]) -> Audit:
         if n:
             seen[term] = n
 
+    # Could any contradiction have been found at all? Measured per document,
+    # because it takes two sources to disagree and a corpus where every pole
+    # sits in one file has nothing to detect however rich it looks.
+    #
+    # The distinction this exposes, found on two revisions of one 内閣府
+    # guideline: PRESCRIPTIVE documents (指針, ガイドライン) do not
+    # contradict each other — a revision adds and refines, it does not
+    # assert the opposite. 令和4 held 実施 and 有効 for トイレ; 令和6 held
+    # 使用可能 as well and nothing against. DESCRIPTIVE documents (status
+    # announcements, situation reports) are where real disagreement lives,
+    # because they describe a world that changed rather than a rule that was
+    # refined. A corpus of guidance is the wrong shelf, and no amount of it
+    # will produce a precision figure.
+    by_source: Dict[str, Dict[str, set]] = {}
+    for doc in docs:
+        one = CrossStore()
+        one.track_provenance = True
+        ingest_documents(one, [doc])
+        held: Dict[str, set] = {}
+        for core, facets in one.crosses.items():
+            for f in facets:
+                if ":" in f:
+                    held.setdefault(f"{core}\t{f.split(':', 1)[0]}", set()).add(f)
+        by_source[doc.source] = held
+
+    opposable = 0
+    keys = set().union(*(set(h) for h in by_source.values())) if by_source else set()
+    for key in keys:
+        values = [h[key] for h in by_source.values() if key in h]
+        if len(values) > 1 and len(set().union(*values)) > 1:
+            opposable += 1
+
+    kind = ("descriptive" if opposable else
+            ("prescriptive" if rep.polar_claims else "no_state_claims"))
+
     return Audit(
+        opposable_pairs=opposable, corpus_kind=kind,
         files=res["loaded"], chars=sum(len(d.text) for d in docs),
         sentences_seen=rep.sentences_seen, sentences_placed=rep.sentences,
         topics=len(cores), seconds=round(elapsed, 2),
@@ -176,6 +218,18 @@ def worksheet(a: Audit, lang: str = "ja") -> str:
                 "disagreement) or false (a false positive)."))
     out.append("")
     if not a.detections:
+        if a.opposable_pairs == 0:
+            out.append(("**検出ゼロ、そして矛盾になり得た組も 0。** 極性を持つ主張は"
+                        f"{a.polar_claims} 件ありますが、同じ話題の同じ観点について"
+                        "異なる出典が異なる状態を述べた箇所が一つもありません。"
+                        "食い違うには2つの出典が要るので、検出 0 は必然です。"
+                        "**この結果から精度は測れません。**" if ja else
+                        f"**Zero detections, and zero opposable pairs.** The corpus "
+                        f"holds {a.polar_claims} polar claims, but no two sources "
+                        "ever place different states on one topic and aspect. It "
+                        "takes two to disagree. **No precision can be read from "
+                        "this.**"))
+            return "\n".join(out)
         if a.polar_claims == 0:
             out.append(("**検出ゼロ、ただし極性を持つ主張も 0 件。** この文書群には"
                         "状態の主張(開/閉、通行可否など)が一つも含まれていないため、"
@@ -228,6 +282,16 @@ def report(a: Audit, marked: Optional[List[Detection]] = None,
     out.append(f"- {'対立語彙が2出典以上に現れた数' if ja else 'opposition terms in >1 source'}"
                f": {len(multi)}"
                + (f" ({', '.join(list(multi)[:6])})" if multi else ""))
+    out.append(f"- {'矛盾になり得た組' if ja else 'opposable pairs'}: "
+               f"**{a.opposable_pairs}**"
+               + (f" — {'この数が 0 なら検出 0 は必然' if ja else 'zero here makes a zero detection meaningless'}"
+                  if a.opposable_pairs == 0 else ""))
+    kinds = {"descriptive": "状態を述べる文書(矛盾が起こり得る)",
+             "prescriptive": "規範を述べる文書(改定は追加であって反転ではない)",
+             "no_state_claims": "状態の主張が無い文書"}
+    out.append(f"- {'コーパスの種類' if ja else 'corpus kind'}: "
+               f"**{a.corpus_kind}**"
+               + (f" — {kinds.get(a.corpus_kind, '')}" if ja else ""))
     out.append(f"- {'取り込み診断' if ja else 'intake'}: **{a.intake['verdict']}**")
     for f in a.intake.get("findings", []):
         out.append(f"  - {f['verdict']}: {f.get('measured', '')}")

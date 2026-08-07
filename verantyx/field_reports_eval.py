@@ -156,6 +156,40 @@ def main() -> int:
           not numeric, str(numeric))
     print()
 
+    # -- Corpus suitability -------------------------------------------------
+    # Three real 内閣府 corpora — 6 portal pages, 2 case-study PDFs, and two
+    # revisions of one guideline — all returned zero contradictions, and the
+    # reason is the same in each: zero opposable pairs. Guidance documents
+    # do not contradict each other. A revision ADDS (令和6 held 使用可能 for
+    # トイレ where 令和4 held nothing) rather than reversing. Reporting a
+    # zero without this number invites the reader to credit a detector that
+    # never had the chance to fire.
+    import tempfile as _tf
+    from pathlib import Path as _P
+    from .corpus_audit import audit as _audit, worksheet as _ws
+    with _tf.TemporaryDirectory() as td:
+        r = _P(td)
+        (r / "A.txt").write_text("国道4号は通行止です。避難所は開設されました。",
+                                 encoding="utf-8")
+        (r / "B.txt").write_text("国道4号は通行可能です。避難所は閉鎖されました。",
+                                 encoding="utf-8")
+        a = _audit([str(r / "A.txt"), str(r / "B.txt")])
+        ok = a.opposable_pairs == 2 and a.corpus_kind == "descriptive" \
+            and len(a.detections) == 2
+        check("a corpus that does disagree reports opposable pairs and finds them",
+              ok, f"{a.opposable_pairs} pairs, {len(a.detections)} found")
+
+        (r / "C.txt").write_text("トイレの確保は重要です。実施してください。",
+                                 encoding="utf-8")
+        g = _audit([str(r / "C.txt")])
+        ok = g.opposable_pairs == 0 and g.corpus_kind != "descriptive"
+        check("a single-source corpus reports zero opposable pairs", ok,
+              g.corpus_kind)
+        ok = "精度は測れません" in _ws(g) or "No precision" in _ws(g)
+        check("the worksheet refuses to imply precision from an unopposable zero",
+              ok)
+    print()
+
     if failures:
         print(f"{len(failures)} failed: {', '.join(failures)}")
         return 1
