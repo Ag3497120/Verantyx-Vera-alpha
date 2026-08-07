@@ -564,6 +564,50 @@ def main() -> int:
             failures.append(f"abbreviation split: {text[:24]}")
     print()
 
+    # -- 4b11. Table rows are line-atomic, found blind on a second agency ----
+    # The generalization test this whole effort needed: 国交省's 第N報 series,
+    # ingested with no code changes and read only afterwards. Five of six
+    # restorations were found; the sixth, 天草市, was lost to a chain of two
+    # layout defects that only this second corpus exposed:
+    #
+    #   「宇城市 約18,000 約9.900 7/28～ ・管破損に伴う漏水」 fills its column and
+    #   ends in no punctuation, so unwrap read it as WRAPPED PROSE and glued
+    #   天草市's row onto it with the CJK no-space join — the corpus then
+    #   contained the word 漏水天草市, and the restoration was a claim about
+    #   that non-word. A table row is line-atomic: prose never carries two
+    #   whitespace-separated fields of bare digits and data punctuation.
+    #
+    #   約9.900 is a thousands comma typed as a period, and the splitter cut
+    #   it into 約9. / 900. A period between digits is numeric.
+    from .document_loaders import _is_table_row, unwrap_layout
+    for line, want in [("宇城市 約18,000 約9.900 7/28～ ・管破損に伴う漏水", True),
+                       ("天草市 約1,100 0 7/28～8/1 ・復旧済", True),
+                       ("・熊本県では６日（木）、7 日（金）は高気圧に覆われて概ね晴れるが、"
+                        "暖かく湿った空気の影", False),
+                       ("①高速道路", False)]:
+        got = _is_table_row(line)
+        ok = got == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] table row is atomic: {line[:28]:30s}"
+              f" -> {got}")
+        if not ok:
+            failures.append(f"table-row atomicity: {line[:20]}")
+    glued = unwrap_layout(
+        "宇城市 約18,000 約9.900 7/28～ ・管破損に伴う漏水\n"
+        "天草市 約1,100 0 7/28～8/1 ・復旧済\n" + ("参考情報あ" * 8 + "\n") * 8)
+    ok = "漏水天草市" not in glued
+    print(f"[{'ok  ' if ok else 'FAIL'}] two rows never merge into 漏水天草市")
+    if not ok:
+        failures.append("adjacent table rows merged")
+    parts = [x.strip() for x in _rejoin_abbreviations(
+        _SENT_RE.split("宇城市 約18,000 約9.900 7/28～ ・管破損に伴う漏水"))
+        if x.strip()]
+    ok = len(parts) == 1
+    print(f"[{'ok  ' if ok else 'FAIL'}] a period between digits is numeric -> "
+          f"{len(parts)} segment(s)")
+    if not ok:
+        failures.append("decimal period split a data row")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

@@ -122,6 +122,14 @@ def _rejoin_abbreviations(parts: List[str]) -> List[str]:
             # 「g.」 have been rejoined the result ends in a lone letter too,
             # and the no-space rule would then swallow the space before the
             # example itself: 「e.g.Telegram」.
+            # A period between digits is a decimal point or a thousands
+            # separator, not a sentence end. 「約9.900 戸」 (国交省 第33報, a
+            # comma typed as a period) split into 約9. / 900 and the halves
+            # joined to the rows around them.
+            if prev.endswith(".") and len(prev) >= 2 and prev[-2].isdigit() \
+                    and nxt[:1].isdigit():
+                out[-1] = prev + nxt
+                continue
             token = _trailing_abbreviation(prev)
             if token in _NEVER_FINAL and nxt:
                 out[-1] = prev + " " + nxt

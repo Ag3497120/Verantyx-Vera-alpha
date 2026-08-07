@@ -281,6 +281,31 @@ def _join_wrapped(head: str, tail: str) -> str:
     return head + " " + tail
 
 
+#: A field that is data rather than words: digits with the punctuation data
+#: carries — 約25,269 / 7/28～8/1 / 0※. Two such fields on one line is the
+#: shape of a TABLE ROW.
+_DATA_FIELD = re.compile(r"^[約計]?[0-9０-９][0-9０-９,，.．/／~～\-－※]*$")
+
+
+def _is_table_row(line: str) -> bool:
+    """A table row is line-atomic and must never be joined to its neighbour.
+
+    Width alone cannot tell a full-width table row from wrapped prose, and
+    the cost of confusing them is not a lost line but a MOVED claim. Found
+    blind on 国交省's 第33報: 「宇城市 約18,000 約9.900 7/28～ ・管破損に伴う
+    漏水」 fills its column, ends in no punctuation, and was read as wrapped —
+    so the next line, 天草市's row, was glued on with the CJK no-space join
+    and the corpus contained the word 漏水天草市. 天草市's restoration was
+    then a claim about that non-word, invisible to anyone asking about the
+    real municipality.
+
+    What distinguishes the row is its fields: prose does not carry two
+    whitespace-separated tokens of bare digits and data punctuation.
+    """
+    fields = line.split()
+    return sum(1 for f in fields if _DATA_FIELD.match(f)) >= 2
+
+
 def unwrap_layout(text: str) -> str:
     """Rejoin lines the page broke, so the remaining newlines mean something."""
     lines = (text or "").split("\n")
@@ -297,6 +322,14 @@ def unwrap_layout(text: str) -> str:
             if buf:
                 out.append(buf)
                 buf = ""
+            continue
+        if _is_table_row(line):
+            # Rows stand alone: flush any wrapped prose before, and never
+            # let the row itself continue into the next line.
+            if buf:
+                out.append(buf)
+                buf = ""
+            out.append(line.strip())
             continue
         buf = _join_wrapped(buf, line.strip() if buf else line)
         if len(line) < full or line.rstrip().endswith(_LINE_ENDS):
