@@ -314,6 +314,18 @@ _JA_PAREN_LABEL = re.compile(r"[（(].?[）)]")
 #: candidate sweep of this corpus turned up.
 _JA_CASE_PARTICLE = re.compile(r"[をにでとへ]|から|まで|より|として")
 
+#: 〜するまで / 〜されるまで is a period whose ENDPOINT is the state, which
+#: means the state has not arrived. 熊本県 tells evacuees that hotel
+#: accommodation is available 「お住まいの市町村の避難所が閉鎖されるまでの間」
+#: — until your municipality's shelter closes — and reading that as "the
+#: shelter is closed" tells someone their shelter is gone while it is open.
+#: Found blind on municipal HTML, a fourth genre, and it is an inversion:
+#: the guard says the opposite of the source.
+#:
+#: 「8月3日まで閉鎖」 is untouched, because there まで precedes the term and
+#: the closure is the period rather than its end.
+_JA_UNTIL = re.compile(r"^(?:さ?れ|し)?る?まで")
+
 #: A DEEMING clause defines when something COUNTS as X; it does not say that
 #: anything is X. 「火災の予防に危険であると認める物件」 is a statute naming a
 #: category. Both of the statute corpus's detections were this shape.
@@ -526,7 +538,7 @@ def tabular_claim_ja(text: str, word: str) -> Tuple[bool, Optional[str]]:
     # marker for particle-bearing prose reopened exactly this hole.
     enumerated = bool(re.match(r"^[、，]", tail))
     if (not marked or enumerated or _JA_COLUMN_GAP.search(tail)
-            or _JA_DEEMING.match(tail)):
+            or _JA_DEEMING.match(tail) or _JA_UNTIL.match(tail)):
         return False, None
 
     head = text[:at]
@@ -688,6 +700,8 @@ def _anchored_ok(text: str, noun: str, word: str, lang: str) -> bool:
         # The window is bounded and stops at a clause boundary, so a real
         # claim followed later by an unrelated 認める is untouched.
         if _JA_DEEMING.match(after):
+            return False
+        if _JA_UNTIL.match(after):
             return False
         # A past incident is history, not a current state. Found on a real
         # government case-study PDF: 「避難所が閉鎖した後にPCR検査を実施した」

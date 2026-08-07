@@ -97,8 +97,42 @@ class CrossStore:
                 k, v = f.split(":", 1)
                 if k and v:
                     by_key.setdefault(k, []).append(f)
+        # Two DIFFERENT values are not a disagreement unless they sit on
+        # opposite POLES. 開設 and 開館 are synonyms — both the positive side
+        # of the 開設 aspect — and 宇城市 saying 「避難所を開設しています」 while
+        # 熊本市 says 「避難所として開館」 is two municipalities AGREEING. It
+        # was reported as a conflict, which is the failure mode that makes an
+        # information officer stop reading the board: a contradiction report
+        # whose contradictions are not contradictions is worse than none.
+        #
+        # Found blind on municipal HTML, the fourth genre. The vocabulary has
+        # carried the pole of every term since it was written; the detector
+        # simply never asked.
+        def _poles(values: List[str]) -> set:
+            from .ja_grammar import ASPECT_OF as _ja
+            from .polarity import _ASPECT_OF as _en
+            signs = set()
+            for v in values:
+                word = v.split(":", 1)[1]
+                if word.startswith("not_"):
+                    base = word[4:]
+                    hit = _ja.get(base) or _en.get(base)
+                    if hit:
+                        signs.add("-" if hit[1] == "+" else "+")
+                    continue
+                hit = _ja.get(word) or _en.get(word)
+                if hit:
+                    signs.add(hit[1])
+                else:
+                    # A value with no known pole cannot be shown to agree, so
+                    # it is kept as its own side rather than assumed to match.
+                    signs.add(word)
+            return signs
+
         out: List[Dict[str, Any]] = []
         for k, vals in sorted(by_key.items()):
+            if len(vals) > 1 and len(_poles(vals)) < 2:
+                continue
             if len(vals) > 1:
                 entry: Dict[str, Any] = {
                     "key": k,

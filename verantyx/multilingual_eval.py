@@ -755,6 +755,63 @@ def main() -> int:
         failures.append("audit app accepted an empty request")
     print()
 
+    # -- 4b15. Municipal HTML: a fourth genre, read blind --------------------
+    # Nine 熊本市 pages, three 熊本県, one 宇城市 — 44,540 characters of the
+    # documents a resident actually reads, in the week-two register of
+    # rebuilding rather than the first-days register of road closures. One
+    # detection, and it was false in two independent ways.
+    #
+    # 〜されるまで is a period whose ENDPOINT is the state, so the state has
+    # not arrived. 熊本県 offers hotel rooms 「避難所が閉鎖されるまでの間」 —
+    # until your shelter closes — and reading it as "the shelter is closed"
+    # tells someone their shelter is gone while it is open. An inversion: the
+    # engine said the opposite of the source.
+    #
+    # And two DIFFERENT values are not a disagreement unless they sit on
+    # opposite POLES. 開設 and 開館 are both the positive side of one aspect,
+    # so 宇城市 saying 「避難所を開設しています」 and 熊本市 saying 「避難所として
+    # 開館」 is two municipalities AGREEING. A contradiction report whose
+    # contradictions are not contradictions is worse than no report.
+    for sentence, want in [
+        ("お住まいの市町村の避難所が閉鎖されるまでの間", False),
+        ("避難所が閉鎖されるまで利用できます。", False),
+        ("工事が完了するまで通行止めです。", True),   # まで BEFORE the term
+        ("8月3日まで閉鎖します。", False),
+        ("避難所は閉鎖されました。", True),
+        ("避難所を開設しています", True),
+    ]:
+        one = CrossStore()
+        ingest_polar_ja(one, sentence)
+        placed = {k for f in one.crosses.values() for k in f if ":" in k}
+        ok = bool(placed) == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] until-clause: {sentence[:26]:28s} -> "
+              f"{placed or 'nothing placed'}")
+        if not ok:
+            failures.append(f"until clause: {sentence[:20]}")
+
+    for label, values, want in [
+        ("開設/開館 both +", ["開設:開設", "開設:開館"], False),
+        ("閉鎖/閉館 both -", ["開設:閉鎖", "開設:閉館"], False),
+        ("通行可能/not_通行止 both +",
+         ["通行可能:通行可能", "通行可能:not_通行止"], False),
+        ("開設/閉鎖 opposite", ["開設:開設", "開設:閉鎖"], True),
+        ("復旧/断水 opposite", ["復旧:復旧", "復旧:断水"], True),
+        ("通行止/not_通行止 opposite",
+         ["通行可能:通行止", "通行可能:not_通行止"], True),
+        ("open/closed opposite", ["open:open", "open:closed"], True),
+    ]:
+        one = CrossStore()
+        one.track_provenance = True
+        for v in values:
+            one.add("x", {v: None}, source="s")
+        got = bool(one.contradictions("x"))
+        ok = got == want
+        print(f"[{'ok  ' if ok else 'FAIL'}] same pole is agreement: {label:26s} -> "
+              f"{'conflict' if got else 'agree'}")
+        if not ok:
+            failures.append(f"pole agreement: {label}")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"
