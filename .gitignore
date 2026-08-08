@@ -12,3 +12,7 @@ vera_store.json
 
 .venv*/
 *.egg-info/
+
+# Truncated scratch file, unparseable and referenced nowhere; kept on disk
+# only because it is the user's to decide about.
+verantyx/dialogue_context.py
