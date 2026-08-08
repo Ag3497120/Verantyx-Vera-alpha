@@ -494,7 +494,7 @@ def load_path(path: str, source: Optional[str] = None) -> Dict[str, Any]:
             raise
         return {"verdict": "UNKNOWN_NO_PARSER", "path": str(p), "suffix": suffix,
                 "reason": "PDF support needs the `docs` extra",
-                "install": "pip install verantyx-vera[docs]"}
+                "install": 'python3 -m pip install "verantyx-vera[docs] @ git+https://github.com/Ag3497120/Verantyx-Vera-alpha"'}
     except Exception as exc:  # noqa: BLE001 — deliberate, see below
         # Every parser failure becomes a typed refusal for THIS file, and the
         # batch continues. Deliberately broad: third-party parsers raise

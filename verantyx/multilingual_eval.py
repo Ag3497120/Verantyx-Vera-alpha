@@ -1543,6 +1543,27 @@ def main() -> int:
             failures.append("handover note clobbered the record")
     print()
 
+    # -- 4b28. Install instructions must name something that exists ---------
+    # The site, the Space, and the app's own screens all said
+    # `pip install verantyx-vera`. That name has never been on PyPI, so every
+    # one of those instructions failed — for an audience that cannot debug a
+    # packaging error. Nothing tested it because instructions are prose.
+    import verantyx.document_loaders as _dl
+    import verantyx.obfuscate_forks as _of
+
+    _sources = [_P(_dl.__file__).read_text(encoding="utf-8"),
+                _P(_of.__file__).read_text(encoding="utf-8"),
+                _fa._PAGE_PATH.read_text(encoding="utf-8")]
+    _bad = [x for x in _sources if "pip install verantyx-vera[" in x
+            and "git+" not in x.split("pip install verantyx-vera[")[1][:200]]
+    ok = not _bad
+    print(f"[{'ok  ' if ok else 'FAIL'}] no instruction names an unpublished "
+          f"package -> {len(_bad)} file(s)")
+    if not ok:
+        failures.append("an install instruction points at a package that "
+                        "is not published")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

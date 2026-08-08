@@ -208,7 +208,7 @@ def _run(fn) -> Dict[str, Any]:
         return {"experiment": "obfuscate",
                 "fork": fn.__name__[:-len("_fork")].upper(),
                 "pass": False, "skipped": "cryptography_not_installed",
-                "result": {"install": "pip install verantyx-vera[obfuscate]"}}
+                "result": {"install": 'python3 -m pip install "verantyx-vera[obfuscate] @ git+https://github.com/Ag3497120/Verantyx-Vera-alpha"'}}
 
 
 def all_obfuscate_forks() -> List[Dict[str, Any]]:
