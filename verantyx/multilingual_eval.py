@@ -1327,6 +1327,70 @@ def main() -> int:
         failures.append("vocab_growth grew an apply()")
     print()
 
+    # -- 4b24. A model's embed table is a dictionary — for the measured range
+    # Measured on qwen3.5:4b before the module existed: state-likeness
+    # separated the real queue's true candidates from its false ones
+    # (停電 +0.163, 舗装損傷 +0.124 vs 八代支店 −0.159, 地区 −0.277); nearest-
+    # known worked as search (冠水→断水 0.50); polarity was 54.8% — a coin
+    # flip — so it is absent from the API, and this eval pins the absence.
+    import struct as _struct
+    import verantyx.jgen_lexicon as _jl
+
+    with _tf.TemporaryDirectory() as _td:
+        _fake = _P(_td) / "fake_lexicon.jgen"
+        _vecs = {"断水": [1, 0, 0, 0], "復旧": [0.9, 0.1, 0, 0],
+                 "市役所": [0, 1, 0, 0], "支店": [0.1, 0.9, 0, 0],
+                 "停電": [0.8, 0.2, 0, 0], "地区": [0, 0.95, 0, 0]}
+        _ids = {w: i for i, w in enumerate(_vecs)}
+        with _fake.open("wb") as _f:
+            _f.write(b"JGEN"); _f.write(_struct.pack("<II", 3, 1))
+            _nm = b"embed_tokens"
+            _f.write(_struct.pack("<H", len(_nm))); _f.write(_nm)
+            _f.write(_struct.pack("<B", 2))
+            _f.write(_struct.pack("<II", len(_vecs), 4))
+            for _v in _vecs.values():
+                _f.write(_struct.pack("<4e", *_v))
+        _lex = _jl.LexiconDict(
+            _fake, lambda w: [_ids[w]] if w in _ids else [])
+
+        _known = ["断水", "復旧"]
+        _sl_state = _lex.state_likeness("停電", _known)
+        _sl_place = _lex.state_likeness("地区", _known)
+        ok = (_sl_state is not None and _sl_place is not None
+              and _sl_state > 0 > _sl_place)
+        print(f"[{'ok  ' if ok else 'FAIL'}] state-likeness separates a state "
+              f"from a place -> 停電 {_sl_state}, 地区 {_sl_place}")
+        if not ok:
+            failures.append("lexicon state-likeness failed to separate")
+
+        # The annotation sorts the queue and decides nothing: statuses are
+        # untouched, and the probably-real candidate reads first.
+        _rows = [{"word": "地区", "status": "proposed"},
+                 {"word": "停電", "status": "proposed"}]
+        _saved = _jl.open_configured
+        _jl.open_configured = lambda home: _lex
+        try:
+            _jl.annotate(_rows, _P("/tmp"))
+        finally:
+            _jl.open_configured = _saved
+        ok = ([r["word"] for r in _rows] == ["停電", "地区"]
+              and all(r["status"] == "proposed" for r in _rows))
+        print(f"[{'ok  ' if ok else 'FAIL'}] annotation sorts and decides "
+              f"nothing -> {[r['word'] for r in _rows]}")
+        if not ok:
+            failures.append(f"lexicon annotation misbehaved: {_rows}")
+
+        # And the measured prohibition is structural: 54.8% on polarity means
+        # no API surface returns one.
+        _api = [a for a in dir(_jl) + dir(_jl.LexiconDict)
+                if "polar" in a.lower() or "pole" in a.lower()]
+        ok = not _api
+        print(f"[{'ok  ' if ok else 'FAIL'}] the dictionary has no polarity "
+              f"API -> {_api}")
+        if not ok:
+            failures.append(f"lexicon grew a polarity API: {_api}")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

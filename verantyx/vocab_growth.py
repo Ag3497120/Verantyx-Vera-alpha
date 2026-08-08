@@ -222,6 +222,14 @@ def propose(paths: List[str], *, home: Path) -> List[Dict[str, Any]]:
         out.append(row)
         existing[prop.word] = row
 
+    # If the operator configured a lexicon, its two measured-usable answers
+    # ride along and order the queue. Measured before trusted: state-likeness
+    # separated the real queue's true candidates from its false ones, and the
+    # same model was a coin flip (54.8%) on polarity — so the score sorts,
+    # the neighbours inform, and neither decides.
+    from .jgen_lexicon import annotate
+    out = annotate(out, home)
+
     path.write_text(json.dumps(
         [v for v in existing.values() if isinstance(v, dict)],
         ensure_ascii=False, indent=2), encoding="utf-8")

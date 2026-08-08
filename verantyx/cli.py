@@ -416,6 +416,41 @@ def cmd_mcp(args) -> int:
     return serve(args.store)
 
 
+def cmd_lexicon(args) -> int:
+    """The dictionary half of a local model: state-likeness and neighbours.
+
+    Never polarity — measured at 54.8%, a coin flip, and absent from the API.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .ja_grammar import ASPECT_OF
+    from .jgen_lexicon import open_configured
+
+    home = _Path.home() / ".verantyx-audit"
+    lex = open_configured(home)
+    if lex is None:
+        print(_json.dumps({
+            "verdict": "UNKNOWN_NO_LEXICON",
+            "how": f"write {home / 'lexicon.json'} with "
+                   '{"jgen": "...", "tokenizer": "..."} — build one with '
+                   "jgen_forge pull <model> --parts lexicon",
+        }, ensure_ascii=False, indent=2))
+        return 1
+    known = sorted(ASPECT_OF)
+    out = []
+    for w in args.words:
+        out.append({
+            "word": w,
+            "state_likeness": lex.state_likeness(w, known),
+            "nearest_known": lex.nearest(w, known, k=5),
+        })
+    print(_json.dumps({"verdict": "ANSWER", "words": out,
+                       "not_in_this_dictionary": "polarity — measured 54.8%"},
+                      ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_self_evolve(args) -> int:
     """Read, prove, repair, measure, keep — with nothing outside the machine.
 
@@ -742,6 +777,12 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser(
+        "lexicon",
+        help="ask the configured static dictionary about a word")
+    p.add_argument("words", nargs="+")
+    p.set_defaults(fn=cmd_lexicon)
 
     p = sub.add_parser(
         "self-evolve",
