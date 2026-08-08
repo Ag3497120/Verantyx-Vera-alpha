@@ -23,7 +23,12 @@ all = ["datasets", "huggingface_hub", "mcp[cli]>=1.2,<2", "cryptography", "pypdf
 vera = "verantyx.cli:main"
 
 [tool.setuptools]
-packages = ["verantyx"]
+# Every subpackage, not just the top level. `packages = ["verantyx"]` shipped
+# a wheel that raised ImportError on `verantyx.domains` the moment anyone
+# installed it — the source tree worked because the directories were simply
+# there. Caught by installing the wheel into a clean venv and importing it,
+# which is now the only way this is checked before publishing.
+packages = ["verantyx", "verantyx.domains", "verantyx.failure_packs"]
 
 # The field app's page ships INSIDE the package rather than being generated in
 # Python. It has to be one file a person can read and audit — a municipal IT
@@ -32,3 +37,5 @@ packages = ["verantyx"]
 # read that way.
 [tool.setuptools.package-data]
 verantyx = ["lang_data/*.json", "*.html"]
+"verantyx.failure_packs" = ["*.json"]
+"verantyx.domains" = ["*.json"]

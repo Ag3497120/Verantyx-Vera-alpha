@@ -93,6 +93,37 @@ jobs:
           sys.exit(1 if errs else 0)
           "
 
+      - name: The wheel a person would actually install
+        # The source tree is not the artifact. `packages = ["verantyx"]`
+        # produced a wheel that raised ImportError on verantyx.domains the
+        # instant anyone installed it — every test passed, because the tests
+        # import from a checkout where the directory is simply there. Building
+        # it and importing it from a clean venv is the only thing that would
+        # have caught that, so it runs on every push.
+        run: |
+          python -m pip install -q build
+          rm -rf dist
+          python -m build --wheel
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/pip install -q dist/*.whl
+          /tmp/wheelcheck/bin/python -c "
+          import sys
+          import verantyx
+          from verantyx.field_app import _PAGE_PATH
+          from verantyx.cross_store import CrossStore
+          from verantyx.document_ingest import Document, ingest_documents
+          from verantyx.failure_domains import all_domains
+          assert _PAGE_PATH.exists(), 'field_app.html did not ship'
+          assert all_domains(), 'failure packs did not ship'
+          s = CrossStore(track_provenance=True)
+          ingest_documents(s, [Document('A', '国道9号は通行止です。'),
+                               Document('B', '国道9号は通行可能になりました。')])
+          got = {f for c in s.crosses for f in s.crosses[c] if ':' in f}
+          assert got == {'通行可能:通行止', '通行可能:通行可能'}, got
+          print('installed wheel reads documents:', sorted(got))
+          "
+          /tmp/wheelcheck/bin/vera --help > /dev/null
+
       - name: Upload lab results
         if: always()
         uses: actions/upload-artifact@v4
