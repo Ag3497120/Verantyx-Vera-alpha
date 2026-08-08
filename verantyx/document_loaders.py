@@ -366,12 +366,32 @@ def _is_table_row(line: str) -> bool:
     return sum(1 for f in fields if _DATA_FIELD.match(f)) >= 2
 
 
+def _normalized(text: str) -> str:
+    """Apply whatever transforms the engine proved it needed on itself.
+
+    Runs AFTER the rows are settled, because `_is_table_row` reads the spacing
+    it would otherwise remove — a column gap and an extractor's stray space are
+    the same character, and only the row detector can tell them apart.
+    """
+    from .ja_grammar import NORMALIZERS
+
+    if not NORMALIZERS:
+        return text
+    from .metamorphic import PERTURBATIONS
+
+    for name, _why in NORMALIZERS:
+        fn = PERTURBATIONS.get(name)
+        if fn:
+            text = fn[0](text)
+    return text
+
+
 def unwrap_layout(text: str) -> str:
     """Rejoin lines the page broke, so the remaining newlines mean something."""
     lines = (text or "").split("\n")
     width = _column_width(lines)
     if width < _WRAP_MIN_WIDTH:
-        return text
+        return _normalized(text)
     full = width * _WRAP_KEEP
 
     out: List[str] = []
@@ -397,7 +417,7 @@ def unwrap_layout(text: str) -> str:
             buf = ""
     if buf:
         out.append(buf)
-    return "\n".join(out)
+    return _normalized("\n".join(out))
 
 
 def _from_pdf(path: Path) -> str:

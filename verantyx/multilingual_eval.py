@@ -1173,6 +1173,67 @@ def main() -> int:
         failures.append("self-audit filed a verdict")
     print()
 
+    # -- 4b21. A defect PROVEN from inside, and repaired without a person ----
+    # 4b20 stops at a suspicion on purpose: no procedure inside the engine can
+    # decide whether its own reading of a sentence is right, because that
+    # needs the world. A different question is decidable without it — do two
+    # readings of the SAME CONTENT agree? — and where the transform between
+    # them is layout, the direction is decidable too, because layout cannot
+    # add information.
+    from pathlib import Path as _P
+    from .metamorphic import probe, split_counter
+    from .self_evolve import Repair, apply as _apply_repair
+
+    _clean = [Document("A", "天草市は断水しています。"),
+              Document("B", "天草市の断水は解消しました。")]
+    _divs = probe(_clean)
+    ok = not [d for d in _divs if d.proven]
+    print(f"[{'ok  ' if ok else 'FAIL'}] clean text proves nothing -> "
+          f"{[d.core for d in _divs if d.proven]}")
+    if not ok:
+        failures.append("metamorphic fired on clean text")
+
+    # The defect that started this: a PDF's column alignment between a numeral
+    # and its counter, leaving a fragment carrying the pole.
+    _noisy = [Document("PDF", "宇城市では 12 戸が断水しています。")]
+    _proven = [d for d in probe(_noisy) if d.proven and d.kind == "manufactured"]
+    ok = bool(_proven)
+    print(f"[{'ok  ' if ok else 'FAIL'}] an extractor's space is proven, not "
+          f"guessed -> {[(d.core, d.facet) for d in _proven]}")
+    if not ok:
+        failures.append("metamorphic missed a manufactured claim")
+
+    ok = split_counter("うち 15 炉が復旧") == "うち 15炉が復旧"
+    print(f"[{'ok  ' if ok else 'FAIL'}] a numeral rejoins its counter -> "
+          f"{split_counter('うち 15 炉が復旧')!r}")
+    if not ok:
+        failures.append("split_counter did not rejoin a counter")
+
+    # A table row's single spaces are column separators, and collapsing them
+    # would change meaning rather than restore it. Found the hard way: the
+    # wide probe turned 「日時 開催場所 担当部署」 into one word on municipal
+    # HTML, and reported four defects that were its own damage.
+    _row = "宇城市 約18,000 約9.900 7/28～ ・管破損"
+    ok = split_counter(_row) == _row
+    print(f"[{'ok  ' if ok else 'FAIL'}] a table row is left alone -> "
+          f"{split_counter(_row) == _row}")
+    if not ok:
+        failures.append("split_counter touched a table row")
+
+    # And an unattended loop must not be able to keep a repair it measured as
+    # too costly. `layout_space` is exactly that: 8 real defects proven, 71
+    # sentences' cores lost.
+    try:
+        _apply_repair(Repair("layout_space", ["x"], False, "coverage falls"),
+                      _P("/tmp/never-written.json"))
+        ok = False
+    except ValueError:
+        ok = True
+    print(f"[{'ok  ' if ok else 'FAIL'}] a rejected repair cannot be applied")
+    if not ok:
+        failures.append("a rejected repair was applied")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

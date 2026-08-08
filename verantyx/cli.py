@@ -416,6 +416,26 @@ def cmd_mcp(args) -> int:
     return serve(args.store)
 
 
+def cmd_self_evolve(args) -> int:
+    """Read, prove, repair, measure, keep — with nothing outside the machine.
+
+    The acceptance is mechanical only where the answer key is internal: a
+    transform that cannot change what a document says, changing what the
+    engine reads out of it. Everything else is filed for a person.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .self_evolve import run
+
+    home = _Path.home() / ".verantyx-audit"
+    overlay = _Path(args.overlay) if args.overlay else home / "grammar.json"
+    out = run(list(args.paths), home=home, overlay=overlay, write=args.write)
+    print(_json.dumps({"verdict": "ANSWER", **out}, ensure_ascii=False,
+                      indent=2))
+    return 0
+
+
 def cmd_self_audit(args) -> int:
     """Signals a defect leaves in the store, without anybody reading output.
 
@@ -722,6 +742,16 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser(
+        "self-evolve",
+        help="prove defects from the documents themselves, repair, and keep")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--write", action="store_true",
+                   help="write an accepted repair to the overlay")
+    p.add_argument("--overlay", default=None,
+                   help="default ~/.verantyx-audit/grammar.json")
+    p.set_defaults(fn=cmd_self_evolve)
 
     p = sub.add_parser(
         "self-audit",

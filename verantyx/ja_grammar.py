@@ -69,6 +69,17 @@ COMPLETION_SUFFIXES: set = set()
 #: carries the gap it came from so a suppression can always be traced back to
 #: the reports that produced it.
 SUPPRESSIONS: List[Tuple[str, str]] = []   # (pattern, provenance)
+#: Meaning-preserving transforms promoted from PROBE to READING PATH.
+#:
+#: A suppression is a rule a person wrote; a normalizer is one the engine
+#: proved it needed. `metamorphic` shows that two readings of the same content
+#: disagree and that the transform between them cannot have changed what the
+#: content says — so the reading that only the noisy form produces is
+#: manufactured by layout, and switching the reading path to the clean form is
+#: a repair with an INTERNAL answer key: the manufactured claims must vanish.
+#: Kept as data, and as a list of names rather than of code, so that what the
+#: engine may promote to itself is bounded by what a person already reviewed.
+NORMALIZERS: List[Tuple[str, str]] = []   # (perturbation name, provenance)
 #: term → (aspect, polarity). Derived; rebuilt on every load.
 ASPECT_OF: Dict[str, Tuple[str, str]] = {}
 #: All matchable terms, longest first — the scan order substring matching
@@ -80,6 +91,14 @@ _loaded_overlay: Optional[Path] = None
 
 def validate(data: Dict[str, Any]) -> List[str]:
     errs: List[str] = []
+    for item in data.get("normalizers") or []:
+        # A normalizer names a transform this repository ships and argued for.
+        # Accepting an arbitrary one from an overlay would let a data file
+        # rewrite documents before they are read.
+        from .metamorphic import PERTURBATIONS as _P
+
+        if not (isinstance(item, (list, tuple)) and item and item[0] in _P):
+            errs.append(f"unknown normalizer: {item!r}")
     pairs = data.get("antonym_pairs", [])
     seen_terms: Dict[str, str] = {}
     for pair in pairs:
@@ -159,6 +178,11 @@ def _apply(data: Dict[str, Any]) -> None:
     ALIASES.update(data.get("aliases") or {})
     PREDICATES.update(data.get("predicates") or {})
     COMPLETION_SUFFIXES.update(data.get("completion_suffixes") or [])
+    have_n = {tuple(x) for x in NORMALIZERS}
+    for item in data.get("normalizers") or []:
+        pair = (item[0], item[1] if len(item) > 1 else "")
+        if pair not in have_n:
+            NORMALIZERS.append(pair)
     have_s = {tuple(x) for x in SUPPRESSIONS}
     for item in data.get("suppressions") or []:
         pair = (item[0], item[1] if len(item) > 1 else "")
