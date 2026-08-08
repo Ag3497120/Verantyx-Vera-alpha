@@ -1554,14 +1554,35 @@ def main() -> int:
     _sources = [_P(_dl.__file__).read_text(encoding="utf-8"),
                 _P(_of.__file__).read_text(encoding="utf-8"),
                 _fa._PAGE_PATH.read_text(encoding="utf-8")]
-    _bad = [x for x in _sources if "pip install verantyx-vera[" in x
-            and "git+" not in x.split("pip install verantyx-vera[")[1][:200]]
+    # verantyx-vera 0.1.0a1 is on PyPI now, so `pip install verantyx-vera` is
+    # true again and the git URL is no longer needed. What still has to hold is
+    # that an instruction names a REAL extra: `[docs]` and `[obfuscate]` exist
+    # in pyproject, and a typo there fails the same way an unpublished name did.
+    import re as _re
+
+    # Read the extras with a regex rather than tomllib: the package declares
+    # `requires-python = ">=3.9"` and tomllib arrives in 3.11, so an eval that
+    # needs it would only run on the interpreters the package does not have to
+    # support. The block it reads is small and flat.
+    _extras = set()
+    try:
+        _pp = (_P(__file__).resolve().parent.parent
+               / "pyproject.toml").read_text(encoding="utf-8")
+        _blk = _pp.split("[project.optional-dependencies]", 1)
+        if len(_blk) > 1:
+            _extras = set(_re.findall(r"^\s*([A-Za-z][\w-]*)\s*=",
+                                      _blk[1].split("\n[", 1)[0], _re.M))
+    except OSError:
+        _extras = set()
+    _named = set()
+    for _src in _sources:
+        _named |= set(_re.findall(r"verantyx-vera\[([a-z]+)\]", _src))
+    _bad = sorted(_named - _extras) if _extras else []
     ok = not _bad
-    print(f"[{'ok  ' if ok else 'FAIL'}] no instruction names an unpublished "
-          f"package -> {len(_bad)} file(s)")
+    print(f"[{'ok  ' if ok else 'FAIL'}] every install instruction names a "
+          f"real extra -> {sorted(_named) or 'none'}")
     if not ok:
-        failures.append("an install instruction points at a package that "
-                        "is not published")
+        failures.append(f"install instruction names a missing extra: {_bad}")
     print()
 
     # -- 4c. English prepositions must not read as state claims -------------
