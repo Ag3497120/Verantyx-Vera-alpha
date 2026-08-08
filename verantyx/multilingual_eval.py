@@ -1292,6 +1292,41 @@ def main() -> int:
         failures.append(f"suppression skipped at placement: {_polar}")
     print()
 
+    # -- 4b23. Vocabulary grows from succession — and only ever as proposals -
+    # The seed line was the last one the loop could not reach: which words
+    # oppose which. A document series narrates states ENDING, and the closing
+    # sentence anchors an unknown word to a known one. Found live before it
+    # was planted here: the vocabulary that read five corpora does not know
+    # 停電, and 「停電は復旧済み」 is in 内閣府's own reports.
+    import verantyx.vocab_growth as _vg
+
+    with _tf.TemporaryDirectory() as _td:
+        (_P(_td) / "series.txt").write_text(
+            "宇城市の断水は解消しました。\n停電は復旧済み。\n",
+            encoding="utf-8")
+        _props = {(p.word, p.aspect, p.polarity, p.slot)
+                  for p in _vg.successions([_td])}
+    ok = ("解消", "復旧", "+", "A") in _props
+    print(f"[{'ok  ' if ok else 'FAIL'}] slot A: an unknown predicate of a "
+          f"known state -> {sorted(_props)}")
+    if not ok:
+        failures.append(f"slot A missed 解消: {_props}")
+    ok = ("停電", "復旧", "-", "B") in _props
+    print(f"[{'ok  ' if ok else 'FAIL'}] slot B: an unknown state with a "
+          f"known completion")
+    if not ok:
+        failures.append(f"slot B missed 停電: {_props}")
+
+    # The asymmetry is structural, not stylistic: this module has no way to
+    # write an overlay. The gate can reject a candidate by measurement; only
+    # a person can accept one, because 「断水は限界です」 fits the slot grammar
+    # and 限界 is not a restoration — the corpus cannot testify about itself.
+    ok = not hasattr(_vg, "apply")
+    print(f"[{'ok  ' if ok else 'FAIL'}] vocab_growth cannot write an overlay")
+    if not ok:
+        failures.append("vocab_growth grew an apply()")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

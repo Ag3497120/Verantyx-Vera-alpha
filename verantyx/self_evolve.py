@@ -358,10 +358,16 @@ def run(paths: List[str], *, home: Path, overlay: Optional[Path] = None,
                 bag.remove(entry)
     out["accepted"] = sum(1 for r in out["repairs"] if r.get("accepted"))
     out["filed_for_a_person"] = file_unrepaired(paths, home)
+    # Vocabulary grows by PROPOSAL, never by repair — the asymmetry is the
+    # design and vocab_growth's docstring is the contract. The queue lands in
+    # the same home directory as everything else the loop keeps.
+    from .vocab_growth import propose as _vocab
+    out["vocabulary"] = _vocab(paths, home=home)
     out["still_a_person's"] = (
-        "Only defects with an internal answer key are repaired here — where a "
-        "transform that cannot change meaning changes the reading. A missing "
-        "word and a too-wide guard have no such key, and still route to a "
-        "person through the gap graph."
+        "Only defects with an internal answer key are repaired here. A "
+        "missing word has none — no transformation of a document reveals "
+        "what an unseen word means — so vocabulary candidates arrive as "
+        "damage-tested proposals, and the one judgement left is whether the "
+        "word really is that pole."
     )
     return out
