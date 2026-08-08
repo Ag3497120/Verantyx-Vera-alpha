@@ -1391,6 +1391,59 @@ def main() -> int:
             failures.append(f"lexicon grew a polarity API: {_api}")
     print()
 
+    # -- 4b25. Three states for a proposal, so a person reads fewer of them --
+    # Ported from the IDE's IRVerificationEngine, which returns verified /
+    # unverified / contradicts instead of a score. Reading it first turned up
+    # that its `contradicts` case is declared and NEVER returned — only two
+    # states are reachable — so the third had to be built rather than
+    # translated, and Vera can build it because it has an internal answer key
+    # a chat loop does not.
+    import verantyx.proposal_verify as _pv
+    from .vocab_growth import Proposal as _Prop
+
+    with _tf.TemporaryDirectory() as _td:
+        # Two sources putting the same unknown word in the same completion
+        # slot is the corpus agreeing with itself.
+        (_P(_td) / "a.txt").write_text("停電は復旧済み。", encoding="utf-8")
+        (_P(_td) / "b.txt").write_text("停電は復旧しました。", encoding="utf-8")
+        _v = _pv.check(_Prop("停電", "復旧", "-", "B", "復旧"), [_td])
+    ok = _v.state == "verified" and len(_v.sources) >= _pv.MIN_SOURCES
+    print(f"[{'ok  ' if ok else 'FAIL'}] two sources corroborate -> "
+          f"{_v.state} {_v.sources}")
+    if not ok:
+        failures.append(f"corroboration missed: {_v.as_dict()}")
+
+    with _tf.TemporaryDirectory() as _td:
+        (_P(_td) / "one.txt").write_text("停電は復旧済み。", encoding="utf-8")
+        _v = _pv.check(_Prop("停電", "復旧", "-", "B", "復旧"), [_td])
+    ok = _v.state == "unverified"
+    print(f"[{'ok  ' if ok else 'FAIL'}] one source stays unverified -> "
+          f"{_v.state}")
+    if not ok:
+        failures.append(f"single source not unverified: {_v.as_dict()}")
+
+    # The refutation. A join that makes ONE source hold both poles of an
+    # aspect about one core is far likelier wrong than the document is, so it
+    # drops without a reader — the only automatic rejection in the vocabulary
+    # path, and it is a refutation rather than a judgement of meaning.
+    with _tf.TemporaryDirectory() as _td:
+        (_P(_td) / "one.txt").write_text(
+            "本町の給水は復旧しました。本町の給水は途絶しています。",
+            encoding="utf-8")
+        _v = _pv.check(_Prop("途絶", "復旧", "-", "B", "復旧"), [_td])
+    ok = _v.state == "contradicts" and bool(_v.collision)
+    print(f"[{'ok  ' if ok else 'FAIL'}] a self-contradicting join is refuted "
+          f"-> {_v.state} {_v.collision}")
+    if not ok:
+        failures.append(f"contradiction not caught: {_v.as_dict()}")
+
+    # Corroboration is not proof, so this module cannot accept either.
+    ok = not hasattr(_pv, "apply") and not hasattr(_pv, "accept")
+    print(f"[{'ok  ' if ok else 'FAIL'}] verification cannot write an overlay")
+    if not ok:
+        failures.append("proposal_verify grew an accept path")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

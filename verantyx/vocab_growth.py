@@ -205,6 +205,8 @@ def propose(paths: List[str], *, home: Path) -> List[Dict[str, Any]]:
         except ValueError:
             existing = {}
 
+    from .proposal_verify import check as _verify
+
     out: List[Dict[str, Any]] = []
     for prop in successions(paths):
         old = existing.get(prop.word)
@@ -217,10 +219,30 @@ def propose(paths: List[str], *, home: Path) -> List[Dict[str, Any]]:
             # Dropped before anyone sees it — the reject half is mechanical.
             out.append({"word": prop.word, "status": "dropped", "reason": why})
             continue
-        prop.measured = {"verdict": why}
-        row = {**prop.as_dict(), "status": "proposed"}
+
+        # Three states, not a score. `contradicts` is a REFUTATION — the join
+        # would make one source hold both poles of the aspect — so it drops
+        # the candidate without a reader, the same way damage_test does.
+        # `verified` is only corroboration: two sources putting a word in the
+        # same completion slot is the corpus agreeing with itself, and a
+        # corpus can agree with itself about something untrue. So it sorts
+        # first and is marked, never accepted.
+        verdict = _verify(prop, paths)
+        if verdict.state == "contradicts":
+            out.append({"word": prop.word, "status": "dropped",
+                        "reason": verdict.why, "collision": verdict.collision})
+            continue
+
+        prop.measured = {"verdict": why, "state": verdict.state,
+                         "why": verdict.why, "sources": verdict.sources}
+        row = {**prop.as_dict(), "status": "proposed", "state": verdict.state}
         out.append(row)
         existing[prop.word] = row
+
+    # Corroborated first, so the reader meets the likely-real ones while they
+    # are still reading carefully.
+    out.sort(key=lambda r: (0 if r.get("state") == "verified" else
+                            1 if r.get("status") == "proposed" else 2))
 
     # If the operator configured a lexicon, its two measured-usable answers
     # ride along and order the queue. Measured before trusted: state-likeness
