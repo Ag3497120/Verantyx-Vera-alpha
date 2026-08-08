@@ -167,17 +167,34 @@ def read_documents(files: List[Dict[str, str]], *, home: Path = HOME
                     row["state_likeness"] = sl
                     row["nearest"] = lex.nearest(row["word"], known, k=3)
 
+    quiet = silence(audit)
+    dets = [asdict(d) for d in audit.detections]
+
+    # Every read is a shift record, saved without being asked. The officer at
+    # 22:00 does not know at 14:00 that today will need handing over — by the
+    # time they know, the moment to press "save" has passed. What is kept is
+    # the RESULT (what was read, what was found), never the documents.
+    sess = Session(session_id=new_id(),
+                   label="、".join(written)[:80],
+                   documents=written,
+                   coverage=quiet["coverage"],
+                   detections=[{"topic": d["topic"], "aspect": d["aspect"],
+                                "evidence": d.get("evidence") or []}
+                               for d in dets])
+    save(sess, home)
+
     return {
         "verdict": "ANSWER",
         "accepted": written,
         "refused": refused,
-        "quiet": silence(audit),
-        "detections": [asdict(d) for d in audit.detections],
+        "quiet": quiet,
+        "detections": dets,
         "board": board[:40],
         "proven": proven,
         "conflicts": conflicts,
         "queue": queue,
         "store": _pack_store(store),
+        "session": sess.as_dict(),
     }
 
 
@@ -418,10 +435,19 @@ class _Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/decide":
                 self._json(decide(payload.get("word") or "",
                                   payload.get("verdict") or "refuse"))
-            elif self.path == "/api/session":
-                s = Session(**payload.get("session", {}))
-                save(s, HOME)
-                self._json({"verdict": "ANSWER", "saved": s.session_id})
+            elif self.path == "/api/note":
+                # The handover note. Loaded and re-saved rather than trusted
+                # from the page, so a note can never overwrite the findings it
+                # is a note about.
+                sid = payload.get("session_id") or ""
+                sess = load(sid, HOME)
+                if sess is None:
+                    self._json({"verdict": "UNKNOWN_NO_SUCH_SESSION",
+                                "advice": "この記録は見つかりませんでした。"})
+                    return
+                sess.note = str(payload.get("note") or "")[:2000]
+                save(sess, HOME)
+                self._json({"verdict": "ANSWER", "saved": sid})
             elif self.path == "/api/lexicon":
                 lex = _lexicon()
                 if lex is None:

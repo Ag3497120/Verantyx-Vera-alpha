@@ -117,6 +117,7 @@ footer{max-width:1180px;margin:0 auto;padding:0 1rem 2rem;color:var(--ink-3);
       <button data-s="find">3. 調べる</button>
       <button data-s="self">4. 自己点検</button>
       <button data-s="vocab">5. 語彙の承認</button>
+      <button data-s="log">6. 記録</button>
       <button data-s="help">使い方</button>
     </nav>
   </div>
@@ -216,6 +217,20 @@ footer{max-width:1180px;margin:0 auto;padding:0 1rem 2rem;color:var(--ink-3);
   <div id="lex-out"></div>
 </section>
 
+<!-- 6 ─────────────────────────────────────────────────────────── -->
+<section id="s-log" hidden>
+  <h2>6. 記録 — これまでの読み込み</h2>
+  <p class="lede">読み込むたびに<b>結果だけ</b>が自動で記録されます（資料そのものは残りません）。
+     新しい順に並びます。</p>
+  <div class="guide">
+    <b>勤務交代のために。</b> <span class="tag t-pick">この勤務</span> は12時間以内、
+    <span class="tag t-ok">直近7日</span>、<span class="tag t-warn">保管</span> はそれ以前です。
+    交代する相手に伝えることは、いちばん上の記録の<b>申し送り</b>欄に書いてください。
+    次の人がこの画面を開くと最初に目に入ります。
+  </div>
+  <div id="log-out"><p class="muted">読み込み中…</p></div>
+</section>
+
 <!-- help ───────────────────────────────────────────────────────── -->
 <section id="s-help" hidden>
   <h2>使い方</h2>
@@ -231,7 +246,8 @@ footer{max-width:1180px;margin:0 auto;padding:0 1rem 2rem;color:var(--ink-3);
     <tr><td>検出が0件だった</td><td>2の上の「比べられる組み合わせ」を見る。0なら矛盾が無いのではなく、比較対象が無い</td></tr>
     <tr><td>読み取れていない語がある</td><td>4で原因を見る。5に候補が出ていれば承認できる</td></tr>
     <tr><td>資料が読めなかった</td><td>画像スキャンのPDFは文字を取り出せません。文字が選択できるPDFか、Word/HTML/CSVで</td></tr>
-    <tr><td>作業を翌日に引き継ぐ</td><td>ブラウザを閉じても、承認した語彙と修復は残ります</td></tr>
+    <tr><td>作業を翌日に引き継ぐ</td><td>6の記録のいちばん上に申し送りを書く。承認した語彙と修復も残ります</td></tr>
+    <tr><td>昨日なにを読んだか確かめる</td><td>6の記録。読み込みごとに結果が自動で残っています</td></tr>
   </table>
   <h3 style="margin-top:1.4rem;font-size:1rem">キーボード</h3>
   <table>
@@ -267,6 +283,7 @@ function show(name){
   for (const s of document.querySelectorAll('main > section'))
     s.hidden = s.id !== 's-' + name;
   if (name === 'find') setTimeout(() => $('#q').focus(), 30);
+  if (name === 'log') renderLog();
 }
 $('#nav').addEventListener('click', e => {
   const b = e.target.closest('button'); if (b) show(b.dataset.s);
@@ -536,6 +553,58 @@ $('#loop').addEventListener('click', async () => {
     '確定した検出を1件も壊さないことを測ってから受理しています。'));
   out.append(c);
 });
+
+/* ---- the shift log ---- */
+let LAST_SESSION = null;
+const ZONE = {front: ['この勤務','t-pick'], recent: ['直近7日','t-ok'],
+              archive: ['保管','t-warn']};
+async function renderLog(){
+  const out = $('#log-out'); out.replaceChildren();
+  const d = await (await fetch('/api/sessions')).json();
+  const rows = d.sessions || [];
+  if (!rows.length){
+    out.append(el('p','muted','まだ記録はありません。「1. 読み込む」で資料を読むと自動で残ります。'));
+    return;
+  }
+  rows.forEach((s, i) => {
+    const c = el('div','card');
+    const head = el('div','row');
+    const [zl, zc] = ZONE[s.zone] || ['保管','t-warn'];
+    head.append(el('span','tag ' + zc, zl));
+    head.append(el('b', null, (s.updated || '').replace('T',' ')));
+    head.append(el('span','muted', s.label || (s.documents||[]).join('、')));
+    c.append(head);
+    c.append(el('div','muted',
+      '被覆率 ' + (s.coverage != null ? (s.coverage*100).toFixed(1)+'%' : '—') +
+      ' ・ 食い違い ' + (s.detections||[]).length + ' 件'));
+    (s.detections || []).forEach(x => {
+      const p = el('div');
+      p.append(el('span','tag t-stop','係争'),
+               document.createTextNode(' ' + x.topic + ' / ' + x.aspect));
+      c.append(p);
+      (x.evidence || []).slice(0,2).forEach(e => c.append(el('div','ev', e)));
+    });
+    /* The handover note lives on the NEWEST record, where the next person
+       looks first. Older notes stay readable but not editable — a handover
+       edited after the fact is a record that stopped being one. */
+    if (s.note) c.append(el('div','ev','申し送り: ' + s.note));
+    if (i === 0){
+      const row = el('div','row'); row.style.marginTop = '.5rem';
+      const ta = el('input'); ta.type = 'text'; ta.placeholder = '申し送りを書く（次の担当者への伝言）';
+      ta.value = s.note || '';
+      const btn = el('button','plain','保存');
+      const st = el('span','state');
+      btn.onclick = async () => {
+        st.className = 'state busy'; st.textContent = '保存中…';
+        const r = await post('/api/note', {session_id: s.session_id, note: ta.value});
+        st.className = 'state';
+        st.textContent = r.verdict === 'ANSWER' ? '保存しました' : '保存できませんでした';
+      };
+      row.append(ta, btn, st); c.append(row);
+    }
+    out.append(c);
+  });
+}
 
 /* ---- lexicon (optional) ---- */
 fetch('/api/lexicon-status').then(r => r.json()).then(d => {

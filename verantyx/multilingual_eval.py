@@ -1497,6 +1497,52 @@ def main() -> int:
         failures.append(f"field page reaches outside: {_out}")
     print()
 
+    # -- 4b27. The shift log: records by recency, and a note that cannot ----
+    # overwrite what it annotates. A read saves its RESULT automatically,
+    # because at 14:00 nobody knows that today will need handing over — by the
+    # time they know, the moment to press "save" has passed.
+    import json as _json
+    import time as _time
+    from .field_session import Session as _Sess
+    from .field_session import listing as _listing
+    from .field_session import load as _sload
+    from .field_session import save as _ssave
+
+    with _tf.TemporaryDirectory() as _td:
+        _home = _P(_td)
+        _now = _Sess("b-now", label="今")
+        _ssave(_now, _home)
+        _old = _Sess("a-old", label="先月")
+        _ssave(_old, _home)
+        _old.updated = _time.strftime(
+            "%Y-%m-%dT%H:%M:%S", _time.localtime(_time.time() - 40 * 86400))
+        (_home / "sessions" / "a-old.json").write_text(
+            _json.dumps(_old.__dict__, ensure_ascii=False), encoding="utf-8")
+
+        _rows = _listing(_home)
+        ok = ([r["session_id"] for r in _rows] == ["b-now", "a-old"]
+              and _rows[0]["zone"] == "front" and _rows[1]["zone"] == "archive")
+        print(f"[{'ok  ' if ok else 'FAIL'}] newest first, zones by age -> "
+              f"{[(r['session_id'], r['zone']) for r in _rows]}")
+        if not ok:
+            failures.append(f"shift log ordering/zones wrong: {_rows}")
+
+        # The note round-trips through load-modify-save, and the findings it
+        # annotates survive it.
+        _now.detections = [{"topic": "国道9号", "aspect": "通行可能"}]
+        _ssave(_now, _home)
+        _got = _sload("b-now", _home)
+        _got.note = "県道路課に確認中"
+        _ssave(_got, _home)
+        _back = _sload("b-now", _home)
+        ok = (_back.note == "県道路課に確認中"
+              and _back.detections and _back.detections[0]["topic"] == "国道9号")
+        print(f"[{'ok  ' if ok else 'FAIL'}] a note never overwrites the "
+              f"findings it is a note about")
+        if not ok:
+            failures.append("handover note clobbered the record")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"
