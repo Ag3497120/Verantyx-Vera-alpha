@@ -1224,7 +1224,8 @@ def main() -> int:
     # too costly. `layout_space` is exactly that: 8 real defects proven, 71
     # sentences' cores lost.
     try:
-        _apply_repair(Repair("layout_space", ["x"], False, "coverage falls"),
+        _apply_repair(Repair("layout_space", targets=["x"], accepted=False,
+                             reason="coverage falls"),
                       _P("/tmp/never-written.json"))
         ok = False
     except ValueError:
@@ -1232,6 +1233,63 @@ def main() -> int:
     print(f"[{'ok  ' if ok else 'FAIL'}] a rejected repair cannot be applied")
     if not ok:
         failures.append("a rejected repair was applied")
+    print()
+
+    # -- 4b22. The engine's rules and its output must agree with each other -
+    # The second internal oracle. The first compares two readings of the same
+    # content; this one compares the OUTPUT against the engine's own no-assert
+    # guards, and both live in this process, so the conflict is decidable
+    # without the world. It is also the four-times defect class — enumeration,
+    # deeming, until, のため — every one a guard applied on one path and
+    # skipped on another.
+    from .metamorphic import rule_conflicts as _conflicts
+    from .self_evolve import propose_suppressions as _prop_sup
+    from . import ja_grammar as _g
+    import tempfile as _tf
+
+    with _tf.TemporaryDirectory() as _td:
+        _f = _P(_td) / "law.txt"
+        _f.write_text("災害派遣手当は、災害復旧のため派遣された職員に支給される。",
+                      encoding="utf-8")
+        _found = _conflicts([_td])
+    ok = any(c.detail == "のため" for c in _found)
+    print(f"[{'ok  ' if ok else 'FAIL'}] a placed pole its own guard refuses "
+          f"is a conflict -> {[(c.core, c.detail) for c in _found]}")
+    if not ok:
+        failures.append("rule_conflicts missed a guard-refused placement")
+
+    # The repair candidate is the exact grammar the guard matched, never the
+    # guard's whole alternation: のため (purpose — the state has not happened)
+    # and により (cause — it did) sit in one guard, and only splitting them
+    # lets measurement keep one and drop the other.
+    with _tf.TemporaryDirectory() as _td:
+        _f = _P(_td) / "law.txt"
+        _f.write_text("災害派遣手当は、災害復旧のため派遣された職員に支給される。",
+                      encoding="utf-8")
+        _cands = _prop_sup([_td])
+    ok = _cands == ["^のため"]
+    print(f"[{'ok  ' if ok else 'FAIL'}] the candidate is the match, not the "
+          f"guard -> {_cands}")
+    if not ok:
+        failures.append(f"suppression candidate wrong: {_cands}")
+
+    # And a suppression holds at the placement choke point, where every pole
+    # passes — the structural close of the guard-skipped class. The same
+    # sentence, the same overlay entry, no pole on any path.
+    _g.SUPPRESSIONS.append(("^のため", "eval"))
+    try:
+        _st = CrossStore()
+        _st.track_provenance = True
+        ingest_documents(_st, [Document(
+            "法令", "災害派遣手当は、災害復旧のため派遣された職員に支給される。")])
+        _polar = [(c, f) for c in _st.crosses for f in _st.crosses[c] if ":" in f]
+    finally:
+        _g.SUPPRESSIONS.remove(("^のため", "eval"))
+    ok = not _polar
+    print(f"[{'ok  ' if ok else 'FAIL'}] a suppression holds on every path "
+          f"at once -> {_polar}")
+    if not ok:
+        failures.append(f"suppression skipped at placement: {_polar}")
     print()
 
     # -- 4c. English prepositions must not read as state claims -------------

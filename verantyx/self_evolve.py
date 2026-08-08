@@ -60,6 +60,8 @@ class Repair:
     """One proposed change to how the engine reads, and what it cost."""
 
     normalizer: str
+    #: "normalizer" or "suppression" — which mechanism the repair changes.
+    mechanism: str = "normalizer"
     targets: List[str] = field(default_factory=list)   # proven divergences
     accepted: bool = False
     reason: str = ""
@@ -73,10 +75,10 @@ class Repair:
 def _state(paths: List[str]) -> Dict[str, Any]:
     """Everything a repair could damage, measured in one pass."""
     from .corpus_audit import audit_paths
-    from .metamorphic import probe_paths
+    from .metamorphic import probe_paths, rule_conflicts
 
     a = audit_paths(paths)
-    divs = probe_paths(paths)
+    divs = probe_paths(paths) + rule_conflicts(paths)
     return {
         "coverage": round(a.coverage, 4),
         "claims": len(a.claims) if hasattr(a, "claims") else None,
@@ -116,6 +118,35 @@ def propose(paths: List[str], rejected: Optional[Any] = None) -> List[str]:
     return want
 
 
+def propose_suppressions(paths: List[str],
+                         rejected: Optional[Any] = None) -> List[str]:
+    """Candidate suppressions, made from the guards' own matches.
+
+    The candidate is the exact grammar the guard matched on a conflicting
+    placement — ^のため from 「復旧のため派遣された職員」 — not the guard's whole
+    alternation. That keeps the linguistic judgement inside the gate: のため
+    (purpose: the state has not happened) and により (cause: the state DID
+    happen, and something followed from it) sit in the same guard, and a
+    candidate as wide as the guard would silence presupposed real states along
+    with the manufactured ones. Splitting per-match lets measurement accept
+    one and reject the other, which is the whole design: the loop does not
+    know Japanese, it knows what each candidate costs.
+    """
+    import re as _re
+
+    from .ja_grammar import SUPPRESSIONS
+    from .metamorphic import rule_conflicts
+
+    have = ({p for p, _ in SUPPRESSIONS}
+            | {r for r in (rejected or ()) if r.startswith("^")})
+    out: List[str] = []
+    for d in rule_conflicts(paths):
+        cand = "^" + _re.escape(d.detail)
+        if cand and cand not in have and cand not in out:
+            out.append(cand)
+    return out
+
+
 def rejected_before(home: Path) -> Dict[str, str]:
     """What the ledger already measured and turned down.
 
@@ -142,24 +173,36 @@ def rejected_before(home: Path) -> Dict[str, str]:
     return out
 
 
-def attempt(name: str, paths: List[str], *, why: str = "") -> Repair:
-    """Apply a normalizer, measure everything, and put it back if it costs."""
+def attempt(name: str, paths: List[str], *, why: str = "",
+            mechanism: str = "normalizer") -> Repair:
+    """Apply one candidate repair, measure everything, and put it back.
+
+    Two mechanisms, one gate. A normalizer changes what the loader hands the
+    reader; a suppression is a pattern after a polar term that means the term
+    asserts nothing, consulted at the placement choke point. Both are DATA,
+    which is what lets an unattended loop hold them: the worst a bad candidate
+    can do is what the gate measures, never arbitrary behaviour.
+    """
     from . import ja_grammar as grammar
 
     before = _state(paths)
-    targets = [p for p in before["proven"] if p.startswith(f"{name}/manufactured")]
+    prefix = ("own_rules/guard_conflict" if mechanism == "suppression"
+              else f"{name}/manufactured")
+    targets = [p for p in before["proven"] if p.startswith(prefix)]
     if not targets:
-        return Repair(name, [], False, "it targets nothing that was proven",
-                      before, before)
+        return Repair(name, mechanism, [], False,
+                      "it targets nothing that was proven", before, before)
 
     entry = (name, why or f"proved by metamorphic probe on {len(paths)} path(s)")
-    grammar.NORMALIZERS.append(entry)
+    bag = (grammar.SUPPRESSIONS if mechanism == "suppression"
+           else grammar.NORMALIZERS)
+    bag.append(entry)
     try:
         planted = _planted_holds()
         after = _state(paths)
     finally:
-        if entry in grammar.NORMALIZERS:
-            grammar.NORMALIZERS.remove(entry)
+        if entry in bag:
+            bag.remove(entry)
 
     # A divergence is identified by its CORE, and a repair's whole job is to
     # change the core — so comparing the two lists by name reports a repaired
@@ -177,23 +220,23 @@ def attempt(name: str, paths: List[str], *, why: str = "") -> Repair:
     net = len(before["proven"]) - len(after["proven"])
 
     if not planted:
-        return Repair(name, targets, False, "the planted suite stopped passing",
-                      before, after)
+        return Repair(name, mechanism, targets, False,
+                      "the planted suite stopped passing", before, after)
     if lost:
-        return Repair(name, targets, False,
+        return Repair(name, mechanism, targets, False,
                       f"it costs {len(lost)} confirmed detection(s): "
                       f"{', '.join(lost)}", before, after)
     if drop > 0.0001:
-        return Repair(name, targets, False,
+        return Repair(name, mechanism, targets, False,
                       f"coverage falls {drop:.2%} — {len(targets)} of those "
                       f"sentences were the spurious claims it removed, the "
                       f"rest are real", before, after)
     if net <= 0:
-        return Repair(name, targets, False,
+        return Repair(name, mechanism, targets, False,
                       f"proven defects do not fall "
                       f"({len(before['proven'])} -> {len(after['proven'])})",
                       before, after)
-    return Repair(name, targets, True,
+    return Repair(name, mechanism, targets, True,
                   f"proven defects fall {len(before['proven'])} -> "
                   f"{len(after['proven'])}, no confirmed detection is lost, "
                   f"and coverage moves {-drop:+.2%}", before, after)
@@ -208,15 +251,16 @@ def apply(repair: Repair, overlay: Path) -> Dict[str, Any]:
     """
     if not repair.accepted:
         raise ValueError(f"refusing to apply a rejected repair: {repair.reason}")
+    key = "suppressions" if repair.mechanism == "suppression" else "normalizers"
     p = Path(overlay)
     raw = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-    have = {tuple(x) for x in raw.get("normalizers", [])}
+    have = {tuple(x) for x in raw.get(key, [])}
     item = [repair.normalizer, repair.reason]
     if tuple(item) not in have:
-        raw.setdefault("normalizers", []).append(item)
+        raw.setdefault(key, []).append(item)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"overlay": str(p), "normalizers": raw["normalizers"]}
+    return {"overlay": str(p), key: raw[key]}
 
 
 def record(repair: Repair, home: Path) -> None:
@@ -282,13 +326,36 @@ def run(paths: List[str], *, home: Path, overlay: Optional[Path] = None,
     skip = rejected_before(home)
     out: Dict[str, Any] = {"proposed": propose(paths, skip),
                            "skipped_as_already_rejected": skip, "repairs": []}
-    for name in out["proposed"]:
-        repair = attempt(name, paths)
-        record(repair, home)
-        row = repair.as_dict()
-        if repair.accepted and write and overlay is not None:
-            row["applied"] = apply(repair, Path(overlay))
-        out["repairs"].append(row)
+    out["proposed_suppressions"] = propose_suppressions(paths, skip)
+    from . import ja_grammar as grammar
+
+    # Accepted repairs STACK while the loop runs: the next candidate is
+    # measured against a store that already holds the previous one, or two
+    # repairs that each pass alone could double-silence together unseen. But
+    # the stack is unwound before returning — the overlay is the durable
+    # store, and a run() that leaves module state behind would make the next
+    # in-process audit measure an engine nobody configured.
+    stacked: List[Tuple[Any, Tuple[str, str]]] = []
+    try:
+        for name, mech in ([(n, "normalizer") for n in out["proposed"]]
+                           + [(c, "suppression")
+                              for c in out["proposed_suppressions"]]):
+            repair = attempt(name, paths, mechanism=mech)
+            record(repair, home)
+            row = repair.as_dict()
+            if repair.accepted:
+                if write and overlay is not None:
+                    row["applied"] = apply(repair, Path(overlay))
+                bag = (grammar.SUPPRESSIONS if mech == "suppression"
+                       else grammar.NORMALIZERS)
+                entry = (repair.normalizer, repair.reason)
+                bag.append(entry)
+                stacked.append((bag, entry))
+            out["repairs"].append(row)
+    finally:
+        for bag, entry in stacked:
+            if entry in bag:
+                bag.remove(entry)
     out["accepted"] = sum(1 for r in out["repairs"] if r.get("accepted"))
     out["filed_for_a_person"] = file_unrepaired(paths, home)
     out["still_a_person's"] = (

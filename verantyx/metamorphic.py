@@ -126,12 +126,15 @@ class Divergence:
     """Two readings of the same content disagreeing. A proof, or a suspicion."""
 
     perturbation: str
-    kind: str           # manufactured | destroyed | order | reread
+    kind: str           # manufactured | destroyed | order | reread | guard_conflict
     core: str
     facet: str
     proven: bool
     #: Redacted, like everything that leaves the reading path.
     shape: str = ""
+    #: For a guard conflict: the grammar the guard matched — function words
+    #: only, safe to carry, and exactly what a repair candidate is made from.
+    detail: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v not in ("", None)}
@@ -276,6 +279,68 @@ def probe_paths(paths: Sequence[str], *,
             found.append(Divergence(name, "destroyed", key[0], key[1],
                                     symmetric, skeleton(clean[key])))
     return found
+
+
+#: The engine's no-assert guards, by name. Each one's meaning is "a match
+#: after the polar term means the term asserts nothing" — which makes a
+#: placed pole whose tail matches one of them an internal contradiction,
+#: decidable without the world.
+GUARDS = (("until", "_JA_UNTIL"), ("deeming", "_JA_DEEMING"),
+          ("cause", "_JA_CAUSE_MARK"))
+
+
+def rule_conflicts(paths: Sequence[str]) -> List[Divergence]:
+    """Placed poles that the engine's own rules say assert nothing.
+
+    The second internal oracle, next to meaning-preserving transforms. It
+    never asks whether a reading is right — it asks whether the OUTPUT and
+    the RULES agree with each other, and both live in this process. Every
+    guard-skipped defect this project hit by hand — enumeration, deeming,
+    until, and now のため — is this exact disagreement: some path placed a
+    pole whose tail a guard on another path would have refused.
+
+    Found five on the first run, all on the statutes, all `cause`:
+    「災害復旧のため派遣された職員」 placed 復旧:復旧 on 災害派遣手当 — a
+    dispatch allowance is not a restored water main. Nobody read anything.
+
+    The tail is taken at the LAST occurrence of the term, because that is the
+    occurrence placement itself uses (`seen_at = read.rfind(word)`); auditing
+    a different occurrence than the one that placed the pole would report
+    conflicts placement never committed.
+    """
+    from . import polarity as _p
+    from .catalog import collect
+    from .cross_store import CrossStore
+    from .defect_report import _ATTRIBUTION, skeleton
+    from .document_ingest import ingest_documents
+    from .document_loaders import load_paths
+
+    docs = load_paths(collect(list(paths))["files"])["documents"]
+    store = CrossStore(track_provenance=True)
+    ingest_documents(store, docs)
+
+    out: List[Divergence] = []
+    for core in sorted(store.crosses):
+        prov = (getattr(store, "provenance", {}) or {}).get(core, {})
+        for facet in sorted(f for f in store.crosses[core] if ":" in f):
+            slot = prov.get(facet)
+            if not (slot and len(slot) > 2):
+                continue
+            sentence = _ATTRIBUTION.sub("", str(slot[2]))
+            word = facet.split(":", 1)[1].replace("not_", "")
+            at = sentence.rfind(word)
+            if at < 0:
+                continue
+            tail = sentence[at + len(word):]
+            for label, attr in GUARDS:
+                rx = getattr(_p, attr, None)
+                m = rx.match(tail) if rx else None
+                if m:
+                    out.append(Divergence(
+                        "own_rules", "guard_conflict", core, facet, True,
+                        skeleton(sentence), m.group(0)))
+                    break
+    return out
 
 
 def summary(divs: List[Divergence]) -> Dict[str, Any]:

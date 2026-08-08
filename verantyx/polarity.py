@@ -234,6 +234,18 @@ def _place_poles(store: CrossStore, sentence: str, core: str,
                     continue
                 target = context
         seen_at = read.rfind(word)
+        # The one choke point every pole passes through, so this is where
+        # data-driven suppressions belong. Every guard-skipped defect this
+        # project has hit — enumeration, deeming, until, and now のため on the
+        # statutes — had the same anatomy: a rule applied on one path and
+        # missed on another. A suppression consulted only in `tabular_claim_ja`
+        # and the subject gate had the same anatomy AGAIN: the audit found five
+        # placements whose tails its own patterns matched, because placement
+        # itself never asked. Asking here, after target resolution, closes the
+        # class rather than the instance: any pattern a person or the evolve
+        # loop adds to the overlay now holds on every path at once.
+        if _suppressed(read[seen_at + len(word):]):
+            continue
         key = (target, aspect)
         if key not in latest or seen_at > latest[key][0]:
             latest[key] = (seen_at, value)
