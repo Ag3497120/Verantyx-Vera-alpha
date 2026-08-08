@@ -1634,6 +1634,66 @@ def main() -> int:
         failures.append(f"install instruction names a missing extra: {_bad}")
     print()
 
+    # -- 4b29. A corpus you cannot reconstruct is a number nobody can check --
+    # The corpus every published figure was measured on lived in a session
+    # temp directory and was lost when that directory was cleaned. What
+    # survived was the figures, in commit messages, with no way to re-derive
+    # them. The manifest is the fix; drift has to be LOUD, because the
+    # interesting failure is not a broken download, it is a publisher issuing
+    # a correction while the numbers still claim to describe the old text.
+    import verantyx.corpus_fetch as _cf
+
+    with _tf.TemporaryDirectory() as _td:
+        _docs = _P(_td) / "docs"
+        _docs.mkdir()
+        (_docs / "a.txt").write_text("国道9号は通行止です。", encoding="utf-8")
+        (_docs / "b.txt").write_text("国道9号は通行可能。", encoding="utf-8")
+        (_P(_td) / "u.tsv").write_text(
+            "a.txt\thttps://example.gov/a\nb.txt\thttps://example.gov/b\n",
+            encoding="utf-8")
+        _m = _cf.record(_docs, _P(_td) / "m.json",
+                        source_map=_P(_td) / "u.tsv", label="t")
+        ok = _m["reproducible"] and len(_m["files"]) == 2 and all(
+            f["url"] and f["sha256"] for f in _m["files"])
+        print(f"[{'ok  ' if ok else 'FAIL'}] a manifest carries url + checksum "
+              f"per file -> {len(_m['files'])} files")
+        if not ok:
+            failures.append(f"manifest incomplete: {_m}")
+
+        ok = _cf.verify(_m, _docs)["verdict"] == "ANSWER"
+        print(f"[{'ok  ' if ok else 'FAIL'}] an unchanged corpus verifies")
+        if not ok:
+            failures.append("verify failed on an unchanged corpus")
+
+        (_docs / "a.txt").write_text("国道9号は依然통行止です。", encoding="utf-8")
+        _v = _cf.verify(_m, _docs)
+        ok = _v["verdict"] == "UNKNOWN_CORPUS_DRIFT" and _v["changed"] == ["a.txt"]
+        print(f"[{'ok  ' if ok else 'FAIL'}] a changed document is named, not "
+              f"summarised -> {_v['changed']}")
+        if not ok:
+            failures.append(f"drift not detected: {_v}")
+
+        # Non-zero exit, or this cannot gate anything. A first version
+        # substring-matched the rendered JSON and returned 0 on drift, because
+        # the word ANSWER appears inside the explanation.
+        import contextlib as _ctx
+        import io as _io
+        with _ctx.redirect_stdout(_io.StringIO()):
+            _code = _cf.main(["--manifest", str(_P(_td) / "m.json"),
+                              "--out", str(_docs), "--verify"])
+        ok = _code == 1
+        print(f"[{'ok  ' if ok else 'FAIL'}] drift exits non-zero")
+        if not ok:
+            failures.append("corpus drift exited 0")
+
+        # A manifest with no URLs must admit it rather than look complete.
+        _m2 = _cf.record(_docs, _P(_td) / "m2.json")
+        ok = _m2["reproducible"] is False and "cannot reconstruct" in _m2["note"]
+        print(f"[{'ok  ' if ok else 'FAIL'}] a URL-less manifest says so")
+        if not ok:
+            failures.append("URL-less manifest claimed to be reproducible")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

@@ -16,3 +16,9 @@ vera_store.json
 # Truncated scratch file, unparseable and referenced nowhere; kept on disk
 # only because it is the user's to decide about.
 verantyx/dialogue_context.py
+
+# Fetched corpora. Manifests are committed; the documents are not — they are
+# third-party government publications, and a frozen copy would quietly diverge
+# from what the publisher is actually serving.
+corpora/*/
+!corpora/*.json

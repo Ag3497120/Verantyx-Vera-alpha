@@ -188,9 +188,29 @@ documents and is recorded in the commit that introduced it:
 | 7 guard conflicts, のため on the statutes | `Second internal oracle: the output must agree with the engine's own rules` |
 | 79 sentences lost, 18,460 placed, 73.39% coverage | same two commits |
 
-The corpora are public documents but are not redistributed here. To reproduce,
-point `vera self-evolve` at any series of numbered ministry reports; the
-defects it finds will be that corpus's, not these.
+The corpora are public documents and are **not redistributed here** — they are
+third-party publications, and disaster bulletins get revised, so a frozen copy
+would quietly diverge from what the ministry is actually serving.
+
+The original corpus was lost: it lived in a session temp directory that was
+later cleaned, and the only thing that survived was the figures in the commit
+messages. That is a thin thread to hang a number on, so
+[../corpora/](../corpora/README.md) now holds manifests instead — source URL
+and SHA-256 per file, with a fetch/verify tool:
+
+```bash
+python3 -m verantyx.corpus_fetch --manifest corpora/x.json --out ./corpora/x
+python3 -m verantyx.corpus_fetch --manifest corpora/x.json --out ./corpora/x --verify
+```
+
+`--verify` exits non-zero and names every file whose checksum moved. A
+mismatch is not automatically an error — a ministry issuing a correction looks
+exactly like this — but it must never pass silently, because a changed corpus
+invalidates every number measured on it.
+
+To reproduce without a manifest, point `vera self-evolve` at any series of
+numbered ministry reports. The defects it finds will be that corpus's, not
+these.
 
 ## See also
 
