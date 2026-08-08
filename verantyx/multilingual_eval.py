@@ -1485,9 +1485,58 @@ def main() -> int:
         if not ok:
             failures.append("decisions were not remembered")
 
+    # The field app answers in the operator's language, and the SERVER never
+    # sends prose. It used to return Japanese remedy text, which made the app
+    # monolingual from the API outward: English chrome with a Japanese
+    # explanation of the failure is worse than either language alone.
+    import re as _re2
+    _srv = "\n".join(_P(m.__file__).read_text(encoding="utf-8")
+                      for m in (_fa, __import__("verantyx.field_session",
+                                                fromlist=["x"])))
+    # The terminal banner is exempt and prints BOTH languages side by side:
+    # it appears before any browser has said which language it wants, so
+    # picking one there would be picking for somebody who has not arrived.
+    # A JSON response is not exempt — that is what the screen renders.
+    # Only strings that reach a JSON response count. The module docstring
+    # quotes 「読み取り中 (12/40)」 as an EXAMPLE of a named state, and the
+    # terminal banner prints both languages side by side because it appears
+    # before any browser has said which one it wants — picking there would be
+    # picking for somebody who has not arrived yet.
+    _prose = []
+    for _blkm in _re2.finditer(r'self\._json\((.*?)\)\s*(?:$|\n)', _srv,
+                               _re2.S):
+        if _re2.search(r'"[^"]*[ぁ-んァ-ヶ]', _blkm.group(1)):
+            _prose.append(_blkm.group(1).strip()[:60])
+    for _ln in _srv.splitlines():
+        _st = _ln.strip()
+        if _st.startswith(("#", "print(", '"')):
+            continue
+        if _re2.search(r'return\s*\{.*"[^"]*[ぁ-んァ-ヶ]', _ln):
+            _prose.append(_st[:60])
+    ok = not _prose
+    print(f"[{'ok  ' if ok else 'FAIL'}] the field server sends codes, never "
+          f"prose -> {len(_prose)} line(s)")
+    if not ok:
+        failures.append(f"field server carries Japanese prose: {_prose[:2]}")
+
+    # Both languages, and every key present in both — a half-translated screen
+    # is worse than an untranslated one, because the gap is invisible until
+    # somebody hits it.
+    _html = _fa._PAGE_PATH.read_text(encoding="utf-8")
+    _keys = {}
+    for _lang in ("ja", "en"):
+        _blk = _html.split(f"\n  {_lang}: {{", 1)
+        _keys[_lang] = set(_re2.findall(r"^    ([A-Za-z_][A-Za-z0-9_]*)\s*:",
+                                        _blk[1], _re2.M)) if len(_blk) > 1 else set()
+    _missing = (_keys["ja"] ^ _keys["en"])
+    ok = bool(_keys["ja"]) and not _missing
+    print(f"[{'ok  ' if ok else 'FAIL'}] both languages carry the same keys -> "
+          f"{len(_keys['ja'])} keys, {len(_missing)} missing")
+    if not ok:
+        failures.append(f"field app translation gap: {sorted(_missing)[:5]}")
+
     # The page must not reach outside the machine — the promise the whole
     # local app exists to make. Checked against the file that ships.
-    _html = _fa._PAGE_PATH.read_text(encoding="utf-8")
     _out = [x for x in ("http://", "https://", "//cdn", "<img", "@import")
             if x in _html]
     ok = not _out

@@ -77,13 +77,13 @@ def _write_files(root: Path, files: List[Dict[str, str]]):
             continue
         if Path(name).suffix.lower() not in SUPPORTED:
             refused.append({"name": name,
-                            "reason": "この形式に対応する読み取りがありません",
+                            "reason": "NO_LOADER",
                             "supported": sorted(SUPPORTED)})
             continue
         try:
             data = base64.b64decode(f.get("b64", ""))
         except Exception:
-            refused.append({"name": name, "reason": "デコードできませんでした"})
+            refused.append({"name": name, "reason": "UNDECODABLE"})
             continue
         (root / name).write_bytes(data)
         written.append(name)
@@ -104,16 +104,13 @@ def read_documents(files: List[Dict[str, str]], *, home: Path = HOME
     from .proposal_verify import check as verify_proposal
 
     if not files:
-        return {"verdict": "UNKNOWN_NO_DOCUMENTS",
-                "advice": "資料を選ぶか、この枠にドラッグしてください。"}
+        return {"verdict": "UNKNOWN_NO_DOCUMENTS"}
 
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
         written, refused = _write_files(root, files)
         if not written:
-            from .field_session import REMEDY
             return {"verdict": "UNKNOWN_NO_READABLE_DOCUMENTS",
-                    "advice": REMEDY["UNKNOWN_NO_READABLE_DOCUMENTS"],
                     "refused": refused, "supported": sorted(SUPPORTED)}
 
         paths = [str(root)]
@@ -413,14 +410,12 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length") or 0)
         if length > _MAX_BYTES:
             self._json({"verdict": "UNKNOWN_TOO_LARGE",
-                        "advice": f"一度に送れるのは {_MAX_BYTES // (1024*1024)}MB "
-                                  "までです。分けて読み込んでください。"}, 413)
+                        "limit_mb": _MAX_BYTES // (1024 * 1024)}, 413)
             return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
-            self._json({"verdict": "UNKNOWN_UNREADABLE",
-                        "advice": "送信データを読めませんでした。"}, 400)
+            self._json({"verdict": "UNKNOWN_BAD_REQUEST"}, 400)
             return
 
         try:
@@ -442,8 +437,7 @@ class _Handler(BaseHTTPRequestHandler):
                 sid = payload.get("session_id") or ""
                 sess = load(sid, HOME)
                 if sess is None:
-                    self._json({"verdict": "UNKNOWN_NO_SUCH_SESSION",
-                                "advice": "この記録は見つかりませんでした。"})
+                    self._json({"verdict": "UNKNOWN_NO_SUCH_SESSION"})
                     return
                 sess.note = str(payload.get("note") or "")[:2000]
                 save(sess, HOME)
@@ -452,8 +446,7 @@ class _Handler(BaseHTTPRequestHandler):
                 lex = _lexicon()
                 if lex is None:
                     self._json({"verdict": "UNKNOWN_NO_LEXICON",
-                                "advice": f"{HOME / 'lexicon.json'} に jgen と "
-                                          "トークナイザの場所を書くと使えます。"})
+                                "config": str(HOME / "lexicon.json")})
                     return
                 from .ja_grammar import ASPECT_OF
                 known = sorted(ASPECT_OF)
@@ -466,8 +459,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(404, b"not found", "text/plain")
         except Exception as exc:  # noqa: BLE001 — the screen gets a typed reason
             self._json({"verdict": "UNKNOWN_UNREADABLE",
-                        "advice": f"処理中に問題が起きました: "
-                                  f"{type(exc).__name__}: {exc}"})
+                        "detail": f"{type(exc).__name__}: {exc}"})
 
 
 def serve(port: int = _PORT, open_browser: bool = True) -> int:
@@ -476,9 +468,10 @@ def serve(port: int = _PORT, open_browser: bool = True) -> int:
     HOME.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
     url = f"http://127.0.0.1:{port}/"
-    print(f"Vera 現場版 — {url}")
-    print("この画面は外部に一切接続しません。資料はこの機械から出ません。")
-    print("止めるには Ctrl+C。")
+    print(f"Vera field — {url}")
+    print("No network. Documents never leave this machine. / "
+          "外部接続なし。資料はこの機械から出ません。")
+    print("Ctrl+C to stop. / 止めるには Ctrl+C。")
     if open_browser:
         try:
             webbrowser.open(url)
@@ -487,7 +480,7 @@ def serve(port: int = _PORT, open_browser: bool = True) -> int:
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n終了しました。")
+        print("\nStopped. / 終了しました。")
     finally:
         server.server_close()
     return 0

@@ -177,26 +177,22 @@ def search(store, query: str, *, limit: int = 40) -> List[Dict[str, Any]]:
 #: half is unlike anything that worked.
 SILENT = 0.50
 
-#: What to do about each refusal, as a procedure. A message that only names
-#: the failure leaves the officer to invent the next step, and inventing a
-#: next step at 02:00 is how a wrong one gets taken.
-REMEDY = {
-    "UNKNOWN_NO_READABLE_DOCUMENTS": (
-        "どのファイルも読めませんでした。PDF が画像スキャンだと文字が取り出せ"
-        "ません。テキストが選択できる PDF か、Word・HTML・CSV でお試しください。"),
-    "UNKNOWN_EMPTY_DOCUMENT": (
-        "開けましたが文字がありませんでした。スキャン画像の可能性があります。"),
-    "UNKNOWN_UNREADABLE": (
-        "ファイルが壊れているか、対応していない形式です。他のファイルは"
-        "そのまま処理されています。"),
-    "LOW_COVERAGE": (
-        "文の多くが読み取れていません。表組みの多い資料でよく起きます。"
-        "この状態の検出結果は、件数が少なく出ます（見逃しが増えます）。"),
-    "NO_OPPOSABLE_PAIRS": (
-        "食い違いを検出できる組み合わせが 0 件でした。検出 0 件は「矛盾が"
-        "なかった」ではなく「比べられるものが無かった」という意味です。"
-        "同じ対象について書かれた別の資料を足してください。"),
-}
+#: The refusals this screen can raise. CODES ONLY — the wording lives in the
+#: page, in both languages.
+#:
+#: The remedy used to be Japanese prose returned by the server, which made the
+#: whole application monolingual from the API outward: an English-speaking
+#: operator got English chrome and a Japanese explanation of what went wrong,
+#: which is worse than either language alone. A typed refusal already names
+#: what is missing; naming it is the server's job, and saying what to do about
+#: it is the screen's.
+REMEDIES = (
+    "UNKNOWN_NO_READABLE_DOCUMENTS",
+    "UNKNOWN_EMPTY_DOCUMENT",
+    "UNKNOWN_UNREADABLE",
+    "LOW_COVERAGE",
+    "NO_OPPOSABLE_PAIRS",
+)
 
 
 def silence(audit) -> Dict[str, Any]:
@@ -213,10 +209,9 @@ def silence(audit) -> Dict[str, Any]:
 
     flags: List[Dict[str, str]] = []
     if seen and rate < SILENT:
-        flags.append({"code": "LOW_COVERAGE", "advice": REMEDY["LOW_COVERAGE"]})
+        flags.append({"code": "LOW_COVERAGE"})
     if not pairs:
-        flags.append({"code": "NO_OPPOSABLE_PAIRS",
-                      "advice": REMEDY["NO_OPPOSABLE_PAIRS"]})
+        flags.append({"code": "NO_OPPOSABLE_PAIRS"})
     return {
         "read": placed,
         "seen": seen,
