@@ -20,6 +20,34 @@ every time — and every answer traces back to counted source sentences.
 > do: it does not write fluent prose, it does not chat casually, and it does
 > not invent anything it was never taught. That is the point.
 
+## Where this works, and where it does not
+
+Measured, on real documents, before you spend an afternoon on it.
+
+| corpus | detections | true | precision |
+|---|---|---|---|
+| Japanese government disaster reports (5 corpora, 4 read blind) | 14 | 14 | **100%** |
+| Technical prose — 93 mixed EN/JA project documents | 5 | **0** | **0%** |
+
+The difference is not the subject matter. It is whether the documents make
+**state claims about named entities**.
+
+**It works** where the same *named* thing — a municipality, a facility, a
+route, a service, a contract, an asset — is described by more than one source,
+and its state changes: open/closed, running/stopped, valid/expired,
+in-service/withdrawn. That shape is what the engine detects, and on it, it does
+not guess.
+
+**It does not work** on prose. In technical writing the same abstract noun
+returns in unrelated contexts — 「議論」, 「出力」, 「推論プロセス」 — and
+comparing two of them produces a contradiction that was never there. All five
+findings on that corpus were false, and the honest reading is that a wiki, a
+set of design docs, or meeting notes are the wrong input.
+
+It is also **not** a document organiser: no summarising, no tagging, no
+clustering, no semantic search. It answers one question — *do my sources
+disagree about this thing, and who said what* — and refuses the rest.
+
 ## Why
 
 | LLM | Vera |
@@ -40,14 +68,21 @@ Weak by design: creative writing, small talk, free-form generation.
 ## Install
 
 ```bash
-git clone https://github.com/Ag3497120/Verantyx-Vera-alpha.git
-cd Verantyx-Vera-alpha
-pip install -e .            # core (stdlib only)
-pip install -e ".[hf]"      # + HuggingFace corpus pouring
-pip install -e ".[mcp]"     # + MCP server
+pip install verantyx-vera            # core — standard library only
+pip install "verantyx-vera[docs]"    # + PDF, Word, Excel
+pip install "verantyx-vera[mcp]"     # + MCP server
 ```
 
-Python ≥ 3.9. No other core dependencies.
+Python ≥ 3.9. No other core dependencies, no GPU, no network at run time.
+
+Then, for the local app a non-programmer can use:
+
+```bash
+vera field       # opens on 127.0.0.1 — documents never leave the machine
+```
+
+Step-by-step, written for someone who has never opened a terminal:
+<https://verantyx.ai/vera/download/>
 
 ## Quickstart
 
