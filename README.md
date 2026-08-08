@@ -48,6 +48,12 @@ It is also **not** a document organiser: no summarising, no tagging, no
 clustering, no semantic search. It answers one question — *do my sources
 disagree about this thing, and who said what* — and refuses the rest.
 
+The parser also finds bugs in **its own reading**, without an answer key: it
+reads the same documents twice through a transform that cannot change what
+they say, and a claim that appears in only one of the two readings is provably
+spurious. 13 real defects found that way, repaired unattended.
+[docs/METAMORPHIC.md](docs/METAMORPHIC.md).
+
 ## Why
 
 | LLM | Vera |
