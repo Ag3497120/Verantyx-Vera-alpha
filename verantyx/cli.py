@@ -416,6 +416,18 @@ def cmd_mcp(args) -> int:
     return serve(args.store)
 
 
+def cmd_field(args) -> int:
+    """The whole thing on one screen, for somebody with a phone ringing.
+
+    Separate from `vera audit` because the audience is: audit is for a person
+    checking whether the ENGINE is right; this is for a person trying to find
+    out whether the water is back on in their town.
+    """
+    from .field_app import serve
+
+    return serve(port=args.port, open_browser=not args.no_browser)
+
+
 def cmd_lexicon(args) -> int:
     """The dictionary half of a local model: state-likeness and neighbours.
 
@@ -777,6 +789,13 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser(
+        "field",
+        help="the full local app for a municipal desk (127.0.0.1, no network)")
+    p.add_argument("--port", type=int, default=8900)
+    p.add_argument("--no-browser", action="store_true")
+    p.set_defaults(fn=cmd_field)
 
     p = sub.add_parser(
         "lexicon",

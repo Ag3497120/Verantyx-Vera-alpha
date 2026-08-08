@@ -1444,6 +1444,59 @@ def main() -> int:
         failures.append("proposal_verify grew an accept path")
     print()
 
+    # -- 4b26. The field app: one write path, and it needs a person ---------
+    # Everything else in the vocabulary chain refuses to write an overlay, and
+    # the evals above assert that. Something has to write one eventually or a
+    # judgement cannot be recorded, so there is exactly ONE such function and
+    # it is behind a button that says what it does.
+    import verantyx.field_app as _fa
+
+    with _tf.TemporaryDirectory() as _td:
+        _home = _P(_td)
+        # Both candidates in ONE file, because that is how the app writes it —
+        # a first version replaced the file per word and lost the earlier
+        # verdict, which made the test fail on a bug the code did not have.
+        (_home / "vocab_proposals.json").write_text(
+            '[{"word":"停電","aspect":"復旧","polarity":"-","status":"proposed"},'
+            ' {"word":"滞留","aspect":"復旧","polarity":"-","status":"proposed"}]',
+            encoding="utf-8")
+        _r = _fa.decide("停電", "accept", home=_home)
+        _overlay = _home / "grammar.json"
+        ok = (_r["status"] == "accepted" and _overlay.exists()
+              and "停電" in _overlay.read_text(encoding="utf-8"))
+        print(f"[{'ok  ' if ok else 'FAIL'}] approving writes the overlay -> "
+              f"{_r.get('status')}")
+        if not ok:
+            failures.append(f"decide did not write the overlay: {_r}")
+
+        # Refusing must not. A queue that quietly accepted on either button
+        # would be worse than no queue.
+        _fa.decide("滞留", "refuse", home=_home)
+        ok = "滞留" not in _overlay.read_text(encoding="utf-8")
+        print(f"[{'ok  ' if ok else 'FAIL'}] refusing writes nothing")
+        if not ok:
+            failures.append("refusing wrote to the overlay")
+
+        # And a decided word never comes back. A queue that re-asks settled
+        # questions is a queue people stop reading.
+        ok = set(_fa._decided(_home)) == {"停電", "滞留"}
+        print(f"[{'ok  ' if ok else 'FAIL'}] decided words are remembered -> "
+              f"{sorted(_fa._decided(_home))}")
+        if not ok:
+            failures.append("decisions were not remembered")
+
+    # The page must not reach outside the machine — the promise the whole
+    # local app exists to make. Checked against the file that ships.
+    _html = _fa._PAGE_PATH.read_text(encoding="utf-8")
+    _out = [x for x in ("http://", "https://", "//cdn", "<img", "@import")
+            if x in _html]
+    ok = not _out
+    print(f"[{'ok  ' if ok else 'FAIL'}] the field page loads nothing remote "
+          f"-> {_out}")
+    if not ok:
+        failures.append(f"field page reaches outside: {_out}")
+    print()
+
     # -- 4c. English prepositions must not read as state claims -------------
     # From the first real-corpus run: this project's own 12 documents produced
     # one contradiction across 251 cores and it was false — "corpus ON top"

@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera 現場版 — 資料はこの機械から出ません</title>
+<style>
+/* Field-software rules, not decoration.
+   - system fonts only: nothing loads from anywhere
+   - high contrast: a laptop on a folding table, in daylight
+   - large targets: gloves, haste, a trackpad on a hard surface
+   - no colour-only meaning: every state is also a word            */
+:root{
+  --bg:#ffffff; --ink:#111418; --ink-2:#3c444d; --ink-3:#69727c;
+  --line:#c9d0d8; --line-2:#e4e9ee; --panel:#f5f7f9;
+  --ok:#0b6b3a; --ok-bg:#e6f4ec;
+  --warn:#8a5300; --warn-bg:#fdf1dc;
+  --stop:#a11212; --stop-bg:#fbeaea;
+  --pick:#0b4f9e; --pick-bg:#e8f0fb;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#12161b; --ink:#f2f5f8; --ink-2:#c3ccd6; --ink-3:#8b96a2;
+    --line:#39424d; --line-2:#252c34; --panel:#1a2027;
+    --ok:#5fd39a; --ok-bg:#12301f; --warn:#ecb45a; --warn-bg:#332614; --stop:#f28b8b; --stop-bg:#331818;
+    --pick:#7db3f0; --pick-bg:#14263c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",
+       "Noto Sans JP",Meiryo,system-ui,sans-serif}
+header{position:sticky;top:0;z-index:20;background:var(--bg);
+  border-bottom:2px solid var(--line);padding:.6rem 1rem}
+.bar{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;
+  max-width:1180px;margin:0 auto}
+.brand{font-weight:800;font-size:1.05rem;margin-right:.5rem;white-space:nowrap}
+.brand small{display:block;font-weight:400;font-size:.72rem;color:var(--ink-3)}
+nav{display:flex;flex-wrap:wrap;gap:.3rem;flex:1}
+/* Words, not icons: an icon means something different in every agency. */
+nav button{font:inherit;font-size:.9rem;padding:.55rem .8rem;cursor:pointer;
+  background:transparent;color:var(--ink-2);border:1px solid transparent;
+  border-radius:.4rem;min-height:44px}
+nav button:hover{background:var(--panel)}
+nav button[aria-current="true"]{background:var(--pick-bg);color:var(--pick);
+  border-color:var(--pick);font-weight:700}
+main{max-width:1180px;margin:0 auto;padding:1rem 1rem 5rem}
+section[hidden]{display:none}
+h2{font-size:1.25rem;margin:.2rem 0 .3rem}
+.lede{color:var(--ink-2);font-size:.92rem;margin:0 0 1rem;max-width:62ch}
+/* Guidance sits where the question is, not in a manual somebody has to find. */
+.guide{background:var(--panel);border-left:4px solid var(--line);
+  padding:.7rem .9rem;border-radius:0 .4rem .4rem 0;margin:0 0 1rem;
+  font-size:.88rem;color:var(--ink-2);max-width:74ch}
+.guide b{color:var(--ink)}
+.drop{border:2px dashed var(--line);border-radius:.5rem;padding:1.6rem 1rem;
+  text-align:center;background:var(--panel)}
+.drop.over{border-color:var(--pick);background:var(--pick-bg)}
+/* The primary action is always on screen and never behind a menu. */
+.run{position:sticky;bottom:0;background:var(--bg);border-top:2px solid var(--line);
+  padding:.7rem 1rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;
+  margin:1rem -1rem -5rem}
+button.primary{font:inherit;font-weight:700;font-size:1rem;min-height:52px;
+  padding:.7rem 1.5rem;border-radius:.45rem;cursor:pointer;
+  background:var(--pick);color:#fff;border:2px solid var(--pick)}
+button.primary:disabled{opacity:.45;cursor:not-allowed}
+button.plain{font:inherit;min-height:44px;padding:.5rem 1rem;cursor:pointer;
+  background:transparent;color:var(--ink);border:1px solid var(--line);
+  border-radius:.4rem}
+/* Every state is named in words. A bare spinner does not say whether to wait. */
+.state{font-size:.9rem;color:var(--ink-2)}
+.state.busy{color:var(--pick);font-weight:700}
+.tag{display:inline-block;font-size:.76rem;font-weight:700;padding:.12rem .5rem;
+  border-radius:.28rem;border:1px solid currentColor;white-space:nowrap}
+.t-ok{color:var(--ok);background:var(--ok-bg)}
+.t-warn{color:var(--warn);background:var(--warn-bg)}
+.t-stop{color:var(--stop);background:var(--stop-bg)}
+.t-pick{color:var(--pick);background:var(--pick-bg)}
+/* The quiet number comes before the findings, never beside them. */
+.quiet{border:2px solid var(--line);border-radius:.5rem;padding:.8rem 1rem;
+  margin:0 0 1rem}
+.quiet.bad{border-color:var(--warn);background:var(--warn-bg)}
+.big{font-size:1.5rem;font-weight:800}
+.grid{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{border:1px solid var(--line-2);padding:.5rem .6rem;text-align:left;
+  vertical-align:top}
+th{background:var(--panel);font-weight:700}
+.wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.card{border:1px solid var(--line);border-radius:.5rem;padding:.8rem 1rem;
+  margin:0 0 .7rem}
+.card h3{margin:.1rem 0 .4rem;font-size:1rem}
+.ev{font-size:.84rem;color:var(--ink-2);background:var(--panel);
+  padding:.35rem .5rem;border-radius:.3rem;margin:.25rem 0}
+input[type=search],input[type=text]{font:inherit;padding:.65rem .8rem;
+  border:2px solid var(--line);border-radius:.4rem;background:var(--bg);
+  color:var(--ink);width:100%;max-width:32rem;min-height:48px}
+.kbd{font:inherit;font-size:.76rem;border:1px solid var(--line);
+  border-bottom-width:2px;border-radius:.25rem;padding:0 .3rem;color:var(--ink-3)}
+.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+/* A refusal carries the procedure, not just the failure. */
+.advice{border:2px solid var(--stop);background:var(--stop-bg);color:var(--ink);
+  border-radius:.5rem;padding:.8rem 1rem;margin:0 0 1rem}
+.advice b{color:var(--stop)}
+.muted{color:var(--ink-3);font-size:.85rem}
+footer{max-width:1180px;margin:0 auto;padding:0 1rem 2rem;color:var(--ink-3);
+  font-size:.82rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand">Vera 現場版<small>資料はこの機械から出ません</small></div>
+    <nav id="nav">
+      <button data-s="read" aria-current="true">1. 読み込む</button>
+      <button data-s="board">2. 食い違い</button>
+      <button data-s="find">3. 調べる</button>
+      <button data-s="self">4. 自己点検</button>
+      <button data-s="vocab">5. 語彙の承認</button>
+      <button data-s="help">使い方</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<!-- 1 ─────────────────────────────────────────────────────────── -->
+<section id="s-read">
+  <h2>1. 資料を読み込む</h2>
+  <p class="lede">PDF・Word・HTML・CSV・テキスト。<b>この画面は外部に一切接続しません。</b>
+     資料はこの機械の中だけで処理され、送信も保存もされません。</p>
+  <div class="guide">
+    <b>最初にすること。</b> 同じ対象について書かれた資料を <b>2件以上</b> 入れてください。
+    1件だけだと食い違いは原理的に検出できません（比べる相手がいないため）。
+    第1報と第5報、県の発表と事業者の発表、といった組み合わせが向いています。
+  </div>
+  <div class="drop" id="drop">
+    <p><b>ここにドラッグ</b>、または</p>
+    <input type="file" id="files" multiple>
+    <p class="muted" id="picked">まだ選ばれていません</p>
+  </div>
+  <div id="read-out"></div>
+</section>
+
+<!-- 2 ─────────────────────────────────────────────────────────── -->
+<section id="s-board" hidden>
+  <h2>2. 食い違いと更新</h2>
+  <p class="lede">出典が食い違っている点と、時刻で順序がつく更新を分けて出します。混ぜません。</p>
+  <div class="guide">
+    <b>読み方。</b>
+    <span class="tag t-stop">係争</span> は出典が食い違い、どちらも現役 — 現地確認が要ります。
+    <span class="tag t-pick">更新</span> は同じ話が2度語られただけで、新しい方が現在です。
+    <b>検出0件は「矛盾がない」ではありません。</b>「比べられる組み合わせが無かった」場合も0件になります。
+    上の数字を先に見てください。
+  </div>
+  <div id="board-out"><p class="muted">まだ読み込まれていません。</p></div>
+</section>
+
+<!-- 3 ─────────────────────────────────────────────────────────── -->
+<section id="s-find" hidden>
+  <h2>3. 一つの対象について調べる</h2>
+  <p class="lede">市町村名・施設名・路線名で、読み込んだ資料の中から分かっていることを出典付きで出します。</p>
+  <div class="guide">
+    <b>部分一致します。</b>「天草」で 天草市 も 上天草市 も出ます。
+    出てこない場合、その語がまだ読み取れていない可能性があります —
+    「4. 自己点検」に原因が出ていることがあります。
+  </div>
+  <div class="row">
+    <input type="search" id="q" placeholder="例: 天草市 / 中央公民館 / 国道9号"
+           autocomplete="off">
+    <button class="plain" id="go">調べる</button>
+    <span class="muted"><span class="kbd">/</span> でここに移動</span>
+  </div>
+  <div id="find-out"></div>
+</section>
+
+<!-- 4 ─────────────────────────────────────────────────────────── -->
+<section id="s-self" hidden>
+  <h2>4. 自己点検 — 読み取りの欠陥</h2>
+  <p class="lede">エンジンが<b>自分の読み取りの誤り</b>を、答え合わせなしで見つけます。
+     直せるものはその場で直せます。</p>
+  <div class="guide">
+    <b>なぜ答え合わせなしで分かるのか。</b> 同じ資料を、<b>意味を変えられない変換</b>
+    （PDF が入れた空白を詰めるなど）を通して二度読みます。読み方が変わったなら、
+    どちらかが誤りです。空白は情報を運ばないので、空白のある読みにだけ出た主張は<b>偽</b>です。
+    <br><b>修復を実行すると</b>、あなたの手元の設定ファイルにだけ書かれます。
+    受理は「確定した検出を1件も壊さない」「植え込み検査に通る」を満たしたときだけです。
+  </div>
+  <div id="self-out"><p class="muted">まだ読み込まれていません。</p></div>
+  <div class="row" style="margin-top:.8rem">
+    <button class="plain" id="loop" disabled>修復を試して測る</button>
+    <span class="state" id="loop-state"></span>
+  </div>
+  <div id="loop-out"></div>
+</section>
+
+<!-- 5 ─────────────────────────────────────────────────────────── -->
+<section id="s-vocab" hidden>
+  <h2>5. 語彙の承認</h2>
+  <p class="lede">資料に出てきた<b>エンジンが知らない状態語</b>の候補です。
+     承認するかどうかは、機械には決められません。</p>
+  <div class="guide">
+    <b>ここだけは人が決めます。</b> どんな資料変換も「その語が何を意味するか」は教えてくれません。
+    機械にできるのは、<span class="tag t-ok">裏付けあり</span>（複数の出典が同じ形で使っている）
+    と <span class="tag t-warn">判定不能</span>（1出典のみ）を分けることまでです。
+    <b>裏付けは正しさの証明ではありません</b> — 2つの資料が同じ間違いをすることもあります。
+    <br><b>承認すると</b>その語がこの機械の語彙に加わり、以後の読み取りに使われます。
+    <b>取り消すには</b>設定ファイル <code>~/.verantyx-audit/grammar.json</code> から該当行を消します。
+  </div>
+  <div id="vocab-out"><p class="muted">まだ読み込まれていません。</p></div>
+  <h3 style="margin-top:1.4rem;font-size:1rem">辞書で調べる（任意）</h3>
+  <p class="muted" id="lex-status">確認中…</p>
+  <div class="row" id="lex-row" hidden>
+    <input type="text" id="lexq" placeholder="例: 冠水 滞留 孤立">
+    <button class="plain" id="lexgo">辞書を引く</button>
+  </div>
+  <div id="lex-out"></div>
+</section>
+
+<!-- help ───────────────────────────────────────────────────────── -->
+<section id="s-help" hidden>
+  <h2>使い方</h2>
+  <div class="guide">
+    <b>この道具が答えないこと。</b> 文章を書きません。要約も翻訳もしません。
+    推測もしません。分からないときは「分からない」と、その理由の名前つきで返します。
+    それがこの道具の性質で、直す予定の欠点ではありません。
+  </div>
+  <table>
+    <tr><th style="width:11rem">やりたいこと</th><th>手順</th></tr>
+    <tr><td>今の状況を把握する</td><td>1で資料を2件以上読み込む → 2で係争と更新を見る</td></tr>
+    <tr><td>特定の市町村を調べる</td><td>3で名前を入れる。部分一致します</td></tr>
+    <tr><td>検出が0件だった</td><td>2の上の「比べられる組み合わせ」を見る。0なら矛盾が無いのではなく、比較対象が無い</td></tr>
+    <tr><td>読み取れていない語がある</td><td>4で原因を見る。5に候補が出ていれば承認できる</td></tr>
+    <tr><td>資料が読めなかった</td><td>画像スキャンのPDFは文字を取り出せません。文字が選択できるPDFか、Word/HTML/CSVで</td></tr>
+    <tr><td>作業を翌日に引き継ぐ</td><td>ブラウザを閉じても、承認した語彙と修復は残ります</td></tr>
+  </table>
+  <h3 style="margin-top:1.4rem;font-size:1rem">キーボード</h3>
+  <table>
+    <tr><td style="width:11rem"><span class="kbd">Ctrl</span>/<span class="kbd">⌘</span>+<span class="kbd">Enter</span></td><td>読み込みを実行</td></tr>
+    <tr><td><span class="kbd">/</span></td><td>「3. 調べる」の入力欄へ</td></tr>
+    <tr><td><span class="kbd">1</span>–<span class="kbd">5</span></td><td>その番号の画面へ</td></tr>
+  </table>
+  <h3 style="margin-top:1.4rem;font-size:1rem">保存先</h3>
+  <p class="muted">承認した語彙・修復・記録は <code>~/.verantyx-audit/</code> に置かれます。
+     読み込んだ資料そのものは保存されません。</p>
+</section>
+</main>
+
+<div class="run">
+  <button class="primary" id="run" disabled>資料を読み込む</button>
+  <span class="state" id="run-state">資料が選ばれていません</span>
+</div>
+
+<footer>
+  外部接続なし・モデル不使用・同じ資料からは必ず同じ結果。
+</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const n = document.createElement(t);
+  if (c) n.className = c; if (x !== undefined) n.textContent = x; return n; };
+let FILES = [], STORE = {}, READY = false;
+
+/* ---- navigation: six sections, one bar, never nested ---- */
+function show(name){
+  for (const b of $('#nav').children)
+    b.setAttribute('aria-current', String(b.dataset.s === name));
+  for (const s of document.querySelectorAll('main > section'))
+    s.hidden = s.id !== 's-' + name;
+  if (name === 'find') setTimeout(() => $('#q').focus(), 30);
+}
+$('#nav').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (b) show(b.dataset.s);
+});
+
+/* ---- picking documents ---- */
+function setFiles(list){
+  FILES = [...list];
+  $('#picked').textContent = FILES.length
+    ? FILES.length + ' 件: ' + FILES.map(f => f.name).join('、')
+    : 'まだ選ばれていません';
+  $('#run').disabled = !FILES.length;
+  $('#run-state').textContent = FILES.length
+    ? FILES.length + ' 件を読み込めます'
+    : '資料が選ばれていません';
+}
+$('#files').addEventListener('change', e => setFiles(e.target.files));
+const drop = $('#drop');
+['dragenter','dragover'].forEach(t => drop.addEventListener(t, e => {
+  e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(t => drop.addEventListener(t, e => {
+  e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => setFiles(e.dataTransfer.files));
+
+const b64 = f => new Promise(res => { const r = new FileReader();
+  r.onload = () => res(String(r.result).split(',')[1] || '');
+  r.readAsDataURL(f); });
+
+async function payload(){
+  const out = [];
+  for (let i = 0; i < FILES.length; i++){
+    $('#run-state').textContent = `読み取り準備中 (${i+1}/${FILES.length})`;
+    out.push({name: FILES[i].name, b64: await b64(FILES[i])});
+  }
+  return out;
+}
+
+/* ---- the primary action ---- */
+$('#run').addEventListener('click', run);
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter'){ e.preventDefault(); run(); }
+  else if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)){
+    e.preventDefault(); show('find');
+  } else if (/^[1-5]$/.test(e.key) && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)){
+    show(['read','board','find','self','vocab'][+e.key - 1]);
+  }
+});
+
+async function post(path, body){
+  const r = await fetch(path, {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  return r.json();
+}
+
+function advice(d){
+  const box = el('div','advice');
+  box.append(el('b', null, d.verdict), document.createTextNode(' — '));
+  box.append(document.createTextNode(d.advice || 'この資料では処理できませんでした。'));
+  return box;
+}
+
+async function run(){
+  if (!FILES.length) return;
+  const btn = $('#run'), st = $('#run-state');
+  btn.disabled = true; st.className = 'state busy';
+  st.textContent = '読み取り中… そのままお待ちください';
+  try {
+    const d = await post('/api/read', {files: await payload()});
+    render(d);
+  } catch (err) {
+    $('#read-out').replaceChildren(advice(
+      {verdict:'UNKNOWN_UNREADABLE', advice:'画面と処理の接続が切れました。' +
+       'この画面を再読み込みしてください。'}));
+  } finally {
+    btn.disabled = false; st.className = 'state';
+    st.textContent = FILES.length + ' 件を読み込めます';
+  }
+}
+
+/* ---- rendering ---- */
+function render(d){
+  const out = $('#read-out'); out.replaceChildren();
+  if (d.verdict !== 'ANSWER'){ out.append(advice(d)); return; }
+  READY = true; STORE = d.store || {}; $('#loop').disabled = false;
+
+  /* The quiet number first — before any finding. */
+  const q = d.quiet, box = el('div', 'quiet' + (q.quiet ? ' bad' : ''));
+  const g = el('div','grid');
+  [['読み取れた文', q.read + ' / ' + q.seen],
+   ['被覆率', (q.coverage*100).toFixed(1) + '%'],
+   ['比べられる組み合わせ', String(q.opposable_pairs)],
+   ['食い違いの検出', String((d.detections||[]).length)]].forEach(([k,v]) => {
+    const c = el('div'); c.append(el('div','muted',k), el('div','big',v)); g.append(c);
+  });
+  box.append(g);
+  (q.flags || []).forEach(f => {
+    const p = el('p'); p.style.margin = '.6rem 0 0';
+    p.append(el('span','tag t-warn', f.code), document.createTextNode(' ' + f.advice));
+    box.append(p);
+  });
+  out.append(box);
+
+  if (d.refused?.length){
+    const r = el('div','card');
+    r.append(el('h3',null,'読めなかったファイル'));
+    d.refused.forEach(x => r.append(el('div','ev', x.name + ' — ' + x.reason)));
+    out.append(r);
+  }
+  const okmsg = el('p','muted', '読み込みました: ' + (d.accepted||[]).join('、') +
+    '。上のタブで内容を見られます。');
+  out.append(okmsg);
+
+  renderBoard(d); renderSelf(d); renderVocab(d);
+  show('board');
+}
+
+function renderBoard(d){
+  const out = $('#board-out'); out.replaceChildren();
+  const dets = d.detections || [];
+  if (dets.length){
+    const c = el('div','card');
+    c.append(el('h3', null, '食い違い ' + dets.length + ' 件'));
+    dets.forEach(x => {
+      const row = el('div'); row.style.margin = '.5rem 0';
+      row.append(el('span','tag t-stop','係争'),
+                 document.createTextNode(' ' + x.topic + ' / ' + x.aspect));
+      (x.evidence || []).forEach(e => row.append(el('div','ev', e)));
+      c.append(row);
+    });
+    out.append(c);
+  }
+  (d.board || []).forEach(b => {
+    if (!b.disputed.length && !b.updated.length) return;
+    const c = el('div','card'); c.append(el('h3', null, b.core));
+    b.disputed.forEach(e => {
+      const p = el('div'); p.append(el('span','tag t-stop','係争'));
+      p.append(document.createTextNode(' ' + e.sides.map(s =>
+        s.claim + '（' + (s.sources.join('、') || '出典不明') + '）').join(' 対 ')));
+      c.append(p);
+    });
+    b.updated.forEach(e => {
+      const p = el('div'); p.append(el('span','tag t-pick','更新'));
+      p.append(document.createTextNode(' 現在は ' + e.current.claim +
+        '（' + e.current.sources.join('、') + '・' + e.current.when + ' 時点）'));
+      c.append(p);
+    });
+    out.append(c);
+  });
+  if (!out.children.length)
+    out.append(el('p','muted',
+      '係争・更新は検出されませんでした。上の「比べられる組み合わせ」が 0 なら、' +
+      'それは矛盾が無かったのではなく比較対象が無かったという意味です。'));
+}
+
+function renderSelf(d){
+  const out = $('#self-out'); out.replaceChildren();
+  const mk = (title, rows, cols, pick) => {
+    const c = el('div','card'); c.append(el('h3', null, title));
+    if (!rows.length){ c.append(el('p','muted','ありません。')); return c; }
+    const w = el('div','wrap'), t = el('table'), h = el('tr');
+    cols.forEach(x => h.append(el('th', null, x)));
+    t.append(h);
+    rows.forEach(r => { const tr = el('tr');
+      pick(r).forEach(v => tr.append(el('td', null, v))); t.append(tr); });
+    w.append(t); c.append(w); return c;
+  };
+  out.append(mk('レイアウトが作り出した誤り（証明済み）', d.proven || [],
+    ['変換','誤ったコア','面','証拠（内容語は伏せ字）'],
+    r => [r.perturbation, r.core, r.facet, r.shape || '—']));
+  out.append(mk('エンジン自身の規則との食い違い', d.conflicts || [],
+    ['コア','面','一致した文法'],
+    r => [r.core, r.facet, r.detail || '—']));
+}
+
+function renderVocab(d){
+  const out = $('#vocab-out'); out.replaceChildren();
+  const q = d.queue || [];
+  if (!q.length){ out.append(el('p','muted','候補はありません。')); return; }
+  q.forEach(r => {
+    const c = el('div','card');
+    const head = el('div','row');
+    head.append(el('h3', null, r.word));
+    head.append(el('span', 'tag ' + (r.state === 'verified' ? 't-ok' : 't-warn'),
+      r.state === 'verified' ? '裏付けあり' : '判定不能'));
+    c.append(head);
+    c.append(el('div', null, '推定: ' + r.aspect + ' の ' +
+      (r.polarity === '+' ? '「解消した」側' : '「続いている」側') +
+      '（' + r.anchor + ' と同じ位置）'));
+    c.append(el('div','muted', r.why + (r.sources?.length
+      ? ' — 出典: ' + r.sources.join('、') : '')));
+    if (r.state_likeness !== undefined){
+      c.append(el('div','muted','状態語らしさ ' + r.state_likeness.toFixed(3) +
+        '（正なら状態を表す語、負なら場所や組織の名前）'));
+    }
+    (r.shapes || []).slice(0,2).forEach(s => c.append(el('div','ev', s)));
+    const row = el('div','row'); row.style.marginTop = '.5rem';
+    const yes = el('button','plain','承認する（語彙に加える）');
+    const no  = el('button','plain','見送る');
+    const st  = el('span','state');
+    yes.onclick = () => judge(r.word, 'accept', st, row);
+    no.onclick  = () => judge(r.word, 'refuse', st, row);
+    row.append(yes, no, st); c.append(row);
+    out.append(c);
+  });
+}
+
+async function judge(word, verdict, st, row){
+  st.className = 'state busy'; st.textContent = '記録中…';
+  const d = await post('/api/decide', {word, verdict});
+  st.className = 'state';
+  if (d.verdict !== 'ANSWER'){ st.textContent = '記録できませんでした'; return; }
+  row.querySelectorAll('button').forEach(b => b.disabled = true);
+  st.textContent = d.status === 'accepted'
+    ? '承認しました。以後の読み取りで使われます。'
+    : '見送りました。次回から出ません。';
+}
+
+/* ---- search ---- */
+async function find(){
+  const q = $('#q').value.trim(), out = $('#find-out');
+  out.replaceChildren();
+  if (!READY){ out.append(el('p','muted','先に「1. 読み込む」で資料を入れてください。')); return; }
+  if (!q) return;
+  const d = await post('/api/search', {store: STORE, q});
+  if (!d.hits.length){
+    out.append(el('p','muted', '「' + q + '」は見つかりませんでした。' +
+      '別の書き方（市を付ける・外す）を試すか、「4. 自己点検」で読み取りの欠陥を確認してください。'));
+    return;
+  }
+  d.hits.forEach(h => {
+    const c = el('div','card'); c.append(el('h3', null, h.core));
+    if (!h.claims.length) c.append(el('p','muted','状態の記載はありませんでした。'));
+    h.claims.forEach(cl => {
+      const p = el('div');
+      p.append(el('span', 'tag ' + (cl.pole === '+' ? 't-ok' : 't-stop'),
+        cl.aspect + ': ' + cl.value));
+      c.append(p);
+      if (cl.evidence) c.append(el('div','ev', cl.evidence));
+    });
+    out.append(c);
+  });
+}
+$('#go').addEventListener('click', find);
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') find(); });
+
+/* ---- the loop ---- */
+$('#loop').addEventListener('click', async () => {
+  const st = $('#loop-state'), out = $('#loop-out');
+  st.className = 'state busy'; st.textContent = '測定中… 数十秒かかることがあります';
+  out.replaceChildren();
+  const d = await post('/api/loop', {files: await payload()});
+  st.className = 'state'; st.textContent = '';
+  if (d.verdict !== 'ANSWER'){ out.append(advice(d)); return; }
+  if (!d.repairs.length){
+    out.append(el('p','muted','この資料では修復候補がありませんでした。'));
+    return;
+  }
+  const c = el('div','card'); c.append(el('h3',null,'修復の測定結果'));
+  d.repairs.forEach(r => {
+    const p = el('div'); p.style.margin = '.5rem 0';
+    p.append(el('span','tag ' + (r.accepted ? 't-ok' : 't-warn'),
+      r.accepted ? '受理' : '却下'));
+    p.append(document.createTextNode(' ' + r.candidate + ' — ' + r.reason));
+    c.append(p);
+  });
+  c.append(el('p','muted','受理されたものは手元の設定にだけ書かれます。' +
+    '確定した検出を1件も壊さないことを測ってから受理しています。'));
+  out.append(c);
+});
+
+/* ---- lexicon (optional) ---- */
+fetch('/api/lexicon-status').then(r => r.json()).then(d => {
+  if (d.loaded){
+    $('#lex-status').textContent =
+      'jgen 静的辞書が使えます。極性（どちらの側か）は出しません — 実測でほぼコイン投げのためです。';
+    $('#lex-row').hidden = false;
+  } else {
+    $('#lex-status').textContent =
+      '辞書は未設定です（任意）。' + d.config + ' に jgen とトークナイザの場所を書くと使えます。';
+  }
+});
+$('#lexgo')?.addEventListener('click', async () => {
+  const d = await post('/api/lexicon', {words: $('#lexq').value});
+  const out = $('#lex-out'); out.replaceChildren();
+  if (d.verdict !== 'ANSWER'){ out.append(advice(d)); return; }
+  const w = el('div','wrap'), t = el('table'), h = el('tr');
+  ['語','状態語らしさ','近い既知語'].forEach(x => h.append(el('th',null,x)));
+  t.append(h);
+  d.words.forEach(x => { const tr = el('tr');
+    tr.append(el('td',null,x.word));
+    tr.append(el('td',null, x.state_likeness === null ? '—' : x.state_likeness.toFixed(4)));
+    tr.append(el('td',null,(x.nearest||[]).map(n => n[0]+'('+n[1]+')').join('、')));
+    t.append(tr); });
+  w.append(t); out.append(w);
+});
+</script>
+</body>
+</html>
