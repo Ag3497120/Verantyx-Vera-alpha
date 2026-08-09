@@ -894,6 +894,74 @@ def one_root_saturates_at_capacity_fork() -> Dict[str, Any]:
     }
 
 
+def fusion_is_not_monotonic_fork() -> Dict[str, Any]:
+    """A field arriving can DISSOLVE a bridge between two others.
+
+    Fusion is measured on concepts held by two or three fields, because a
+    concept every field carries identifies none of them. That band is what
+    makes the arrival of a third field able to subtract: a concept bridging
+    A and B, once C also has it, spans three and on the next arrival falls
+    out of the band entirely.
+
+    Measured on the twelve-field federation:
+
+        知財 arrives   opened 57, closed 37   民事×知財 +42, 刑事×民事 -17
+        医療 arrives   opened 41, closed 66   医療×工学 +29, 工学×数学 -43
+
+    So "combine the fields and watch fusion grow" is not what happens.
+    Fusion between two fields is a function of everything else present, and
+    a federation that only ever reports additions would show a rising number
+    while the joins it names quietly changed underneath.
+
+    Pinned here at a scale small enough to read: three fields where A and B
+    share a concept, then C arrives carrying it too.
+    """
+    from .fusion import delta, index
+
+    def mk(pairs: List[Tuple[str, str]]) -> CrossStore:
+        st = CrossStore()
+        for entity, term in pairs:
+            _ingest_ja(st, f"{entity}は{term}である。")
+        return st
+
+    # Three fields share 保全 through two entities each — a join, in band.
+    a = mk([("甲野第一条", "保全"), ("甲野第二条", "保全"),
+            ("甲野第三条", "固有甲")])
+    b = mk([("乙野第一条", "保全"), ("乙野第二条", "保全"),
+            ("乙野第三条", "固有乙")])
+    c = mk([("丙野第一条", "保全"), ("丙野第二条", "保全"),
+            ("丙野第三条", "固有丙")])
+    # A fourth is what pushes it out: BAND_HIGH is three, so a concept in
+    # three fields is still a join. The band is the mechanism, not a filter
+    # applied afterwards, and the fixture has to cross it.
+    e = mk([("丁野第一条", "保全"), ("丁野第二条", "保全"),
+            ("丁野第三条", "固有丁")])
+
+    three = {"甲野": {"甲野": a}, "乙野": {"乙野": b}, "丙野": {"丙野": c}}
+    four = dict(three, **{"丁野": {"丁野": e}})
+
+    before = index(three)
+    after = index(four)
+    d = delta(before, after)
+
+    bridged_before = "保全" in before.get("concepts", {})
+    gone_after = "保全" not in after.get("concepts", {})
+
+    ok = bridged_before and gone_after and "保全" in d["closed"]
+    return {
+        "experiment": "cross_geometry",
+        "fork": "FUSION_IS_NOT_MONOTONIC",
+        "pass": bool(ok),
+        "result": {
+            "points_before": before["n_points"],
+            "points_after": after["n_points"],
+            "bridge_before": bridged_before,
+            "bridge_survives_arrival": not gone_after,
+            "closed": d["closed"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -952,6 +1020,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         egov_article_is_a_citation_key_fork(),
         sovereign_build_fork(),
         one_root_saturates_at_capacity_fork(),
+        fusion_is_not_monotonic_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
