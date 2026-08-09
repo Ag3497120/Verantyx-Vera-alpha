@@ -27,6 +27,10 @@ from .consensus import (AXES, N_SECTIONS, ConsensusConfig, SearchState,
 from .cross import ShellCross
 from .cross_store import CrossStore
 from .layer_stack import LayeredMemory, layered_ask
+from .consensus_store import MAX_ARMS as MAX_ARMS_FORK
+from .face_roles import FACET_FACES as _FF
+
+FACES_FORK = len(_FF)
 
 
 def _opposite(axis: str) -> str:
@@ -818,6 +822,78 @@ def _ingest_ja(store: CrossStore, sentence: str) -> None:
     ingest_documents(store, [Document(source="fixture", text=sentence)])
 
 
+def one_root_saturates_at_capacity_fork() -> Dict[str, Any]:
+    """A single root routes CAPACITY terms and never more, at any depth.
+
+    Measured on a twelve-field federation (1,098 leaves), asking the router
+    alone — no index — about the very questions it was built from:
+
+        anticipated   12    24    48    96   192   384   768
+        correct       12    20    23    24    23    23    22
+
+    The ABSOLUTE count saturates at 24 = MAX_ARMS x N_FACES and stops. Depth
+    stayed 6 throughout, so layers BELOW the root do not raise it: the root
+    has six arms and four faces each, and every question that fails there is
+    lost whatever is underneath.
+
+    The consequence for a federated design is the opposite of intuitive. A
+    single sovereign is a routing ceiling; querying the field roots in
+    parallel multiplies it by the number of fields — 220 of 1,536 against
+    the sovereign's 24, on the same tree.
+
+    This fixture is small enough to run as a unit test and shows the same
+    shape: correct answers stop growing once the anticipated set passes what
+    the root can hold.
+    """
+    from .hierarchy import descend
+    from .sovereign import assemble
+
+    # Twelve fields, each with a leaf carrying terms unique to it, so every
+    # question has exactly one correct destination.
+    doms: Dict[str, Dict[str, CrossStore]] = {}
+    grps: Dict[str, Dict[str, List[str]]] = {}
+    by_field: List[List[Any]] = []
+    for d in range(12):
+        field = f"分野{chr(0x4E00 + d)}"
+        st = CrossStore()
+        own: List[Any] = []
+        for i in range(20):
+            term = f"語{chr(0x4E00 + d)}{chr(0x4E00 + i)}"
+            _ingest_ja(st, f"{field}項{chr(0x4E00 + i)}は{term}である。")
+            own.append((term, field))
+        by_field.append(own)
+        doms[field] = {field: st}
+        grps[field] = {field: [field]}
+    # Round-robin, so every prefix of the anticipated set covers all twelve
+    # fields. Ordered by field, the first twelve questions all pointed at one
+    # branch and the root looked far worse than its capacity.
+    key: List[Any] = [row[i] for i in range(20) for row in by_field]
+
+    counts: Dict[int, int] = {}
+    for n in (12, 24, 96, 240):
+        asked = [q for q, _w in key[:n]]
+        root = assemble(doms, grps, sovereign="主権", asked=asked)
+        counts[n] = sum(
+            1 for q, w in key[:n]
+            if w in (descend(root, q, use_probe=False).get("path") or []))
+
+    ceiling = MAX_ARMS_FORK * FACES_FORK
+    # Grows while it fits, then stops at the ceiling however many more are
+    # anticipated. The second half is the claim; without it this passes on a
+    # tree that simply answers everything.
+    ok = (counts[12] >= 10
+          and counts[24] >= counts[12]
+          and counts[96] <= ceiling
+          and counts[240] <= ceiling
+          and counts[240] <= counts[96] + 1)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "ONE_ROOT_SATURATES_AT_CAPACITY",
+        "pass": bool(ok),
+        "result": {"correct_by_anticipated": counts, "ceiling": ceiling},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -875,6 +951,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         event_extractor_refuses_statute_prose_fork(),
         egov_article_is_a_citation_key_fork(),
         sovereign_build_fork(),
+        one_root_saturates_at_capacity_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
