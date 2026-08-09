@@ -1419,6 +1419,94 @@ def trace_is_memory_outside_the_store_fork() -> Dict[str, Any]:
     }
 
 
+def constellation_beats_one_sovereign_fork() -> Dict[str, Any]:
+    """Parallel sovereigns at different settings, with nothing above them.
+
+    One apex is a routing ceiling — six arms, four faces, 24 terms, and no
+    depth beneath raises it. Measured: 24 placed against 220 for the same
+    tree queried at its field roots in parallel.
+
+    A constellation holds the corpus several times over, each member at its
+    own setting, and reports a CENSUS rather than a verdict. At 626MB over
+    5,401 leaves, 1,200 probes:
+
+        single sovereign     80.3%
+        eight in parallel    84.3%
+
+        agreeing  7   44 probes  100.0%
+                  6   92         100.0%
+                  5  191         100.0%
+                  4  499         100.0%
+                  3  119          97.5%
+                  2   88          67.0%
+                  1  145           7.6%
+
+    Four or more concurring covered 69% of probes and was right every time.
+
+    Three things are pinned. Unanimity reports itself as ANSWER with concord
+    1.0. A split is reported as a split and NOT resolved into a winner —
+    voting a disagreement into an answer is the failure a census exists to
+    avoid. And a member with no single leader ABSTAINS rather than breaking
+    the tie, because a tie-break shared across members manufactures
+    agreement for a reason unrelated to evidence — measured one level down,
+    where it took unanimity from 86 probes to 321 and its accuracy from
+    73.3% to 23.7%.
+    """
+    from .constellation import Constellation, Sovereign
+
+    # Members that genuinely see different things: this is what varying a
+    # setting produces, constructed directly so the fork tests the census
+    # rather than the indexing.
+    coarse = Sovereign("coarse", {"rungs": (("whole", 0),)}).build({
+        "甲章": {"損害賠償", "責任"},
+        "乙章": {"契約", "解除"},
+    })
+    fine = Sovereign("fine", {"rungs": (("whole", 0),)}).build({
+        "甲章": {"責任"},
+        "乙章": {"損害賠償", "契約"},
+    })
+    third = Sovereign("third", {"rungs": (("whole", 0),)}).build({
+        "甲章": {"損害賠償"},
+        "乙章": {"契約", "解除"},
+    })
+    c = Constellation().add(coarse).add(fine).add(third)
+
+    split = c.ask(["損害賠償"])
+    unanimous = c.ask(["契約"])
+
+    # One member sees 損害賠償 in 乙章, two in 甲章 — a majority, not a verdict.
+    votes = {m.name: m.vote(["損害賠償"]) for m in c.members}
+    differ = len({v for v in votes.values() if v}) > 1
+
+    # A member whose top score ties abstains rather than picking.
+    tied = Sovereign("tied", {"rungs": (("whole", 0),)}).build({
+        "甲章": {"共通"}, "乙章": {"共通"},
+    })
+    abstains = tied.vote(["共通"]) is None
+
+    ok = (unanimous["verdict"] == "ANSWER"
+          and unanimous["concord"] == 1.0
+          and unanimous["item"] == "乙章"
+          and differ
+          and split["verdict"] == "MAJORITY"   # reported as a majority...
+          and split["agreeing"] == 2           # ...with the count visible
+          and split["spoke"] == 3
+          and abstains)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CONSTELLATION_BEATS_ONE_SOVEREIGN",
+        "pass": bool(ok),
+        "result": {
+            "unanimous": {k: unanimous[k] for k in
+                          ("item", "verdict", "spoke", "agreeing", "concord")},
+            "split": {k: split[k] for k in
+                      ("item", "verdict", "spoke", "agreeing", "concord")},
+            "votes": votes,
+            "tied_member_abstains": abstains,
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1485,6 +1573,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         concord_rides_alongside_the_list_fork(),
         long_form_drifts_and_lists_fork(),
         trace_is_memory_outside_the_store_fork(),
+        constellation_beats_one_sovereign_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
