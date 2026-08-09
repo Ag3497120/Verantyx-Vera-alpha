@@ -257,7 +257,19 @@ def _layers_for(v: int) -> int:
 # 4 — assemble, inserting layers where the arms run out
 # ---------------------------------------------------------------------------
 
-def group_into_layers(name: str, children: Dict[str, Node]) -> Node:
+_KANJI = "〇一二三四五六七八九"
+
+
+def _kanji(n: int) -> str:
+    """Small integers as kanji, so a synthetic node name survives the
+    Japanese run splitter that every core name goes through."""
+    if n < 10:
+        return _KANJI[n]
+    return "".join(_KANJI[int(c)] for c in str(n))
+
+
+def group_into_layers(name: str, children: Dict[str, Node],
+                      *, asked: Optional[Sequence[str]] = None) -> Node:
     """Bind children under one node, adding intermediate layers if needed.
 
     Six arms is a hard count. Seven children do not "mostly fit" — the
@@ -274,13 +286,19 @@ def group_into_layers(name: str, children: Dict[str, Node]) -> Node:
         keys = list(nodes)
         for i in range(0, len(keys), MAX_ARMS):
             chunk = keys[i:i + MAX_ARMS]
-            label = f"{name}群{level}-{i // MAX_ARMS + 1}"
+            # Kanji numerals, not "群1-1". The Japanese run splitter cuts a
+            # name at the ASCII digit boundary, so 主権群1-1 became the core
+            # 主権群1 and no longer matched the child key — the router held
+            # exactly the right terms and still routed nothing, because the
+            # thing it named was not a branch. Node names travel through the
+            # same tokeniser as the documents; they have to survive it.
+            label = f"{name}群{_kanji(level)}{_kanji(i // MAX_ARMS + 1)}"
             sub = Node(name=label, children={k: nodes[k] for k in chunk})
-            sub.router = build_router(sub.children)
+            sub.router = build_router(sub.children, asked=asked)
             grouped[label] = sub
         nodes = grouped
     root = Node(name=name, children=nodes)
-    root.router = build_router(root.children)
+    root.router = build_router(root.children, asked=asked)
     return root
 
 
@@ -289,6 +307,7 @@ def assemble(
     grouping: Dict[str, Dict[str, List[str]]],
     *,
     sovereign: str = "主権",
+    asked: Optional[Sequence[str]] = None,
 ) -> Node:
     """Leaves -> their own document's divisions -> domain -> sovereign.
 
@@ -306,12 +325,12 @@ def assemble(
             if not kids:
                 continue
             mid[gname] = (next(iter(kids.values())) if len(kids) == 1
-                          else group_into_layers(gname, kids))
+                          else group_into_layers(gname, kids, asked=asked))
         if not mid:
             continue
         domain_nodes[dname] = (next(iter(mid.values())) if len(mid) == 1
-                               else group_into_layers(dname, mid))
-    return group_into_layers(sovereign, domain_nodes)
+                               else group_into_layers(dname, mid, asked=asked))
+    return group_into_layers(sovereign, domain_nodes, asked=asked)
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +435,8 @@ def build_sovereign(
     p = plan(flat)
     stages.append(Stage("plan", "ANSWER", p))
 
-    root = assemble(domains, grouping, sovereign=sovereign)
+    root = assemble(domains, grouping, sovereign=sovereign,
+                    asked=questions or None)
     cap = over_capacity(root)
     stages.append(Stage("assemble", "ANSWER" if not cap["over"] else "OVER_CAPACITY",
                         {"shape": shape(root), "capacity": cap}))

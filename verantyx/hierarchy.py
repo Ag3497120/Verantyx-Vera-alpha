@@ -101,7 +101,7 @@ class Node:
 
 def distinctive_terms(
     own: CrossStore, siblings: List[CrossStore], k: int = N_FACES,
-    *, exclude: Optional[set] = None,
+    *, exclude: Optional[set] = None, asked: Optional[set] = None,
 ) -> List[str]:
     """The terms that identify ``own`` against its siblings, best first.
 
@@ -137,9 +137,15 @@ def distinctive_terms(
         # name eligible, and 民法/刑法/労働基準法 took three of the four
         # faces at the root. A citation prefix is a label, not a description.
         skip |= {c.split("第", 1)[0] for c in st.crosses if "第" in c}
+    # Demand first, concentration second. A term someone actually asks about
+    # takes a face ahead of one that merely sits in this branch and nowhere
+    # else — but only if it is still discriminating, because a question word
+    # every branch contains identifies none of them.
+    want = asked or set()
     ranked = sorted(
         mine,
-        key=lambda t: (-mine[t] / max(1, df[t]), -mine[t], t),
+        key=lambda t: (0 if t in want else 1,
+                       -mine[t] / max(1, df[t]), -mine[t], t),
     )
     # Strictly absent from every sibling. MAX_SIBLING_SHARE was written for
     # a wide fan-out; at three children "in two of them" is most of the tree,
@@ -150,19 +156,46 @@ def distinctive_terms(
             if len(t) >= 2 and df[t] <= tolerance and t not in skip][:k]
 
 
-def build_router(children: Dict[str, "Node"]) -> CrossStore:
-    """A router store whose cores are child names and facets identify them."""
+def build_router(
+    children: Dict[str, "Node"],
+    *,
+    asked: Optional[Sequence[str]] = None,
+) -> CrossStore:
+    """A router store whose cores are child names and facets identify them.
+
+    ``asked`` is the anticipated questions. Without them a node fills its
+    twelve-to-twenty-four faces with whatever is most concentrated in each
+    branch, and measured on a three-field federation that produced
+
+        数学  ベクター 体系 図形
+        法律  検察官 特定商取引 裁判所 請求
+        災害  出動 火山 釜石市消防団 １機
+
+    which routed 0 of 12 real questions. Nothing is wrong with those terms
+    except that nobody asks them. This is the same finding as `placement`
+    one level up: what belongs on a face is decided by demand, not by
+    frequency, and the ranking is only allowed to fall back on
+    concentration when no demand is known.
+
+    A demanded term still has to be DISCRIMINATING — a question word that
+    every branch contains identifies none of them, so demand reorders the
+    eligible terms rather than overriding eligibility.
+    """
     from .document_ingest import Document, ingest_documents
+    from .lang import ja_content_runs
 
     stores = {name: (n.store if n.store is not None else _merged(n))
               for name, n in children.items()}
     # The children's own names are never routing evidence: 「刑事」 reaching
     # the 刑事 branch teaches nothing a lookup would not, and it costs a face.
     names = set(children)
+    want: set = set()
+    for q in asked or ():
+        want |= set(ja_content_runs(q) or [q])
     lines: List[str] = []
     for name, st in stores.items():
         others = [s for n2, s in stores.items() if n2 != name]
-        for t in distinctive_terms(st, others, exclude=names):
+        for t in distinctive_terms(st, others, exclude=names, asked=want):
             lines.append(f"{name}は{t}である。")
     router = CrossStore()
     if lines:
