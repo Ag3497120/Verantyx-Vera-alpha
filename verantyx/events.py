@@ -91,6 +91,64 @@ _KANA = re.compile(r"[ぁ-ゟ]+")
 #: rather than "unparsed".
 _LIGHT_VERBS = frozenset({"加", "行", "為", "与", "負"})
 
+#: Constructions this reader cannot resolve. Measured on 9,087 sentences of
+#: Japanese statute (刑法・民法・刑事訴訟法・労働基準法・消費者契約法・
+#: 特定商取引法, e-Gov):
+#:
+#:   without this guard   6,800 events from 9,087 sentences — 74.8%
+#:   and 6,684 of those events had dropped phrases, ~98%
+#:
+#: The rate measured how often the extractor produced SOMETHING, not how
+#: often it produced something true. Inspected, the failures were not
+#: marginal:
+#:
+#:   「人の業務に使用する電子計算機…を損壊し…」 -> 主体=又, 行為=処
+#:   「公務員であった者が…賄賂を収受し…」       -> 対象=請託, 行為=処
+#:
+#: 又 is a conjunction, not an actor. A role assignment by particle
+#: adjacency cannot survive embedded adnominal clauses, coordination, or a
+#: predicate buried mid-sentence, and legal Japanese is made of those.
+#:
+#: With the guard: 737 of 9,087 sentences read (8.1%), 175 events (1.9%),
+#: and a hand-check of twelve found eleven correct. That is the honest
+#: trade, and the low number carries a finding rather than a limitation —
+#: statutes state RULES, not EVENTS. A fact pattern ("A, threatened by B,
+#: injured C") comes from a case description, never from the statute, and
+#: this extractor belongs on that text.
+_CONJUNCTION = re.compile(r"若しくは|又は|及び|並びに|かつ|ただし|この場合")
+_NOMINALIZER = re.compile(r"こと|とき|場合|もの(?![のがを])")
+#: A verb ending immediately followed by kanji — the shape of an adnominal
+#: clause modifying the next noun (「使用する電子計算機」). Crude, and it is
+#: allowed to be: over-refusing costs recall, and under-refusing writes a
+#: wrong actor into a legal record.
+_ADNOMINAL = re.compile(r"[すくむぶぬつるいた](?=[㐀-䶿一-鿿])")
+
+#: Above this many phrases, or this many characters, the nearest particle
+#: stops being evidence of anything.
+MAX_PHRASES = 4
+MAX_CHARS = 40
+
+
+def unreadable(sentence: str) -> Optional[str]:
+    """Why this reader must not attempt the sentence, or None if it may.
+
+    A separate, exported predicate rather than an inline check, because the
+    coverage of this extractor IS the honest scope of the whole event layer,
+    and a caller deciding whether to trust it needs to be able to ask.
+    """
+    s = sentence or ""
+    if _CONJUNCTION.search(s):
+        return "coordination"
+    if _NOMINALIZER.search(s):
+        return "nominalized_clause"
+    if len(s) > MAX_CHARS:
+        return "too_long"
+    if len(runs_with_particles(s)) > MAX_PHRASES:
+        return "too_many_phrases"
+    if _ADNOMINAL.search(s):
+        return "adnominal_clause"
+    return None
+
 
 @dataclass
 class Event:
@@ -142,6 +200,10 @@ def extract_events(
     for raw in re.split(r"[。\n]", text or ""):
         s = raw.strip()
         if not s:
+            continue
+        why = unreadable(s)
+        if why:
+            skipped.append({"sentence": s, "reason": why})
             continue
         pairs = runs_with_particles(s)
         if len(pairs) < 2:

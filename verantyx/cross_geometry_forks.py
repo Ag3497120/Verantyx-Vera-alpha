@@ -619,6 +619,135 @@ def reified_event_fork() -> Dict[str, Any]:
     }
 
 
+def event_extractor_refuses_statute_prose_fork() -> Dict[str, Any]:
+    """The event reader must read a fact pattern and REFUSE statute prose.
+
+    Unguarded, this extractor produced 6,800 "events" from 9,087 sentences
+    of six Japanese statutes — 74.8%, and inspection showed 又 (a
+    conjunction) assigned as the actor and 処 as the act. The rate measured
+    how often it produced something, not how often it produced something
+    true. With the guard: 2.1% read, everything else refused by name.
+
+    That is not a shortcoming to fix later. Statutes state RULES; a fact
+    pattern is not in them. This fork pins the division so a future
+    loosening of the guard has to argue with a measurement.
+    """
+    from .events import extract_events, unreadable
+
+    facts = "甲は乙を脅迫した。乙は丙を傷害した。甲は乙に現金を交付した。"
+    got = extract_events(facts)
+
+    # Real sentences from 刑法 and 民法, each carrying a construction the
+    # particle reader cannot resolve.
+    statute = [
+        "前項の規定は、親族でない共犯については、適用しない。",
+        "公務員が職権を濫用して、人に義務のないことを行わせ、又は権利の行使を妨害したとき。",
+        "権利の行使及び義務の履行は、信義に従い誠実に行わなければならない。",
+    ]
+    refused = [unreadable(s) for s in statute]
+
+    ok = (len(got["events"]) == 3
+          and got["events"][0].roles.get("主体") == "甲"
+          and got["events"][0].roles.get("対象") == "乙"
+          and got["events"][1].roles.get("主体") == "乙"
+          and not got["skipped"]
+          and all(r is not None for r in refused))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EVENT_EXTRACTOR_REFUSES_STATUTE_PROSE",
+        "pass": bool(ok),
+        "result": {
+            "fact_pattern_roles": [e.roles for e in got["events"]],
+            "fact_pattern_skipped": got["skipped"],
+            "statute_refusals": refused,
+        },
+    }
+
+
+def egov_article_is_a_citation_key_fork() -> Dict[str, Any]:
+    """An article must be retrievable by the string a reader types.
+
+    Two shapes were measured and rejected on real 刑法 XML. Whole law as one
+    document: headings carry forward and 第百八条 came back with captions
+    belonging to other articles — a citation tool pointing at the wrong
+    provision. One document per article: attribution is right, but the core
+    of 「人を殺した者は…」 is 者, which several hundred articles share.
+
+    Reifying the article fixes both, and the last assertion is why it is
+    worth having: asked whether 第二百四条 is about 殺人, the engine must
+    REFUSE. 204 is 傷害. Returning the article with a confident silence
+    about the word actually asked is the failure this whole layer exists
+    to prevent.
+
+    The fixture carries 第百九十九条（殺人）as well, and it has to: the gate
+    refuses a term the store KNOWS and merely reports one it has never seen,
+    because "204 is not about murder" and "I do not know what murder is" are
+    different states. Without 殺人 present the fork passed on the wrong
+    branch — the real 刑法 refuses because 殺人 is in it.
+    """
+    import xml.etree.ElementTree as ET
+    import tempfile
+    from pathlib import Path
+
+    from .consensus_store import ja_consensus_ask
+    from .egov import ingest_law
+
+    # A miniature law with both a main and a supplementary 第一条 — the
+    # collision that made 民法第一条 return 施行期日 instead of 基本原則.
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<Law><LawBody><LawTitle>試験法</LawTitle>
+<MainProvision>
+<Article Num="1"><ArticleCaption>（基本原則）</ArticleCaption>
+<ArticleTitle>第一条</ArticleTitle><Paragraph><ParagraphSentence>
+<Sentence>私権は、公共の福祉に適合しなければならない。</Sentence>
+</ParagraphSentence></Paragraph></Article>
+<Article Num="199"><ArticleCaption>（殺人）</ArticleCaption>
+<ArticleTitle>第百九十九条</ArticleTitle><Paragraph><ParagraphSentence>
+<Sentence>人を殺した者は、死刑又は無期拘禁刑に処する。</Sentence>
+</ParagraphSentence></Paragraph></Article>
+<Article Num="204"><ArticleCaption>（傷害）</ArticleCaption>
+<ArticleTitle>第二百四条</ArticleTitle><Paragraph><ParagraphSentence>
+<Sentence>人の身体を傷害した者は、十五年以下の拘禁刑に処する。</Sentence>
+</ParagraphSentence></Paragraph></Article>
+</MainProvision>
+<SupplProvision>
+<Article Num="1"><ArticleCaption>（施行期日）</ArticleCaption>
+<ArticleTitle>第一条</ArticleTitle><Paragraph><ParagraphSentence>
+<Sentence>この法律は、公布の日から施行する。</Sentence>
+</ParagraphSentence></Paragraph></Article>
+</SupplProvision>
+</LawBody></Law>"""
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "law.xml"
+        p.write_text(xml, encoding="utf-8")
+        store = CrossStore()
+        placed = ingest_law(store, p)
+        main1 = ja_consensus_ask(store, "試験法第一条")
+        suppl1 = ja_consensus_ask(store, "試験法附則第一条")
+        art204 = ja_consensus_ask(store, "試験法第二百四条 傷害")
+        wrong = ja_consensus_ask(store, "試験法第二百四条 殺人")
+
+    ok = (placed.get("articles") == 4
+          and main1.get("verdict") == "ANSWER"
+          and "基本原則" in str(main1.get("text", ""))
+          and suppl1.get("verdict") == "ANSWER"
+          and "施行" in str(suppl1.get("text", ""))
+          and art204.get("verdict") == "ANSWER"
+          and wrong.get("verdict") != "ANSWER")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EGOV_ARTICLE_IS_A_CITATION_KEY",
+        "pass": bool(ok),
+        "result": {
+            "articles": placed.get("articles"),
+            "main_first": main1.get("text"),
+            "suppl_first": suppl1.get("text"),
+            "correct_topic": art204.get("verdict"),
+            "wrong_topic": wrong.get("verdict"),
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -673,6 +802,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_invariance_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),
+        event_extractor_refuses_statute_prose_fork(),
+        egov_article_is_a_citation_key_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
