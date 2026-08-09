@@ -229,26 +229,56 @@ def ask_stack(stack: Stack, query_terms: Sequence[str]) -> Dict[str, Any]:
 def calibrate(
     ladder: Ladder,
     probes: Sequence[Tuple[str, Sequence[str]]],
+    *,
+    group_of: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Group probes by how the rungs split, and report accuracy per group.
 
-    This is the table that gives `concord` its meaning, and it has to be
-    rebuilt per corpus: 74.2% at full agreement is a fact about statute
-    captions over these articles, not a constant.
+    ``group_of(item)`` optionally adds a second axis — a field, a source, a
+    document type — because the bands are not a constant and the useful
+    question is usually "does this mean the same thing over here".
+
+    Measured across a 1,098-leaf federation, asked with three mid-frequency
+    terms per leaf, 900 probes: whenever the ladder ANSWERED it was right,
+    in every field and at every band. 130 probes abstained. So in that
+    setting `concord` is not a graded confidence — it is a certificate with
+    an abstention, and what varies by field is how often it can be issued:
+
+        数学 医療 経済 工学    abstain  4-8%    articles on distinct topics
+        防災 民事 労働         abstain 22-25%
+        刑事 情報 知財         abstain 29-43%   chapters sharing vocabulary
+
+    Asked instead by their captions, the same articles gave a graded scale
+    (100% / 31% / abstain). The bands therefore belong to a corpus AND a
+    question shape, and neither transfers without being rebuilt.
     """
     buckets: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
+    groups: Dict[str, Dict[str, List[int]]] = defaultdict(
+        lambda: defaultdict(lambda: [0, 0]))
     for want, terms in probes:
         r = ask(ladder, terms)
-        if not r["answered"]:
-            buckets["none answered"][0] += 1
-            continue
-        key = (f"{r['answered']}答 / 最大派{r['majority']} "
-               f"[{r['verdict'][:8]}]")
+        key = ("none answered" if not r["answered"] else
+               f"{r['answered']}答 / 最大派{r['majority']} [{r['verdict'][:8]}]")
+        ok = int(r["item"] == want) if r["answered"] else 0
         buckets[key][0] += 1
-        buckets[key][1] += int(r["item"] == want)
-    return {
-        "probes": len(probes),
-        "buckets": {k: {"n": v[0], "correct": v[1],
-                        "accuracy": round(v[1] / v[0], 4) if v[0] else 0.0}
-                    for k, v in sorted(buckets.items())},
-    }
+        buckets[key][1] += ok
+        if group_of is not None:
+            g = str(group_of(want))
+            groups[g][key][0] += 1
+            groups[g][key][1] += ok
+
+    def table(b: Dict[str, List[int]]) -> Dict[str, Any]:
+        return {k: {"n": v[0], "correct": v[1],
+                    "accuracy": round(v[1] / v[0], 4) if v[0] else 0.0}
+                for k, v in sorted(b.items())}
+
+    out: Dict[str, Any] = {"probes": len(probes), "buckets": table(buckets)}
+    if group_of is not None:
+        out["by_group"] = {
+            g: {"probes": sum(v[0] for v in tab.values()),
+                "answered_rate": round(
+                    1 - (tab.get("none answered", [0, 0])[0]
+                         / max(1, sum(v[0] for v in tab.values()))), 4),
+                "buckets": table(tab)}
+            for g, tab in sorted(groups.items())}
+    return out
