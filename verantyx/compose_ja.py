@@ -73,10 +73,38 @@ a sentence, not a lexical item.
 
 Selection could only judge 43.8% of candidate fills anyway (3.8
 observations per slot), but that is the smaller problem. A generator over
-this store is choosing from a bag that is 93% not-words, and no amount of
-slot typing repairs that. What it needs is a vocabulary — terms attested as
-free-standing words — which is a different structure from the facet index
-and is not built here.
+this store is choosing from a bag that is 93% not-words.
+
+## The vocabulary layer, and what it fixed
+
+`verantyx/vocabulary.py` sifts the facets to the ones a prose corpus uses as
+free-standing words — 12,362 of 88,789, 13.9% — and `compose` draws from
+those, best-attested first. Measured over 300 subjects, whether every
+content word in the output is itself an attested word:
+
+    without vocabulary   219/300   73.0%
+    with vocabulary      300/300  100.0%
+
+    グリコ -> 人物,  エルシーブイ -> 同意,  ウィドマンシュテッテン -> 使用
+
+One more class of breakage was left, and it was in the FORMS, not the
+fills: the punch-out cut some words in half, so 例えば became <0>えば and
+人懐っこい became <0>っこい, and filling those produced 本部長えば and
+総務大臣裁定っこい. Six of 127. A form like that is dropped rather than
+repaired — the boundary the extractor missed cannot be recovered from the
+template. 119 forms remain.
+
+What comes out now is a sentence more often than not:
+
+    議論の必要がある。
+    加盟国には原則のようなものがある。
+    伊藤宏が当事者を実行する。
+    第一章として法律のようなものがある。
+
+and still sometimes not:
+
+    符号に記録めている。
+    自己決定権がいたら放送ず意味にする。
 
 ## What this is not
 
@@ -136,6 +164,15 @@ _COUNTER = re.compile(
 
 MIN_LEN, MAX_LEN = 8, 40
 MIN_HOLES, MAX_HOLES = 2, 3
+
+#: A hole followed by inflection is not a hole — it is the stem of a word
+#: the punch-out cut in half. 例えば became <0>えば and 人懐っこい became
+#: <0>っこい, so filling them produced 本部長えば and 総務大臣裁定っこい.
+#: Six of 127 forms were like this; a form is dropped rather than repaired,
+#: because the boundary the extractor missed cannot be recovered from the
+#: template alone.
+_CUT_STEM = re.compile(
+    r"<\d>(えば|っこい|わない|ばれて|じて|らない|けない|しく|くて|きた|った)")
 
 
 #: (particle, predicate) -> the nouns the corpus actually put in that slot.
@@ -296,6 +333,8 @@ def harvest(
                 continue
             if head_only and not tpl.startswith("<0>"):
                 continue
+            if _CUT_STEM.search(tpl):
+                continue
             f = forms.get(tpl)
             if f is None:
                 forms[tpl] = Form(template=tpl, cases=cases, slots=slots,
@@ -356,6 +395,7 @@ def compose(
     *,
     limit: int = 3,
     content_from: Optional[Sequence[str]] = None,
+    vocab: Optional[Any] = None,
 ) -> List[Draft]:
     """Sentences about ``subject`` using ``facets``, best-supported first.
 
@@ -365,6 +405,15 @@ def compose(
     the untyped version.
     """
     pool = [f for f in facets if f and f != subject]
+    if vocab is not None:
+        # A facet is whatever the reader cut out of a sentence; 93% of them
+        # are not words. Filtering to attested vocabulary, best-attested
+        # first, is what stops 1980アイコ entering an object slot — see
+        # verantyx/vocabulary.py.
+        from .vocabulary import filter_terms
+        pool = filter_terms(pool, vocab)
+        if subject not in vocab:
+            return []
     out: List[Draft] = []
     # Rotate the form order per subject. Taking the most frequent form that
     # fits gave every step of a walk the same shape — eight sentences all
@@ -412,6 +461,7 @@ def compose_walk(
     trace: Any,
     *,
     per_step: int = 1,
+    vocab: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     """One or more sentences per step of a recorded walk.
 
@@ -425,7 +475,7 @@ def compose_walk(
         facets = [f for f in (store.crosses.get(core) or {})
                   if f not in labels and 2 <= len(f) <= 10]
         drafts = compose(forms, core, sorted(facets), limit=per_step,
-                         content_from=[core])
+                         content_from=[core], vocab=vocab)
         for d in drafts:
             out.append(d.as_dict())
     return out
