@@ -1073,6 +1073,61 @@ def linked_is_not_printed_fork() -> Dict[str, Any]:
     }
 
 
+def granularity_composes_fork() -> Dict[str, Any]:
+    """Two granularities over one corpus can form what one cannot.
+
+    A single store is closed: measured over 117 real queries the search
+    emitted a symbol absent from the initial shell zero times, and it cannot,
+    because faces come from the store and the moves permute faces. That is
+    why it cannot fabricate and equally why it cannot generalise.
+
+    Two stores at different granularities do not share the limit. The
+    word-level store holds 断水 as an atom; the character-level store over
+    the same text holds 断 and 水 AND their positions, and those positions
+    license strings the word store cannot form.
+
+    Measured on 5,371 legal words against 2.4M characters of held-out
+    encyclopedia text that built neither model:
+
+        proposals                       13,969
+        appear as a substring            13.2%
+        stand alone 3+ times              1.7%   <- words, not fragments
+        same characters, paired randomly  0.1%
+
+    自動 死去 公式 人権 主義 実数 定理 — none in the vocabulary that
+    generated them. The control is the finding: what the character model
+    contributes is not the characters, it is where they go.
+
+    This fork asserts the ADVANTAGE, not the yield. A yield alone could be a
+    fact about how many kanji pairs happen to be Japanese.
+    """
+    from .granularity import decompose, propose, verify, control
+
+    # A miniature corpus with a real positional regularity: 災/断/給 begin,
+    # 害/水/電 end, and the held-out text contains the crossings.
+    words = ["災害", "断水", "給電", "災難", "断熱", "給水"]
+    held = ("停電が発生した。断電の記録はない。"
+            "災水の被害は確認されていない。給熱の設備を点検する。"
+            "停電は各地で発生し、停電の復旧が急がれる。停電。"
+            "災水。災水の報告。給熱。給熱の点検。給熱。")
+
+    model = decompose(words)
+    got = verify(propose(model, top=6), held, min_standalone=2)
+    ctl = verify(control(model, 40, seed=1), held, min_standalone=2)
+
+    ok = (model.report()["words"] == 6
+          and got["words"] >= 2                 # composed real strings
+          and got["words"] > ctl["words"])      # and beat the same characters
+    return {
+        "experiment": "cross_geometry",
+        "fork": "GRANULARITY_COMPOSES",
+        "pass": bool(ok),
+        "result": {"model": model.report(),
+                   "proposed_words": got["words"], "proposed_top": got["top"][:5],
+                   "control_words": ctl["words"]},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1134,6 +1189,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         fusion_is_not_monotonic_fork(),
         word_form_is_a_fallback_fork(),
         linked_is_not_printed_fork(),
+        granularity_composes_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
