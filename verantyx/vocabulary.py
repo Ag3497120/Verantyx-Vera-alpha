@@ -145,6 +145,28 @@ def attest(
     return vocab
 
 
+def statute_text(paths: Iterable[Path]) -> str:
+    """The prose of e-Gov statute XML — <Sentence> bodies, nothing else.
+
+    Needed because a vocabulary built only from encyclopedia prose does not
+    grow when statutes are added: 626MB of law raised the facet count 1.4x
+    and the vocabulary not at all (12,362 -> 12,348), because nothing was
+    attesting legal usage. Adding the statute bodies took it to 35,051.
+    場合, 被保険者, 普通地方公共団体 are words the law uses constantly and an
+    encyclopedia rarely does.
+    """
+    import xml.etree.ElementTree as ET
+
+    out: List[str] = []
+    for p in paths:
+        try:
+            root = ET.parse(Path(p)).getroot()
+        except Exception:
+            continue
+        out.append("".join((s.text or "") for s in root.iter("Sentence")))
+    return "".join(out)
+
+
 def from_stores(
     stores: Iterable[Any],
     corpora: Sequence[Tuple[str, str]],
@@ -152,7 +174,11 @@ def from_stores(
     min_attest: int = MIN_ATTEST,
     limit: Optional[int] = None,
 ) -> Vocabulary:
-    """Sift a federation's facets into the ones that are words."""
+    """Sift a federation's facets into the ones that are words.
+
+    ``corpora`` must attest the register the stores were built from. A
+    vocabulary is a claim about usage and cannot judge usage it never saw.
+    """
     facets: Counter = Counter()
     for st in stores:
         labels = getattr(st, "source_labels", set()) or set()
