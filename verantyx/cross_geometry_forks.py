@@ -1277,6 +1277,83 @@ def concord_rides_alongside_the_list_fork() -> Dict[str, Any]:
     }
 
 
+def long_form_drifts_and_lists_fork() -> Dict[str, Any]:
+    """Chained read-out is not prose, and it loses its subject in two steps.
+
+    Asked whether this engine can generate long form for creative use, the
+    answer is measured rather than argued. Following a core to one of its
+    own facets and reading again, 40 seeds per field:
+
+        field   mean steps   steps still on topic
+        数学        7.9            1.7
+        工学        7.4            1.9
+        経済        6.7            1.7
+        医療        6.2            1.3
+        刑事/民事    1.0            1.0
+
+    A chain runs six to eight steps and stops being about anything after
+    one or two. Observed: 細胞 -> 現象 -> 関係 -> 副作用 -> アメリカ ->
+    学術雑誌.
+
+    And every step reads out as 「Xは A、B、C、D」 — the four faces joined by
+    a comma. That is a fact list, not a sentence, and no amount of chaining
+    turns a list into prose.
+
+    Both properties follow from the closure this design is built on: the
+    read-out can only emit stored symbols, and the only ordering it has is
+    the face order. Composition into sentences would need something that
+    generates function words, which is exactly what a closed system cannot
+    do — see `granularity`, where breaking the closure at a granularity
+    boundary is the one route that produces anything new, and produces
+    single words rather than clauses.
+
+    This fork exists so the limitation is not quietly re-discovered as a
+    bug. It asserts the shape, not the numbers.
+    """
+    from .consensus_store import ja_consensus_ask
+
+    store = CrossStore()
+    for s in ["甲は乙である。", "甲は丙である。", "乙は丁である。", "乙は戊である。",
+              "丁は己である。", "丁は庚である。", "己は辛である。", "己は壬である。"]:
+        _ingest_ja(store, s)
+
+    seed = "甲"
+    start = {f for f in store.crosses.get(seed, {})
+             if f not in store.source_labels}
+    cur, seen, texts, on_topic = seed, [], [], 0
+    still = True
+    for _ in range(6):
+        out = ja_consensus_ask(store, cur)
+        if out.get("verdict") != "ANSWER":
+            break
+        core = out.get("core")
+        seen.append(core)
+        texts.append(out.get("text", ""))
+        facets = {f for f in store.crosses.get(core, {})
+                  if f not in store.source_labels}
+        if still and (facets & start):
+            on_topic += 1
+        elif still:
+            still = False
+        nxt = sorted(f for f in facets if f in store.crosses and f not in seen)
+        if not nxt:
+            break
+        cur = nxt[0]
+
+    listy = all("、" in t or len(t.split("は")[-1].split("、")) >= 1
+                for t in texts if t)
+    ok = (len(seen) >= 3                 # the chain does run
+          and on_topic < len(seen)       # and leaves its subject before the end
+          and listy)                     # and every step is a list
+    return {
+        "experiment": "cross_geometry",
+        "fork": "LONG_FORM_DRIFTS_AND_LISTS",
+        "pass": bool(ok),
+        "result": {"steps": len(seen), "on_topic_steps": on_topic,
+                   "path": seen, "sample": texts[:3]},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1341,6 +1418,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         granularity_composes_fork(),
         resolution_ladder_grades_doubt_fork(),
         concord_rides_alongside_the_list_fork(),
+        long_form_drifts_and_lists_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
