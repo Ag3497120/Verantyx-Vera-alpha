@@ -1018,6 +1018,61 @@ def word_form_is_a_fallback_fork() -> Dict[str, Any]:
     }
 
 
+def linked_is_not_printed_fork() -> Dict[str, Any]:
+    """A doctrinal connection must never look like something the source said.
+
+    民法第七百九条 defines 不法行為 and does not contain the word. Measured
+    over 271 published topic→article assignments that name articles this
+    store holds, indexing the statutes reaches 25.5% of them; the other
+    74.5% are connections a third party asserts and no statute prints.
+    Raising the per-article index eightfold moved that number not at all.
+
+    So they are kept in their own layer with the source that asserted them,
+    and `resolve` returns the two kinds LABELLED. Writing the topic onto the
+    article as a facet would make the coverage gate, the contradiction
+    detector and the citation shown to a reader all treat a third party's
+    doctrine as the legislature's text.
+    """
+    import tempfile
+    from pathlib import Path as _P
+
+    from .links import harvest, resolve
+
+    store = CrossStore()
+    _ingest_ja(store, "民法第七百九条は損害賠償である。")
+    _ingest_ja(store, "民法第七百九条は侵害である。")
+    _ingest_ja(store, "刑事訴訟法第二百十三条は現行犯人である。")
+    fields = {"法": {"法": store}}
+
+    with tempfile.TemporaryDirectory() as td:
+        d = _P(td)
+        (d / "不法行為.txt").write_text(
+            "不法行為については民法第709条に定めがある。"
+            "現行犯逮捕は刑事訴訟法第213条による。", encoding="utf-8")
+        ls = harvest([d / "不法行為.txt"])
+
+    r = resolve(fields, ls, "不法行為")
+    linked = {x["article"] for x in r["linked"]}
+    printed = {x["article"] for x in r["printed"]}
+    # The store never learned the word, so nothing is printed...
+    # ...and both articles arrive as links, each naming who said so.
+    sources = {s for x in r["linked"] for s in x["asserted_by"]}
+
+    ok = (ls.n_links() == 2
+          and "刑事訴訟法第二百十三条" in linked
+          and "民法第七百九条" in linked
+          and not printed
+          and sources == {"不法行為"}
+          and all(x["in_store"] for x in r["linked"]))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "LINKED_IS_NOT_PRINTED",
+        "pass": bool(ok),
+        "result": {"links": ls.n_links(), "printed": sorted(printed),
+                   "linked": sorted(linked), "asserted_by": sorted(sources)},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1078,6 +1133,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         one_root_saturates_at_capacity_fork(),
         fusion_is_not_monotonic_fork(),
         word_form_is_a_fallback_fork(),
+        linked_is_not_printed_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
