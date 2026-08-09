@@ -1680,6 +1680,48 @@ def concord_is_not_coverage_fork() -> Dict[str, Any]:
     }
 
 
+def every_manifest_can_rebuild_its_corpus_fork() -> Dict[str, Any]:
+    """A manifest that cannot rebuild its corpus is a receipt, not a backup.
+
+    `corpus_fetch` was written because a corpus was lost in a session temp
+    directory. It was lost from one a second time, and the manifests are why
+    the two losses ended differently: every e-Gov entry carried a URL and
+    came back, while all 202 Wikipedia entries carried an empty one and had
+    to be reconstructed from their filenames by a module written after the
+    fact. The manifest could prove the corpus was gone and not get it back.
+
+    Three more entries reported no URL for a different reason — index.json
+    and urls.tsv were written BY the fetch rather than fetched, so recording
+    them as corpus files made two manifests report themselves irreproducible
+    over their own bookkeeping.
+
+    Reproducibility is a property of the manifest, checkable without the
+    network and without the corpus, so it is checked here every run.
+    """
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "corpora"
+    seen, broken = [], []
+    for path in sorted(root.glob("*.json")):
+        m = json.loads(path.read_text(encoding="utf-8"))
+        files = m.get("files") or []
+        missing = [e["name"] for e in files if not e.get("url")]
+        seen.append({"manifest": path.stem, "files": len(files),
+                     "without_url": len(missing)})
+        if missing or not m.get("reproducible"):
+            broken.append({"manifest": path.stem, "examples": missing[:3],
+                           "declared": m.get("reproducible")})
+
+    ok = bool(seen) and not broken
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EVERY_MANIFEST_CAN_REBUILD_ITS_CORPUS",
+        "pass": bool(ok),
+        "result": {"manifests": seen, "not_reproducible": broken},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1750,6 +1792,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         writer_never_reaches_the_answer_path_fork(),
         form_may_not_assert_more_than_content_licenses_fork(),
         concord_is_not_coverage_fork(),
+        every_manifest_can_rebuild_its_corpus_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
