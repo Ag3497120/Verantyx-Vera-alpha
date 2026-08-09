@@ -1538,12 +1538,16 @@ def writer_never_reaches_the_answer_path_fork() -> Dict[str, Any]:
     # corpus never uses standing alone is not a word, and `sentence` returns
     # nothing for it. Without 甲条 here the fork passed on an empty draft
     # list and asserted nothing about citations at all.
+    # A RECORD-register form on purpose. The corpus here reports; it does
+    # not legislate, so a 「〜することができる」 shape would be refused by the
+    # modality licence and this fork would be testing that instead — see
+    # `form_may_not_assert_more_than_content_licenses_fork`.
     prose = [("fixture",
-              "甲条は、いつでも届出を選択することができる。"
-              "事情は、いつでも届出を選択することができる。"
-              "甲条は、いつでも事情を選択することができる。"
-              "甲条は、いつでも届出を選択することができる。"
-              "事情は、いつでも甲条を選択することができる。")]
+              "甲条は、いつでも届出を選択した。"
+              "事情は、いつでも届出を選択した。"
+              "甲条は、いつでも事情を選択した。"
+              "甲条は、いつでも届出を選択した。"
+              "事情は、いつでも甲条を選択した。")]
     w = Writer.build([store], prose)
 
     drafts = w.sentence(store, "甲条")
@@ -1566,6 +1570,62 @@ def writer_never_reaches_the_answer_path_fork() -> Dict[str, Any]:
             "built": w.report(),
             "drafts": [d["text"] for d in drafts][:2],
             "non_word_writes_nothing": unknown == [],
+        },
+    }
+
+
+def form_may_not_assert_more_than_content_licenses_fork() -> Dict[str, Any]:
+    """Closure stops invented symbols. It does not stop invented relations.
+
+    A store holds co-occurrence. A form holds a relation, and supplies it
+    whoever fills the holes: 「<0>は、<1>を<2>しなければならない」 states an
+    obligation about anything put in hole 0. Measured over 278 generated
+    sentences on the 626MB federation, 21.9% asserted a norm — obligation,
+    prohibition, or permission — and 42.6% of those were about content no
+    statute had ever spoken of. 【女性】は、【従事】を【行為】しなければ
+    ならない passes closure on every symbol and fabricates the only thing in
+    it that carries meaning.
+
+    So a norm-shaped form needs a norm-registered subject. The restriction
+    runs one way: a legal duty stated as a plain fact loses information, a
+    plain fact stated as a legal duty invents an obligation.
+    """
+    from .cross_store import CrossStore
+    from .writer import Writer
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "甲条は事情である。"]:
+        _ingest_ja(store, s)
+
+    norm = ("甲条は、いつでも届出を選択しなければならない。" * 3
+            + "事情は、いつでも届出を選択しなければならない。"
+            + "甲条は、いつでも事情を選択しなければならない。")
+
+    # Same corpus, same store, same subject — only the licence differs.
+    unlicensed = Writer.build([store], [("prose", norm)])
+    licensed = Writer.build([store], [("statute", norm)],
+                            norm_corpora=["statute"])
+
+    a = unlicensed.sentence(store, "甲条")
+    b = licensed.sentence(store, "甲条")
+
+    norm_forms = [f for f in licensed.forms.values() if f.register == "norm"]
+
+    ok = (norm_forms                  # the fixture really did offer a norm
+          and a == []                 # unlicensed content writes no norm
+          and b                       # licensed content still writes
+          and unlicensed.licence("甲条") == "record"
+          and licensed.licence("甲条") == "norm")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "FORM_MAY_NOT_ASSERT_MORE_THAN_CONTENT_LICENSES",
+        "pass": bool(ok),
+        "result": {
+            "norm_forms_offered": len(norm_forms),
+            "licence_without_statute": unlicensed.licence("甲条"),
+            "licence_with_statute": licensed.licence("甲条"),
+            "unlicensed_wrote": [d["text"] for d in a],
+            "licensed_wrote": [d["text"] for d in b],
         },
     }
 
@@ -1638,6 +1698,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         trace_is_memory_outside_the_store_fork(),
         constellation_beats_one_sovereign_fork(),
         writer_never_reaches_the_answer_path_fork(),
+        form_may_not_assert_more_than_content_licenses_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .compose_ja import Form, compose, harvest, learn_selection
 from .trace import Trace, walk
@@ -48,6 +48,24 @@ class Writer:
     vocab: Vocabulary = field(default_factory=Vocabulary)
     forms: Dict[str, Form] = field(default_factory=dict)
     built: Dict[str, Any] = field(default_factory=dict)
+    #: Corpus labels whose text states norms rather than reporting facts.
+    #: Known without a classifier because `build` is told which sources are
+    #: statutes — the API already separates them.
+    norm_corpora: Set[str] = field(default_factory=set)
+
+    def licence(self, subject: str) -> str:
+        """What a sentence about ``subject`` is entitled to assert.
+
+        Read from the corpus that uses the word most, which the vocabulary
+        records per term for exactly this kind of question. A subject the
+        statutes use is one the law has spoken about; a subject only an
+        encyclopedia uses is not, whatever else is true of it.
+        """
+        at = self.vocab.attested.get(subject) or {}
+        if not at:
+            return "unknown"
+        best = max(at.items(), key=lambda kv: (kv[1], kv[0]))[0]
+        return "norm" if best in self.norm_corpora else "record"
 
     @classmethod
     def build(
@@ -56,6 +74,7 @@ class Writer:
         prose: Sequence[Tuple[str, str]],
         *,
         statutes: Optional[Iterable[Path]] = None,
+        norm_corpora: Optional[Iterable[str]] = None,
     ) -> "Writer":
         """``prose`` is (label, text). ``statutes`` are e-Gov XML paths.
 
@@ -69,6 +88,9 @@ class Writer:
             if law:
                 corpora.append(("statute", law))
         w = cls()
+        w.norm_corpora = set(norm_corpora) if norm_corpora is not None else set()
+        if statutes:
+            w.norm_corpora.add("statute")
         w.vocab = from_stores(stores, corpora)
         sel = learn_selection(corpora)
         w.forms = harvest(corpora)
@@ -76,6 +98,9 @@ class Writer:
             "corpora": {label: len(text) for label, text in corpora},
             "vocabulary": w.vocab.report(),
             "forms": len(w.forms),
+            "norm_forms": sum(1 for f in w.forms.values()
+                              if f.register == "norm"),
+            "norm_corpora": sorted(w.norm_corpora),
             "selection": sel,
         }
         return w
@@ -95,7 +120,8 @@ class Writer:
                   if f not in labels]
         return [d.as_dict() for d in
                 compose(self.forms, subject, sorted(facets), limit=limit,
-                        content_from=[subject], vocab=self.vocab)]
+                        content_from=[subject], vocab=self.vocab,
+                        licence=self.licence(subject))]
 
     def passage(
         self,

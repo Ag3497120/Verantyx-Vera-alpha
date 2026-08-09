@@ -288,6 +288,18 @@ class Form:
     def holes(self) -> int:
         return len(self.cases)
 
+    @property
+    def register(self) -> str:
+        """norm / record / unknown — what this SHAPE asserts, before filling.
+
+        A form is not neutral about the relation it states. 「〜しなければ
+        ならない」 asserts an obligation whoever fills the holes, and a store
+        that holds co-occurrence has no obligation to report.
+        """
+        from .fusion import register_of
+
+        return register_of(self.template + "。")
+
 
 #: Terms observed immediately before する / した / される in the corpus.
 #: Learned, not listed: which nouns take する is a fact about Japanese that
@@ -421,6 +433,7 @@ def compose(
     limit: int = 3,
     content_from: Optional[Sequence[str]] = None,
     vocab: Optional[Any] = None,
+    licence: str = "unknown",
 ) -> List[Draft]:
     """Sentences about ``subject`` using ``facets``, best-supported first.
 
@@ -428,6 +441,20 @@ def compose(
     against its slot's case. A form no available term fits is skipped rather
     than filled anyway — that skip is the whole difference between this and
     the untyped version.
+
+    ``licence`` is the register of the CONTENT, and a form may not assert
+    more than the content licenses. Closure keeps a store from emitting a
+    symbol it does not hold — measured at 0 of 117 outputs. It says nothing
+    about relations, and a form supplies one for free: 21.9% of generated
+    sentences asserted a norm (obligation, prohibition, permission), and
+    42.6% of those were about content no statute had spoken of. 【女性】は、
+    【従事】を【行為】しなければならない is closed on every symbol and
+    fabricated on the only thing that matters.
+
+    So a norm-shaped form needs a norm-registered subject. Descriptive and
+    unknown forms are always allowed — the restriction runs one way, because
+    stating a legal duty as a plain fact loses nothing and stating a plain
+    fact as a legal duty invents an obligation.
     """
     pool = [f for f in facets if f and f != subject]
     if vocab is not None:
@@ -450,6 +477,8 @@ def compose(
         ranked = ranked[off:] + ranked[:off]
     for tpl, form in ranked:
         if not fits(subject, form.cases[0]):
+            continue
+        if form.register == "norm" and licence != "norm":
             continue
         picks: List[str] = [subject]
         used: Set[str] = {subject}
