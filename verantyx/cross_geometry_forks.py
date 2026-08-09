@@ -1507,6 +1507,69 @@ def constellation_beats_one_sovereign_fork() -> Dict[str, Any]:
     }
 
 
+def writer_never_reaches_the_answer_path_fork() -> Dict[str, Any]:
+    """A generated sentence must not be able to arrive where a citation is.
+
+    The whole closure argument elsewhere is that a reader can trust what
+    comes back: every symbol traces to a source, measured at 0 of 117
+    outputs containing anything the store did not hold. A composed sentence
+    breaks that on purpose — it is a recombination of a form somebody wrote
+    and content somebody else wrote, and the combination is nobody's claim.
+
+    So `writer` is imported by nothing on the answer path, and every draft
+    carries both sources so the two can be told apart. This fork asserts the
+    isolation as a fact about the code, not a convention.
+    """
+    import inspect
+
+    from . import consensus_store, hierarchy, writer
+    from .cross_store import CrossStore
+    from .writer import Writer
+
+    # Nothing that produces a verdict may reach the generator.
+    leak = [m.__name__ for m in (consensus_store, hierarchy)
+            if "writer" in inspect.getsource(m)
+            or "compose_ja" in inspect.getsource(m)]
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "甲条は事情である。"]:
+        _ingest_ja(store, s)
+    # The prose must attest the SUBJECT too, not just the facets: a term the
+    # corpus never uses standing alone is not a word, and `sentence` returns
+    # nothing for it. Without 甲条 here the fork passed on an empty draft
+    # list and asserted nothing about citations at all.
+    prose = [("fixture",
+              "甲条は、いつでも届出を選択することができる。"
+              "事情は、いつでも届出を選択することができる。"
+              "甲条は、いつでも事情を選択することができる。"
+              "甲条は、いつでも届出を選択することができる。"
+              "事情は、いつでも甲条を選択することができる。")]
+    w = Writer.build([store], prose)
+
+    drafts = w.sentence(store, "甲条")
+    unknown = w.sentence(store, "存在しない語")
+
+    both_cited = bool(drafts) and all(d.get("content_from") and d.get("form_from")
+                                      for d in drafts)
+
+    ok = (not leak
+          and w.report()["vocabulary"]["terms"] > 0
+          and drafts                 # the fixture must actually write
+          and unknown == []          # a non-word writes nothing
+          and both_cited)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "WRITER_NEVER_REACHES_THE_ANSWER_PATH",
+        "pass": bool(ok),
+        "result": {
+            "answer_path_imports_generator": leak,
+            "built": w.report(),
+            "drafts": [d["text"] for d in drafts][:2],
+            "non_word_writes_nothing": unknown == [],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1574,6 +1637,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         long_form_drifts_and_lists_fork(),
         trace_is_memory_outside_the_store_fork(),
         constellation_beats_one_sovereign_fork(),
+        writer_never_reaches_the_answer_path_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

@@ -173,20 +173,31 @@ def from_stores(
     *,
     min_attest: int = MIN_ATTEST,
     limit: Optional[int] = None,
+    include_cores: bool = True,
 ) -> Vocabulary:
-    """Sift a federation's facets into the ones that are words.
+    """Sift a federation's terms into the ones that are words.
 
     ``corpora`` must attest the register the stores were built from. A
     vocabulary is a claim about usage and cannot judge usage it never saw.
+
+    Cores are candidates as well as facets, because generation asks about a
+    core — a walk moves core to core, and every sentence is ABOUT one. Facets
+    alone leave that gate half-shut: of 56,310 cores in the 626MB federation,
+    38,028 (67.5%) never appear as anyone's facet, so a facet-only vocabulary
+    silently refuses to write about two thirds of the subjects a walk can
+    reach. The attestation test is unchanged and does the same work either
+    way — 0000gallery and 100円 are cores and still not words.
     """
-    facets: Counter = Counter()
+    terms: Counter = Counter()
     for st in stores:
         labels = getattr(st, "source_labels", set()) or set()
-        for cross in st.crosses.values():
+        for core, cross in st.crosses.items():
+            if include_cores and core not in labels:
+                terms[core] += 1
             for f in cross:
                 if f not in labels:
-                    facets[f] += 1
-    ranked = [t for t, _n in facets.most_common(limit)] if limit else list(facets)
+                    terms[f] += 1
+    ranked = [t for t, _n in terms.most_common(limit)] if limit else list(terms)
     return attest(ranked, corpora, min_attest=min_attest)
 
 
