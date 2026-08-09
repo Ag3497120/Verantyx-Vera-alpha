@@ -413,7 +413,8 @@ def descend(root: Node, query: str, *, max_depth: int = 32,
     return out
 
 
-def gather(root: Node, query: str, *, limit: int = 12) -> Dict[str, Any]:
+def gather(root: Node, query: str, *, limit: int = 12,
+           morph: bool = False) -> Dict[str, Any]:
     """Every leaf that holds the query's terms, each answered where it lives.
 
     `descend` chooses one branch, so a term that spans branches has no
@@ -454,11 +455,35 @@ def gather(root: Node, query: str, *, limit: int = 12) -> Dict[str, Any]:
                 walk(child, path + [node.name])
 
     walk(root, [])
+
+    # Word forms are a FALLBACK, not a widening. Applied unconditionally,
+    # recall on an external key rose 26.7% -> 86.7% and the destination
+    # count rose 4 -> 117: 不法行為 also matched 行為, which is in 173
+    # articles across six statutes, so the answer stopped being an answer.
+    # Staged instead — strip a suffix only if the printed term found
+    # nothing, split a compound only if that failed too. Each stage is
+    # recorded, so a reader can see the query was not the one they typed.
+    stage = "exact"
+    if morph and not found:
+        from .ja_morph import expand
+        for label, kw in (("suffix", {"add": True, "split": False}),
+                          ("compound", {"add": True, "split": True})):
+            widened = [r for r in expand(runs, **kw) if r not in runs]
+            if not widened:
+                continue
+            keep_runs, runs = runs, widened
+            walk(root, [])
+            runs = keep_runs
+            if found:
+                stage = label
+                break
+
     answered = [f for f in found if f["verdict"] == "ANSWER"]
     return {
         "verdict": "ANSWER" if answered else
                    ("UNKNOWN_NOT_PRESENT" if not found else "UNKNOWN_NO_EVIDENCE"),
         "query": query,
+        "matched_as": stage,
         "destinations": len(found),
         "answered": len(answered),
         "truncated": len(found) >= limit,

@@ -962,6 +962,62 @@ def fusion_is_not_monotonic_fork() -> Dict[str, Any]:
     }
 
 
+def word_form_is_a_fallback_fork() -> Dict[str, Any]:
+    """Widen the query only when the printed word found nothing.
+
+    Against an external key (topics ja.wikipedia assigns to specific
+    articles), 46.7% of questions could not begin because the word the world
+    uses is not the word the statute prints — 傷害罪 against a code that
+    prints 傷害.
+
+    Expanding every query fixed that and broke the answer:
+
+        exact only        recall 26.7%   destinations   4
+        always expand     recall 86.7%   destinations 117
+        staged fallback   recall 73.3%   destinations  41
+
+    不法行為 also matches 行為, which sits in 173 articles across six
+    statutes, so an unconditional widening turns one question into most of
+    the corpus. Staged keeps the printed term authoritative and reports
+    which stage answered, so a reader can see the query was not the one
+    they typed.
+    """
+    from .hierarchy import gather
+    from .sovereign import assemble
+
+    st = CrossStore()
+    for s in ["刑法第二百四条は傷害である。", "刑法第二百四条は身体である。",
+              "刑法第二百五条は傷害致死である。",
+              "建築基準法第六条は建築である。", "建築基準法第六条は確認である。",
+              "民法第七百九条は不法行為である。", "商法第五百九十条は行為である。",
+              "商法第五百九十一条は行為である。"]:
+        _ingest_ja(st, s)
+    root = assemble({"法": {"法": st}}, {"法": {"法": ["法"]}}, sovereign="主権")
+
+    exact = gather(root, "不法行為", limit=40, morph=True)
+    suffix = gather(root, "傷害罪", limit=40, morph=True)
+    compound = gather(root, "建築確認", limit=40, morph=True)
+    off = gather(root, "傷害罪", limit=40, morph=False)
+
+    ok = (exact["matched_as"] == "exact"            # printed term wins
+          and exact["destinations"] == 1            # and is not widened
+          and suffix["matched_as"] == "suffix"
+          and suffix["destinations"] >= 1
+          and compound["matched_as"] == "compound"
+          and off["destinations"] == 0)             # off restores the old behaviour
+    return {
+        "experiment": "cross_geometry",
+        "fork": "WORD_FORM_IS_A_FALLBACK",
+        "pass": bool(ok),
+        "result": {
+            "exact": {"stage": exact["matched_as"], "dest": exact["destinations"]},
+            "suffix": {"stage": suffix["matched_as"], "dest": suffix["destinations"]},
+            "compound": {"stage": compound["matched_as"], "dest": compound["destinations"]},
+            "morph_off": off["destinations"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1021,6 +1077,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         sovereign_build_fork(),
         one_root_saturates_at_capacity_fork(),
         fusion_is_not_monotonic_fork(),
+        word_form_is_a_fallback_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
