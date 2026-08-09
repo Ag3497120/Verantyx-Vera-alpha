@@ -1846,6 +1846,61 @@ def coarsening_adds_a_reading_and_never_overturns_one_fork() -> Dict[str, Any]:
     }
 
 
+def a_citation_is_listed_not_chosen_fork() -> Dict[str, Any]:
+    """Three readings from one ask, kept apart because merging destroys them.
+
+    A sovereign was only ever a ladder: placement, hierarchy, granularity
+    and links were built, measured, and never reached by one. Wiring them in
+    produced two results worth pinning.
+
+    Merging citations into the core ladder scored 0 of 387 gold links. The
+    first wiring added the cited articles to the TOPIC's terms, so asking
+    わいせつ returned the core わいせつ — what it already returned. Keying
+    the ARTICLE by the topic instead answers, and then ties: わいせつ is
+    provided for by 刑法第百七十四条 through 第百七十七条, four articles at
+    one point each, and a ladder asked which ONE abstains. Choosing answered
+    54 of 130 topics and was right every time; listing reaches 164 of 164.
+
+    Listing is not choosing, so it cannot fabricate — and the citation stays
+    a fact about the citing document, never a claim the statute made.
+    """
+    from .cross_store import CrossStore
+    from .full_sovereign import FullSovereign, DEFAULT_SETTINGS
+
+    store = CrossStore()
+    for s in ["刑法第百七十四条はわいせつである。", "刑法第百七十五条はわいせつである。",
+              "わいせつは公然である。", "わいせつは頒布である。"]:
+        _ingest_ja(store, s)
+
+    sv = FullSovereign(name="cites", setting=dict(DEFAULT_SETTINGS)["cites"])
+    sv.build(store, None, shared={}, link_paths=[],
+             with_tree=False, with_placement=False)
+    # Stand in for a harvest: one topic, two articles — the tie case.
+    sv.links = {"わいせつ": ["刑法第百七十四条", "刑法第百七十五条"]}
+
+    listed = sv.cited(["わいせつ"])
+    none = sv.cited(["超伝導"])
+
+    ok = (listed["verdict"] == "ANSWER"
+          # BOTH articles, not one picked
+          and len(listed["articles"]) == 2
+          and "刑法第百七十四条" in listed["articles"]
+          and "刑法第百七十五条" in listed["articles"]
+          # the topic that cited them travels with them
+          and listed["by_topic"]["わいせつ"]
+          # and a topic nobody cited gets a typed refusal, not an empty answer
+          and none["verdict"] == "UNKNOWN_NO_CITATION"
+          and none["articles"] == [])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_CITATION_IS_LISTED_NOT_CHOSEN",
+        "pass": bool(ok),
+        "result": {"listed": listed["articles"],
+                   "by_topic": listed["by_topic"],
+                   "uncited": none["verdict"]},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1919,6 +1974,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         every_manifest_can_rebuild_its_corpus_fork(),
         a_reloaded_writer_is_the_same_writer_fork(),
         coarsening_adds_a_reading_and_never_overturns_one_fork(),
+        a_citation_is_listed_not_chosen_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
