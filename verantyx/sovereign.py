@@ -284,15 +284,23 @@ def group_into_layers(name: str, children: Dict[str, Node],
         level += 1
         grouped: Dict[str, Node] = {}
         keys = list(nodes)
-        for i in range(0, len(keys), MAX_ARMS):
-            chunk = keys[i:i + MAX_ARMS]
+        # Fill the arms, do not minimise the groups. Chunking by MAX_ARMS
+        # put twelve fields into TWO groups of six, so the root used two of
+        # its six arms and could route 2 x 4 = 8 terms — which is exactly
+        # how many of 24 questions escaped it. Sizing the chunk instead by
+        # ceil(n / MAX_ARMS) gives six groups of two and the full 24.
+        # A node that leaves arms empty has thrown away capacity it cannot
+        # get back at any depth.
+        size = -(-len(keys) // MAX_ARMS)
+        for i in range(0, len(keys), size):
+            chunk = keys[i:i + size]
             # Kanji numerals, not "群1-1". The Japanese run splitter cuts a
             # name at the ASCII digit boundary, so 主権群1-1 became the core
             # 主権群1 and no longer matched the child key — the router held
             # exactly the right terms and still routed nothing, because the
             # thing it named was not a branch. Node names travel through the
             # same tokeniser as the documents; they have to survive it.
-            label = f"{name}群{_kanji(level)}{_kanji(i // MAX_ARMS + 1)}"
+            label = f"{name}群{_kanji(level)}{_kanji(i // size + 1)}"
             sub = Node(name=label, children={k: nodes[k] for k in chunk})
             sub.router = build_router(sub.children, asked=asked)
             grouped[label] = sub
