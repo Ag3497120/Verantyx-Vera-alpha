@@ -215,6 +215,80 @@ def delta(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def classify(
+    fields: Dict[str, Dict[str, CrossStore]],
+    point: "Point",
+) -> Dict[str, Any]:
+    """Is this join an agreement, a contradiction, or a complement?
+
+    Each side's entities are read for polar terms, giving a set of
+    (aspect, pole) pairs per field. Then:
+
+        complement    the two sides talk about different aspects entirely
+        agreement     a shared aspect, same pole on both sides
+        contradiction a shared aspect, opposite poles
+
+    Over 858 joins on the source-clean federation:
+
+        no polar vocabulary   520   60.6%
+        contradiction         189   22.0%
+        agreement             101   11.8%
+        complement             48    5.6%
+
+    ## The 22% is a CANDIDATE rate, not a finding
+
+    A statute states when a thing must be so; an encyclopedia describes a
+    case where it was not. Read as poles those are opposite, and they are
+    not a disagreement — 無線局 comes back "contradiction" for exactly that
+    reason. Nothing here checks that the two sides are asserting about the
+    same occasion, which is what a real contradiction needs and what
+    `document_ingest` does have for claims inside one aspect.
+
+    So this types the SHAPE of a join and hands the result to something that
+    can adjudicate. Reporting 189 contradictions between Japanese statutes
+    and their commentary would be false, and it is not what the count says.
+    """
+    from .ja_grammar import ASPECT_OF as _JA
+
+    sides: Dict[str, Set[Tuple[str, str]]] = {}
+    for name, entities in point.by_field.items():
+        poles: Set[Tuple[str, str]] = set()
+        for store in (fields.get(name) or {}).values():
+            for entity in entities:
+                cross = store.crosses.get(entity)
+                if not cross:
+                    continue
+                for facet in cross:
+                    hit = _JA.get(facet)
+                    if hit:
+                        poles.add((hit[0], hit[1]))
+        sides[name] = poles
+
+    speaking = [n for n, p in sides.items() if p]
+    if len(speaking) < 2:
+        return {"concept": point.concept, "kind": "NO_POLARITY",
+                "fields": point.fields}
+    a, b = sides[speaking[0]], sides[speaking[1]]
+    shared = {x[0] for x in a} & {x[0] for x in b}
+    if not shared:
+        return {"concept": point.concept, "kind": "COMPLEMENT",
+                "fields": speaking[:2],
+                "aspects": {speaking[0]: sorted({x[0] for x in a})[:4],
+                            speaking[1]: sorted({x[0] for x in b})[:4]}}
+    clash = sorted(s for s in shared
+                   if ((s, "+") in a and (s, "-") in b)
+                   or ((s, "-") in a and (s, "+") in b))
+    return {
+        "concept": point.concept,
+        "kind": "CONTRADICTION_CANDIDATE" if clash else "AGREEMENT",
+        "fields": speaking[:2],
+        "aspects": sorted(shared)[:4],
+        "opposed": clash[:4],
+        "caveat": ("same aspect, opposite poles — not yet checked to be "
+                   "about the same occasion") if clash else "",
+    }
+
+
 def read_at(
     fields: Dict[str, Dict[str, CrossStore]],
     concept: str,

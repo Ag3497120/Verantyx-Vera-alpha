@@ -1354,6 +1354,71 @@ def long_form_drifts_and_lists_fork() -> Dict[str, Any]:
     }
 
 
+def trace_is_memory_outside_the_store_fork() -> Dict[str, Any]:
+    """The path is a value, kept beside the stores, and it resumes a walk.
+
+    A read-out chain had no memory: each step saw only its current core, so
+    the next was chosen without reference to where the walk began or what it
+    had passed. I first reported that as the structure forgetting its
+    subject. It was not — nothing was remembering. 40 seeds per field:
+
+        rule            steps   subject held   adjacent overlap   with path
+        lexicographic     8.7        1.7            0.033           0.269
+        anchor on seed   10.9        6.9            0.042           0.385
+        anchor on path   11.0        5.0            0.069           0.433
+
+    Two different instruments. Anchoring on the SEED holds the original
+    subject four times longer, which is what a question wants. Anchoring on
+    the PATH walks furthest and overlaps both its previous step and
+    everything before it most, which is what a developing text wants.
+
+    A trace is NOT knowledge — nothing in it was said by a source — so it
+    lives outside the stores, where a later reader cannot mistake a footprint
+    for a fact. Being a value rather than a local variable is also what makes
+    a walk resumable and replayable, which a deterministic engine should be
+    and was not.
+    """
+    from .trace import Trace, replay, walk
+
+    store = CrossStore()
+    for s in ["甲は乙である。", "甲は丙である。", "乙は丁である。", "乙は丙である。",
+              "丁は戊である。", "丁は丙である。", "戊は己である。", "戊は丙である。"]:
+        _ingest_ja(store, s)
+
+    t = walk(store, "甲", mode="path", steps=2)
+    first = list(t.seen)
+
+    import tempfile
+    from pathlib import Path as _P
+    with tempfile.TemporaryDirectory() as td:
+        p = _P(td) / "t.json"
+        t.save(p)
+        back = Trace.load(p)
+        round_trip = (back.seen == t.seen and back.horizon == t.horizon)
+        resumed = walk(store, "甲", mode="path", steps=2, trace=back)
+
+    rep = replay(store, resumed)
+    unchanged = all(not r["changed"] for r in rep)
+
+    # The horizon grows; it is the anchor and it is not the seed's alone.
+    grew = len(resumed.horizon) >= len(t.horizon)
+
+    ok = (len(first) >= 2
+          and round_trip
+          and len(resumed.seen) > len(first)      # resuming continues
+          and resumed.seen[:len(first)] == first  # from where it stopped
+          and unchanged                           # replay is exact
+          and grew)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "TRACE_IS_MEMORY_OUTSIDE_THE_STORE",
+        "pass": bool(ok),
+        "result": {"first_walk": first, "resumed": resumed.seen,
+                   "round_trip": round_trip, "replay_unchanged": unchanged,
+                   "horizon": len(resumed.horizon)},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1419,6 +1484,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         resolution_ladder_grades_doubt_fork(),
         concord_rides_alongside_the_list_fork(),
         long_form_drifts_and_lists_fork(),
+        trace_is_memory_outside_the_store_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
