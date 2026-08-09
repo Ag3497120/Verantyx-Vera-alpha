@@ -1144,6 +1144,82 @@ def granularity_composes_fork() -> Dict[str, Any]:
     }
 
 
+def resolution_ladder_grades_doubt_fork() -> Dict[str, Any]:
+    """A tied rung abstains, and unanimity therefore means something.
+
+    The same corpus read at several grain sizes votes several ways, and how
+    many rungs concur grades the answer. Measured on 10,222 statute articles
+    asked by their own captions, 600 probes:
+
+        best single rung, answering everything        29.8%
+        three or four rungs answer and all agree     100.0%  (77 probes)
+        two rungs answer and agree                    31.1%  (103)
+        no rung had grounds                             --   (383)
+
+    Three things this fork exists to stop coming back.
+
+    RUNGS MUST BE NESTED. The first version binned terms by length, which is
+    a partition: a term reaches exactly one rung, 507 of 600 probes had a
+    single rung answer, and agreement was not low but impossible.
+
+    A TIED RUNG MUST ABSTAIN. Breaking ties by insertion order made a rung's
+    answer depend on ingest order. Breaking them lexicographically was
+    WORSE: every tied rung chose the same smallest item, unanimity rose from
+    86 probes to 321 and its accuracy fell from 73.3% to 23.7%, below the
+    3-1 majority. Determinism at the tie manufactures agreement.
+
+    REORDERING THE RUNGS MUST CHANGE NOTHING.
+    """
+    from .resolution import Ladder, ask, grains
+
+    assert grains("損害賠償", 2) == ["損害", "害賠", "賠償"]
+
+    items = {
+        "甲条": {"損害賠償", "責任"},
+        "乙条": {"損害", "賠償", "損失", "賠責"},
+        "丙条": {"契約", "範囲"},
+    }
+    ladder = Ladder().build(items)
+
+    every_rung_sees = ("損害賠償" in ladder.index["whole"]
+                       and "損害" in ladder.index["g2"]
+                       and "損" in ladder.index["g1"])
+
+    unanimous = ask(ladder, ["契約"])
+
+    # 損害賠償 is a whole term of 甲条 and is spelled out piecewise by 乙条,
+    # so the character rung cannot separate them and says nothing.
+    votes = ladder.vote(["損害賠償"])
+    abstained = [r for r, v in votes.items() if v is None]
+    spoke = ask(ladder, ["損害賠償"])
+
+    flipped = Ladder(rungs=(("g1", 1), ("g2", 2), ("g3", 3), ("whole", 0)))
+    flipped.build(items)
+    stable = (ask(flipped, ["損害賠償"])["item"] == spoke["item"]
+              and ask(flipped, ["契約"])["item"] == unanimous["item"])
+
+    ok = (every_rung_sees
+          and unanimous["item"] == "丙条"
+          and unanimous["verdict"] == "ANSWER"
+          and unanimous["concord"] == 1.0
+          and abstained == ["g1"]          # the tied rung, and only it
+          and spoke["answered"] == 3       # the others still spoke
+          and stable)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "RESOLUTION_LADDER_GRADES_DOUBT",
+        "pass": bool(ok),
+        "result": {
+            "unanimous": {k: unanimous[k] for k in
+                          ("item", "verdict", "answered", "majority", "concord")},
+            "tie_abstained": abstained,
+            "after_abstention": {k: spoke[k] for k in
+                                 ("item", "verdict", "answered", "concord")},
+            "stable_under_rung_reorder": stable,
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1206,6 +1282,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         word_form_is_a_fallback_fork(),
         linked_is_not_printed_fork(),
         granularity_composes_fork(),
+        resolution_ladder_grades_doubt_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
