@@ -132,6 +132,75 @@ the boundary of what it can do, measured rather than assumed.
 Both rows are pinned as forks (`PLACEMENT_SIMULATION`), because a policy that
 always looks like an improvement is one whose gate does not work.
 
+## Mixed knowledge, several arms: placement changes the verdict
+
+Everything above was measured where retrieval fills one arm. There is a
+second regime, and it behaves differently.
+
+A query whose words are *facts* rather than *topics* — "what has dosage
+onset" instead of "what is clinica" — takes the facet-overlap path in
+`candidates_for_query` and fills all six arms. This is the mode the whole
+cross machinery was built for, and the mode a domain assistant is actually
+used in.
+
+Two clinics-and-shelters stores, twelve aspects per domain, each core
+carrying a random eight of them, questions drawn from a concentrated stable
+demand, 97 training questions and 68 held-out ones:
+
+```
+                        frequency    simulated
+verdict changed             —          31/68
+answers                    22            12
+ambiguous                  43            55
+```
+
+Fewer answers looks like a regression. It is the opposite. Each question
+names two aspects, so the answer key is decidable: an ANSWER is justified
+only if exactly one candidate core carries both.
+
+```
+                     frequency   simulated
+justified ANSWER          1           3
+MANUFACTURED ANSWER      21           9
+correct refusal          40          52
+missed                    6           4
+
+manufacture rate      30.9%       13.2%
+```
+
+Better in all four cells. The mechanism is worth stating because it is not
+the obvious one: demand is shared across a domain, so simulation places the
+*same* asked-about facts on every core, and cores that are genuinely
+indistinguishable end up *looking* indistinguishable. The frequency rule
+breaks ties alphabetically, which fabricates distinctions between arms that
+are really the same, and those fabricated distinctions become confident
+answers.
+
+So placement's contribution here is not fluency. It is **calibration**.
+
+Two caveats. This is a synthetic store with a planted answer key, not real
+documents. And the matryoshka path was run alongside and returned results
+**identical** to the single layer on all 68 questions — layered inference
+escalated and resolved the same way, so it contributed nothing measurable
+here.
+
+### The failure this regime exposed
+
+The first version of `demand_from_queries` credited each question's demand to
+its **top** retrieved core. Against six clinics that all carry dosage and
+onset, the whole question landed on whichever ranked first, that clinic alone
+got those facts placed, its arm out-scored five identical rivals, and a
+genuinely undecidable question came back as a confident ANSWER naming one
+clinic. Frequency said AMBIGUOUS, correctly.
+
+That is the worst thing this module can do — not a worse answer, but a
+correct refusal converted into a wrong one — and no gate in `accept` catches
+it, because the answer rate goes **up** and every check reads that as
+improvement. It is pinned as a shape instead, by
+`PLACEMENT_CANNOT_MANUFACTURE_CONFIDENCE`. All retrieved cores are now
+credited, which is also just true: when a descriptive question matches six
+things, all six are what the asker wants to hear about.
+
 ## The gate
 
 `--write` refuses unless:

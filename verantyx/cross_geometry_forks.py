@@ -342,6 +342,76 @@ def placement_simulation_fork() -> Dict[str, Any]:
     }
 
 
+def placement_cannot_manufacture_confidence_fork() -> Dict[str, Any]:
+    """A question that cannot distinguish its candidates must stay AMBIGUOUS,
+    whatever the placement policy.
+
+    Six clinics, each carrying dosage and onset among twelve facts. "what has
+    dosage onset" matches all six equally — there is no answer, and the
+    frequency rule says so. The first demand model credited a question's
+    whole demand to its TOP retrieved core, so those two facts were placed on
+    clinica alone, its arm out-scored five identical rivals on query overlap,
+    and the engine returned a confident ANSWER naming one clinic.
+
+    That is the most dangerous thing this module can do: not a worse answer,
+    but a correct refusal converted into a wrong answer. The gate in
+    `accept` cannot catch it — the answer rate goes UP, which every other
+    check reads as an improvement. So it is pinned here as a shape instead.
+
+    The fix is that all retrieved cores are credited, which is also just
+    true: when a descriptive question matches six things, all six are what
+    the asker wants to hear about.
+    """
+    from .placement import (choose_for_core, demand_from_queries,
+                            facet_document_frequency)
+    from .consensus import run_consensus
+    from .consensus_store import _MassView, candidates_for_query
+    from .cross import AXES, ShellCross
+    from .face_roles import FACET_FACES
+
+    store = CrossStore()
+    shared = ["dosage", "contraindication", "onset", "interval",
+              "monitoring", "titration"]
+    for i in range(6):
+        core = f"clinic{chr(97 + i)}"
+        for a in shared:
+            store.ingest_sentence(f"{core} has {a}")
+        for j in range(6):
+            store.ingest_sentence(f"{core} has trait{chr(97 + i)}{chr(97 + j)}")
+
+    q = "what has dosage onset"
+    cores = candidates_for_query(store, q, k=6)
+    df = facet_document_frequency(store)
+    asked = demand_from_queries(store, [q])
+    masses = _MassView(store)
+
+    out: Dict[str, Any] = {"n_candidates": len(cores)}
+    for policy in ("frequency", "simulated"):
+        shell = ShellCross()
+        for axis, core in zip(AXES, cores):
+            shell.faces[axis]["tip"] = core
+            shell.reflections[axis] = core
+            picks = choose_for_core(
+                store, core, policy=policy, df=df, n_cores=store.n_cores(),
+                asked=asked if policy == "simulated" else None, weight=0.0)
+            for face, facet in zip(FACET_FACES, picks):
+                shell.faces[axis][face] = facet
+        res = run_consensus(shell, q, masses=masses)
+        out[policy] = {"verdict": res.verdict, "core": res.core}
+
+    # Six identical candidates is the precondition; without it the rest is
+    # vacuous and the fork would pass on an empty setup.
+    ok = (len(cores) == 6
+          and out["frequency"]["verdict"] != "ANSWER"
+          and out["simulated"]["verdict"] != "ANSWER")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "PLACEMENT_CANNOT_MANUFACTURE_CONFIDENCE",
+        "pass": bool(ok),
+        "result": out,
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -392,6 +462,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         layered_carry_drift_fork(),
         placement_granularity_fork(),
         placement_simulation_fork(),
+        placement_cannot_manufacture_confidence_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

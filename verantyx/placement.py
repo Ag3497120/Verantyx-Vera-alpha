@@ -128,26 +128,41 @@ def demand_from_queries(
     different notion of "which topic is this about" would optimise faces the
     query never lands on.
 
+    EVERY retrieved core is credited, not just the top one. Crediting only
+    the first was the first version, and it manufactured confidence: given
+    "what has dosage onset" against six clinics that all have dosage and
+    onset, the whole question's demand landed on whichever clinic ranked
+    first, that clinic alone got those two facts placed, its arm out-scored
+    five identical rivals, and a question that is genuinely undecidable came
+    back as a confident ANSWER naming one clinic. The frequency rule it
+    replaced said AMBIGUOUS, correctly.
+
+    That is the worst failure available to this module — a correct refusal
+    turned into a wrong answer — and it comes from the demand model, not the
+    scorer. When a descriptive question legitimately matches six cores, all
+    six of them are what someone asking that question wants to hear about.
+    Pinned by PLACEMENT_CANNOT_MANUFACTURE_CONFIDENCE.
+
     A question is credited only for the tokens that are real facets of that
     core. Terms it does not have are not placement's problem; they are the
     vocabulary queue's.
     """
-    from .consensus_store import candidates_for_query
+    from .consensus_store import MAX_ARMS, candidates_for_query
     from .lex_filters import norm_words
 
     want: Dict[str, Counter] = {}
     for q in queries:
-        cores = candidates_for_query(store, q, k=1)
+        cores = candidates_for_query(store, q, k=MAX_ARMS)
         if not cores:
             continue
-        core = cores[0]
-        cross = store.crosses.get(core) or {}
         toks: set = set()
         for raw in str(q).split():
             toks |= norm_words(raw.casefold().strip())
-        hits = [t for t in toks if t in cross]
-        if hits:
-            want.setdefault(core, Counter()).update(hits)
+        for core in cores:
+            cross = store.crosses.get(core) or {}
+            hits = [t for t in toks if t in cross]
+            if hits:
+                want.setdefault(core, Counter()).update(hits)
     return {c: dict(v) for c, v in want.items()}
 
 
