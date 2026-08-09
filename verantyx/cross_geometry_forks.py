@@ -1220,6 +1220,63 @@ def resolution_ladder_grades_doubt_fork() -> Dict[str, Any]:
     }
 
 
+def concord_rides_alongside_the_list_fork() -> Dict[str, Any]:
+    """Confidence is reported BESIDE the destinations, never instead of them.
+
+    `gather` lists every leaf holding the query terms and chooses nothing —
+    that is what makes it unable to fabricate. The resolution ladder does
+    choose, and says how much of itself concurred. Wiring the second into
+    the first must not let it overwrite the first, or the listing stops
+    being a listing.
+
+    Two behaviours are pinned. A multi-term query that the rungs agree on
+    reports the leaf AND stays in the list. A single-term query cannot be
+    discriminated — every leaf holding it ties — so every rung abstains and
+    concord is zero. That is correct rather than broken: the leaves really
+    are indistinguishable on one term, and `gather` has already said so by
+    listing them all.
+    """
+    from .hierarchy import gather
+    from .sovereign import assemble
+
+    a = CrossStore()
+    for s in ["労基第二十条は解雇である。", "労基第二十条は予告である。",
+              "労基第二十条は三十日である。"]:
+        _ingest_ja(a, s)
+    b = CrossStore()
+    for s in ["労基第八十九条は解雇である。", "労基第八十九条は就業規則である。"]:
+        _ingest_ja(b, s)
+    root = assemble({"労働": {"予告": a, "規則": b}},
+                    {"労働": {"労働": ["予告", "規則"]}}, sovereign="主権")
+
+    sharp = gather(root, "解雇 予告 三十日", limit=8, concord=True)
+    blunt = gather(root, "解雇", limit=8, concord=True)
+    plain = gather(root, "解雇 予告 三十日", limit=8)
+
+    ok = (sharp["concord"]["verdict"] == "ANSWER"
+          and sharp["concord"]["concord"] == 1.0
+          and sharp["concord"]["in_destinations"]
+          # the list is unchanged by asking for confidence
+          and sharp["destinations"] == plain["destinations"]
+          and "concord" not in plain
+          # both leaves hold 解雇, so one term cannot separate them
+          and blunt["destinations"] == 2
+          and blunt["concord"]["answered_rungs"] == 0)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CONCORD_RIDES_ALONGSIDE_THE_LIST",
+        "pass": bool(ok),
+        "result": {
+            "multi_term": {k: sharp["concord"][k] for k in
+                           ("item", "verdict", "agreeing", "answered_rungs",
+                            "in_destinations")},
+            "single_term": {"destinations": blunt["destinations"],
+                            "answered_rungs": blunt["concord"]["answered_rungs"]},
+            "list_unchanged": sharp["destinations"] == plain["destinations"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1283,6 +1340,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         linked_is_not_printed_fork(),
         granularity_composes_fork(),
         resolution_ladder_grades_doubt_fork(),
+        concord_rides_alongside_the_list_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

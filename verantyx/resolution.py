@@ -163,6 +163,69 @@ def ask(ladder: Ladder, query_terms: Sequence[str]) -> Dict[str, Any]:
     }
 
 
+@dataclass
+class Stack:
+    """Several ladders side by side — more rungs, finer grading.
+
+    A ladder varies ONE thing (grain size). A stack varies a second (how much
+    of each item was indexed), and the product is what gives the confidence
+    scale its resolution. Measured on the same 600 probes:
+
+        4 rungs (grain only)     100% band 77 probes, then 75%, then 31%
+        16 rungs (grain x depth) 100% band 80,  then 88.6%, 71.4%, 28.8%
+
+    The extra bands are the point. With four rungs a question is either
+    unanimous or nearly worthless; with sixteen there is a middle — and a
+    strong majority of many rungs (9 of 12, 12 of 16) was right every time,
+    which four rungs cannot express at all.
+
+    Coverage improves too: 354 probes with nothing to say instead of 383,
+    because a depth one ladder never indexed can still have grounds.
+    """
+
+    ladders: Dict[str, Ladder] = field(default_factory=dict)
+
+    def vote(self, query_terms: Sequence[str]) -> Dict[str, Optional[str]]:
+        out: Dict[str, Optional[str]] = {}
+        for name, lad in self.ladders.items():
+            for rung, item in lad.vote(query_terms).items():
+                out[f"{name}/{rung}"] = item
+        return out
+
+    def report(self) -> Dict[str, Any]:
+        return {"ladders": sorted(self.ladders),
+                "rungs": sum(len(l.rungs) for l in self.ladders.values())}
+
+
+def ask_stack(stack: Stack, query_terms: Sequence[str]) -> Dict[str, Any]:
+    """Same contract as `ask`, over every rung of every ladder."""
+    votes = stack.vote(query_terms)
+    answered = [v for v in votes.values() if v]
+    if not answered:
+        return {"verdict": "UNKNOWN_NOT_PRESENT", "item": None,
+                "answered": 0, "distinct": 0, "majority": 0, "concord": 0.0,
+                "rungs": len(votes)}
+    tally = Counter(answered)
+    top = max(tally.values())
+    leaders = sorted(k for k, v in tally.items() if v == top)
+    if len(leaders) > 1:
+        # The stack ties for the same reason a rung does, and answers the
+        # same way: it does not pick.
+        return {"verdict": "AMBIGUOUS", "item": None, "answered": len(answered),
+                "distinct": len(tally), "majority": top,
+                "concord": round(top / len(answered), 3),
+                "rungs": len(votes), "leaders": leaders[:4]}
+    return {
+        "verdict": "ANSWER" if len(tally) == 1 else "MAJORITY",
+        "item": leaders[0],
+        "answered": len(answered),
+        "distinct": len(tally),
+        "majority": top,
+        "concord": round(top / len(answered), 3),
+        "rungs": len(votes),
+    }
+
+
 def calibrate(
     ladder: Ladder,
     probes: Sequence[Tuple[str, Sequence[str]]],

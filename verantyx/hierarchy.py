@@ -413,8 +413,35 @@ def descend(root: Node, query: str, *, max_depth: int = 32,
     return out
 
 
+def ladder_for(node: Node, *, rungs: Optional[Any] = None) -> Any:
+    """A resolution ladder over one node's leaves. Cached on the node.
+
+    Built from what the leaves already hold, so it costs one pass and adds
+    no store. Its only job is to say how much of the structure concurs —
+    it never chooses a destination `gather` would not have reached.
+    """
+    from .resolution import DEFAULT_RUNGS, Ladder
+
+    cached = getattr(node, "_ladder", None)
+    if cached is not None:
+        return cached
+    items: Dict[str, set] = {}
+    for leaf in node.leaves():
+        if leaf.store is None:
+            continue
+        labels = getattr(leaf.store, "source_labels", set()) or set()
+        terms: set = set()
+        for cross in leaf.store.crosses.values():
+            terms |= {f for f in cross if f not in labels}
+        if terms:
+            items[leaf.name] = terms
+    lad = Ladder(rungs=rungs or DEFAULT_RUNGS).build(items)
+    setattr(node, "_ladder", lad)
+    return lad
+
+
 def gather(root: Node, query: str, *, limit: int = 12,
-           morph: bool = False) -> Dict[str, Any]:
+           morph: bool = False, concord: bool = False) -> Dict[str, Any]:
     """Every leaf that holds the query's terms, each answered where it lives.
 
     `descend` chooses one branch, so a term that spans branches has no
@@ -479,7 +506,7 @@ def gather(root: Node, query: str, *, limit: int = 12,
                 break
 
     answered = [f for f in found if f["verdict"] == "ANSWER"]
-    return {
+    out: Dict[str, Any] = {
         "verdict": "ANSWER" if answered else
                    ("UNKNOWN_NOT_PRESENT" if not found else "UNKNOWN_NO_EVIDENCE"),
         "query": query,
@@ -489,6 +516,27 @@ def gather(root: Node, query: str, *, limit: int = 12,
         "truncated": len(found) >= limit,
         "results": found,
     }
+    if concord:
+        # How much of the structure concurs, alongside the list rather than
+        # instead of it. `gather` lists every leaf that holds the terms and
+        # chooses nothing; the ladder says which single leaf the readings
+        # agree on, and how many of them had grounds to say so. The
+        # calibration for these bands lives in verantyx/resolution.py — 3+
+        # rungs unanimous was right every time on statute captions, 2 was
+        # right 31% of the time, and neither number transfers to another
+        # corpus unaided.
+        from .resolution import ask as ladder_ask
+
+        r = ladder_ask(ladder_for(root), runs)
+        out["concord"] = {
+            "item": r["item"],
+            "answered_rungs": r["answered"],
+            "agreeing": r["majority"],
+            "concord": r["concord"],
+            "verdict": r["verdict"],
+            "in_destinations": any(f["leaf"] == r["item"] for f in found),
+        }
+    return out
 
 
 def shape(root: Node) -> Dict[str, Any]:
