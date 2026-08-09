@@ -20,6 +20,8 @@ over from the rest of this work:
 """
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, List
 
 from .consensus import (AXES, N_SECTIONS, ConsensusConfig, SearchState,
@@ -1722,6 +1724,74 @@ def every_manifest_can_rebuild_its_corpus_fork() -> Dict[str, Any]:
     }
 
 
+def a_reloaded_writer_is_the_same_writer_fork() -> Dict[str, Any]:
+    """Restoring must bring back the slot tables, not just the vocabulary.
+
+    `SELECTION` and `SELECTION_TAIL` are module globals — `selects` is
+    called from inside the fill loop and threading them through every caller
+    bought nothing. That makes them the one part of the writer a reload
+    cannot recover on its own, and the failure is quiet rather than loud: a
+    writer restored without them still has its vocabulary, still has its
+    forms, still writes sentences, and answers `selects` with None on every
+    fill. Every candidate becomes "unknown but not refused", which is a
+    different system that looks like this one.
+
+    So the fork restores into a process whose tables were deliberately
+    cleared and requires the same sentence back.
+    """
+    from .compose_ja import SELECTION, SELECTION_TAIL, learn_selection, selects
+    from .cross_store import CrossStore
+    from .writer import Writer
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "甲条は事情である。"]:
+        _ingest_ja(store, s)
+    prose = [("fixture",
+              "甲条は、いつでも届出を選択した。" * 3
+              + "事情は、いつでも届出を選択した。"
+              + "甲条は、いつでも事情を選択した。")]
+
+    saved_sel = {k: v.copy() for k, v in SELECTION.items()}
+    saved_tail = {k: v.copy() for k, v in SELECTION_TAIL.items()}
+    try:
+        w = Writer.build([store], prose)
+        before = w.sentence(store, "甲条")
+        attested_before = selects("届出", "を", "選択")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "writer.json"
+            w.save(path)
+            # Wipe the globals: this is what a fresh process looks like.
+            SELECTION.clear()
+            SELECTION_TAIL.clear()
+            blind = selects("届出", "を", "選択")
+            w2 = Writer.load(path)
+            after = w2.sentence(store, "甲条")
+            attested_after = selects("届出", "を", "選択")
+
+        ok = (before and before == after
+              and attested_before is True
+              and blind is None              # the wipe really did blind it
+              and attested_after is True)
+        return {
+            "experiment": "cross_geometry",
+            "fork": "A_RELOADED_WRITER_IS_THE_SAME_WRITER",
+            "pass": bool(ok),
+            "result": {
+                "before": [d["text"] for d in before],
+                "after": [d["text"] for d in after],
+                "selects_before": attested_before,
+                "selects_while_wiped": blind,
+                "selects_after_reload": attested_after,
+            },
+        }
+    finally:
+        SELECTION.clear()
+        SELECTION.update(saved_sel)
+        SELECTION_TAIL.clear()
+        SELECTION_TAIL.update(saved_tail)
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1793,6 +1863,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         form_may_not_assert_more_than_content_licenses_fork(),
         concord_is_not_coverage_fork(),
         every_manifest_can_rebuild_its_corpus_fork(),
+        a_reloaded_writer_is_the_same_writer_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

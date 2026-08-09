@@ -245,6 +245,40 @@ def learn_selection(texts: Iterable[Tuple[str, str]]) -> Dict[str, int]:
     return {"triples": n, "slots": len(SELECTION)}
 
 
+def dump_selection() -> Dict[str, Any]:
+    """The learned slot tables, as data.
+
+    They live in module globals because `selects` is called from inside the
+    fill loop and threading them through every caller bought nothing. That
+    makes them the one part of the writer that a reload cannot recover on
+    its own, so they are dumped and restored explicitly rather than being
+    silently empty in a process that loaded everything else.
+    """
+    return {
+        "selection": {f"{p}\t{v}": dict(c) for (p, v), c in SELECTION.items()},
+        "tails": {f"{p}\t{v}": dict(c) for (p, v), c in SELECTION_TAIL.items()},
+    }
+
+
+def load_selection(data: Dict[str, Any]) -> Dict[str, int]:
+    """Restore what `dump_selection` wrote, replacing whatever is loaded.
+
+    Replacing rather than merging: two corpora's tables added together are a
+    third corpus nobody measured, and `selects` reads counts to decide
+    whether a slot is attested well enough to answer at all.
+    """
+    SELECTION.clear()
+    SELECTION_TAIL.clear()
+    for key, counts in (data.get("selection") or {}).items():
+        p, v = key.split("\t", 1)
+        SELECTION[(p, v)] = Counter(counts)
+    for key, counts in (data.get("tails") or {}).items():
+        p, v = key.split("\t", 1)
+        SELECTION_TAIL[(p, v)] = Counter(counts)
+    return {"slots": len(SELECTION),
+            "triples": sum(sum(c.values()) for c in SELECTION.values())}
+
+
 def selects(noun: str, particle: str, verb: str) -> Optional[bool]:
     """Has the corpus put this kind of noun in this slot?
 

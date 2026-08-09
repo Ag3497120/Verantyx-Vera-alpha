@@ -32,6 +32,7 @@ this module assembled must never be able to arrive where one is expected.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -159,6 +160,58 @@ class Writer:
             "note": "each sentence carries its content source and its form "
                     "source; neither makes it true",
         }
+
+    def save(self, path: Path) -> Dict[str, Any]:
+        """Write everything `build` learned, so it is learned once.
+
+        Building this from 626MB takes minutes and the inputs are a
+        third-party corpus that has now been lost twice to a cleaned temp
+        directory. A learned artifact that only exists in a live process is
+        the same mistake one level up: the corpus manifests were fixed so a
+        corpus can be rebuilt, and this is so it does not have to be.
+        """
+        from .compose_ja import dump_selection
+
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "vocab": self.vocab.attested,
+            "norm_corpora": sorted(self.norm_corpora),
+            "forms": [{"template": f.template, "cases": f.cases,
+                       "slots": [list(s) if s else None for s in f.slots],
+                       "count": f.count, "example": f.example,
+                       "source": f.source} for f in self.forms.values()],
+            "selection": dump_selection(),
+            "built": self.built,
+        }, ensure_ascii=False), encoding="utf-8")
+        return {"path": str(path), "bytes": path.stat().st_size,
+                "forms": len(self.forms), "terms": len(self.vocab.attested)}
+
+    @classmethod
+    def load(cls, path: Path) -> "Writer":
+        """Restore a saved writer, slot tables included.
+
+        The tables are module globals, so a writer restored without them
+        composes with `selects` answering None everywhere — every fill
+        "unknown but not refused", which is silently a different system.
+        """
+        from .compose_ja import load_selection
+
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        w = cls()
+        w.vocab = Vocabulary()
+        w.vocab.attested = d["vocab"]
+        w.norm_corpora = set(d.get("norm_corpora") or ())
+        w.forms = {}
+        for f in d.get("forms") or []:
+            form = Form(template=f["template"], cases=f["cases"],
+                        slots=[tuple(s) if s else None for s in f["slots"]],
+                        count=f["count"], example=f["example"],
+                        source=f["source"])
+            w.forms[form.template] = form
+        w.built = d.get("built") or {}
+        w.built["selection_restored"] = load_selection(d.get("selection") or {})
+        return w
 
     def report(self) -> Dict[str, Any]:
         return dict(self.built)
