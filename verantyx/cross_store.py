@@ -59,6 +59,13 @@ class CrossStore:
     #: shell builder falls back to top_facets when a core is missing here —
     #: so an old store keeps its exact historical behaviour.
     placement: Dict[str, List[str]] = field(default_factory=dict)
+    #: Document labels this store ingested. `ingest_documents` appends
+    #: "(reported by X)" to every sentence so the label reaches provenance,
+    #: which also lands it in the cross as an ordinary facet — and an arm has
+    #: four faces, so the citation was costing one of them. An event with
+    #: 主体/対象/行為/原因 needs all four and had three. Kept in the store
+    #: (it is real provenance) and skipped when filling faces.
+    source_labels: set = field(default_factory=set)
     #: What produced `placement`: policy, weight, query source, measured delta.
     #: A placement without this is unattributable, and an unattributable
     #: geometry is the thing this project keeps refusing to ship.
@@ -264,6 +271,7 @@ class CrossStore:
             "provenance": self.provenance if self.track_provenance else {},
             "track_provenance": self.track_provenance,
             "source_meta": self.source_meta,
+            "source_labels": sorted(self.source_labels),
             "placement": self.placement,
             "placement_meta": self.placement_meta,
         }
@@ -295,6 +303,7 @@ class CrossStore:
             },
         )
         st.source_meta = {k: dict(v) for k, v in d.get("source_meta", {}).items()}
+        st.source_labels = set(d.get("source_labels", []))
         st.placement = {k: list(v) for k, v in d.get("placement", {}).items()}
         st.placement_meta = dict(d.get("placement_meta", {}))
         st.proper_lexicon = proper_lexicon_from_stats(st.cap_stats)

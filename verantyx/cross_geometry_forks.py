@@ -540,6 +540,85 @@ def placement_invariance_fork() -> Dict[str, Any]:
     }
 
 
+def reified_event_fork() -> Dict[str, Any]:
+    """A three-place fact fits a two-place store when the EVENT is the core.
+
+    「甲は乙を脅迫した。乙は丙を傷害した。」 as ordinary sentences gives two
+    crosses with no path between them, so a question about 甲 and 丙 reaches
+    nothing. Reified, the participants become role-tagged facets of the
+    happening, every fact stays unary attribution — the shape the store
+    already has — and the chain is walkable.
+
+    Four things are pinned, and the last three are the ones that make it
+    usable rather than merely representable:
+
+      * the chain 丙 → 事象2 → 乙 → 事象1 → 甲 is traversable
+      * a role claim has THREE outcomes: confirmed, refuted, unknown. Asked
+        with the wrong object the store must REFUTE (it holds 対象丙), and
+        asked about a role it never recorded it must say so — answering the
+        whole event and staying silent about the asked role is the same
+        fabrication one level down
+      * all four faces carry facts: the citation is provenance, and it was
+        occupying one of the four an event needs
+      * an unreadable construction is SKIPPED WITH ITS REASON, not guessed.
+        「暴行を加えた」 would require deciding that 暴行 rather than 加 is
+        the act, and a wrong guess there mislabels who did what.
+    """
+    from .consensus_store import ja_consensus_ask
+    from .events import extract_events, ingest_events, link_cause
+
+    ex = extract_events("甲は乙を脅迫した。乙は丙を傷害した。甲が乙に暴行を加えた。")
+    events = ex["events"]
+    if len(events) < 2:
+        return {"experiment": "cross_geometry", "fork": "REIFIED_EVENT",
+                "pass": False, "result": {"extracted": len(events),
+                                          "skipped": ex["skipped"]}}
+    link_cause(events[1], events[0])
+    store = CrossStore()
+    ingest_events(store, events, source="事件記録")
+
+    def facts(core):
+        return {f for f in (store.crosses.get(core) or {})
+                if f not in store.source_labels}
+
+    hit = [c for c, f in store.crosses.items() if "対象丙" in f]
+    walked = False
+    if hit:
+        e2 = facts(hit[0])
+        cause = [f[2:] for f in e2 if f.startswith("原因")]
+        if cause:
+            e1 = facts(cause[0])
+            walked = ("主体甲" in e1 and "対象乙" in e1 and "主体乙" in e2)
+
+    confirmed = ja_consensus_ask(store, "事象2 対象丙")
+    refuted = ja_consensus_ask(store, "事象2 対象甲")
+    unknown_role = ja_consensus_ask(store, "事象2 場所東京")
+    faces = [f for f in (store.crosses.get("事象2") or {})
+             if f not in store.source_labels]
+    light = [s for s in ex["skipped"] if s["reason"].startswith("light_verb")]
+
+    ok = (walked
+          and confirmed.get("verdict") == "ANSWER"
+          and refuted.get("verdict") == "UNKNOWN_ROLE_MISMATCH"
+          and unknown_role.get("verdict") == "UNKNOWN_INSUFFICIENT_EVIDENCE"
+          and len(faces) >= 4
+          and len(light) == 1)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "REIFIED_EVENT",
+        "pass": bool(ok),
+        "result": {
+            "chain_walked": walked,
+            "confirmed": confirmed.get("verdict"),
+            "refuted": {"verdict": refuted.get("verdict"),
+                        "detail": refuted.get("reason")},
+            "role_not_recorded": unknown_role.get("verdict"),
+            "facts_on_faces": sorted(faces),
+            "skipped_with_reason": ex["skipped"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -593,6 +672,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_cannot_manufacture_confidence_fork(),
         placement_invariance_fork(),
         ja_coverage_gate_fork(),
+        reified_event_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

@@ -188,6 +188,15 @@ def _ranked_facets(store: CrossStore, core: str, *, tie: str = "asc") -> List[st
     cross = store.crosses.get(str(core).casefold().strip()) or {}
     if not cross:
         return []
+    # The citation is provenance, not a fact about the subject, and an arm
+    # has four faces. A reified event with 主体/対象/行為/原因 needs all four
+    # and got three because "(reported by X)" had taken one. It stays in the
+    # store; it just does not occupy a face.
+    labels = {str(s).casefold().strip() for s in getattr(store, "source_labels", ()) or ()}
+    if labels:
+        cross = {f: c for f, c in cross.items() if f not in labels}
+        if not cross:
+            return []
     if tie == "asc":
         return [f for f, _c in sorted(cross.items(), key=lambda kv: (-kv[1], kv[0]))]
     if tie != "desc":
@@ -469,6 +478,47 @@ def _apply_ja_coverage_gate(
         out["uncovered_terms"] = []
         return
     out["uncovered_terms"] = uncovered
+
+    # A role-tagged token is a composite, and for composites "never seen"
+    # means the OPPOSITE of what it means for a plain word. Asked 「事象二
+    # 対象甲」 against a store holding 対象丙, the token 対象甲 is unseen —
+    # and treating that as a vocabulary gap answers a question the store
+    # positively refutes. Checked before the unknown-term branch for exactly
+    # that reason. See verantyx/events.py.
+    from .events import role_refutation
+
+    from .events import split_role
+
+    core_key = out.get("core_key") or out.get("core")
+    refutations = [r for r in (role_refutation(store, core_key, t)
+                               for t in uncovered) if r] if core_key else []
+
+    # A role claim has three outcomes, never two: the store confirms it, the
+    # store fills that role differently (refutation, below), or the role is
+    # absent and the store does not know. The third was answering ANSWER —
+    # asked 「事象2 場所東京」 against an event with no 場所, it returned the
+    # whole event and said nothing about where. That is the same shape as the
+    # 甲/丙 fabrication this gate exists to stop, one level down.
+    unfilled = [t for t in uncovered if split_role(t)[0] is not None
+                and not any(r["asked"] == split_role(t)[1]
+                            and r["role"] == split_role(t)[0] for r in refutations)]
+    if unfilled and not refutations:
+        out["verdict"] = "UNKNOWN_INSUFFICIENT_EVIDENCE"
+        out["reason"] = "role_not_recorded:" + ",".join(unfilled)
+        out["unfilled_roles"] = unfilled
+        out["core"] = None
+        out["text"] = ""
+        return
+
+    if refutations:
+        out["verdict"] = "UNKNOWN_ROLE_MISMATCH"
+        out["reason"] = "role_filled_differently:" + ",".join(
+            f"{r['role']}={'/'.join(r['held'])}≠{r['asked']}" for r in refutations)
+        out["role_refutations"] = refutations
+        out["core"] = None
+        out["text"] = ""
+        return
+
     known = [r for r in uncovered
              if store.has(r) or any(r in c for c in store.crosses.values())]
     if not known:

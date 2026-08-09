@@ -322,6 +322,7 @@ def ingest_documents(store: CrossStore, docs: List[Document],
             if len(s) < _min_chars(s):
                 continue
 
+            store.source_labels.add(doc.source)
             tagged = f"{s} (reported by {doc.source})"
             core, lang = _place(store, tagged, detect_on=s, doc_lang=doc_lang,
                                 context=heading)
