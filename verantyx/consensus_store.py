@@ -420,6 +420,33 @@ def ja_consensus_ask(
         for v in (r, r + PROPER_SUFFIX):
             if store.has(v) and v not in cores:
                 cores.append(v)
+    # Facet-overlap fallback — English has had this since candidates_for_query
+    # was written and Japanese never did, so the most natural legal question
+    # was unanswerable: 「過失」 is a facet of many articles and a core of
+    # none, and 「過失について定める条文は」 returned UNKNOWN_NO_EVIDENCE on a
+    # store holding six statutes that all provide for it.
+    #
+    # Same guard as the English path, for the same reason: consulted ONLY
+    # when nothing hit directly. Adding facet matches alongside a direct hit
+    # lets a high-mass generic core displace the thing actually asked about.
+    if not cores and qset:
+        from .lex_filters import is_junk_core
+
+        scored: List[Tuple[int, float, str]] = []
+        for core, cross in store.crosses.items():
+            # 「二」 arrived as a core carrying 1,015 facets on the six-statute
+            # store — a numeral that collected content belonging to real
+            # articles. Landing it on an arm gave every question a candidate
+            # with almost no evidence of its own, and the shell's minimum
+            # evidence went to zero, so 「過失」 refused despite having
+            # 刑法第二百九条 and 民法第七百九条 right there in the list.
+            if is_junk_core(core):
+                continue
+            overlap = len(qset & set(cross))
+            if overlap:
+                scored.append((-overlap, -store.mass(core), core))
+        scored.sort()
+        cores = [c for _o, _m, c in scored]
     if not cores:
         return {
             "verdict": "UNKNOWN_NO_EVIDENCE",
