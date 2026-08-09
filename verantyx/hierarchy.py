@@ -167,6 +167,13 @@ def build_router(children: Dict[str, "Node"]) -> CrossStore:
     router = CrossStore()
     if lines:
         ingest_documents(router, [Document(source="router", text="".join(lines))])
+        # The citation is appended to every sentence so it reaches provenance,
+        # which also made "router" a core of the routing store itself — a
+        # candidate arm that is not a branch. Faces already skip source
+        # labels; a core has to be removed outright.
+        for label in list(router.source_labels):
+            router.crosses.pop(label, None)
+            router.core_count.pop(label, None)
     return router
 
 
