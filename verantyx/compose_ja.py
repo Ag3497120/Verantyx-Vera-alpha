@@ -55,10 +55,28 @@ and left plenty that are not:
     詳細っこいエルシーブイである。
     犯罪係数はアドバンテージをエリミネーターとしている。
 
-The remaining failures are semantic, not grammatical: the walk supplies
-terms that co-occur in the store, and co-occurrence is not selectional fit.
-Nothing here can tell that アドバンテージ is a poor object for 犯罪係数, and
-the store does not contain the fact that would say so.
+## The wall is not selectional fit. It is that facets are not words.
+
+I took the residue for a selectional problem and learned (noun, particle,
+predicate) triples from the corpus to fix it — 8,805 of them over 2,291
+slots. It barely moved, and measuring why settled it:
+
+    88,789 distinct facets in the federation
+    of a 2,000 sample, 7.4% appear three or more times in the prose corpus
+    the other 93% are extraction fragments
+
+エリミネーター, コンキスタドール, 1980アイコ are real facets and none of
+them is a word a sentence can use. They are excellent for retrieval — the
+resolution ladder is right 100% of the time it answers, on exactly these —
+and useless as vocabulary, because a facet is whatever the reader cut out of
+a sentence, not a lexical item.
+
+Selection could only judge 43.8% of candidate fills anyway (3.8
+observations per slot), but that is the smaller problem. A generator over
+this store is choosing from a bag that is 93% not-words, and no amount of
+slot typing repairs that. What it needs is a vocabulary — terms attested as
+free-standing words — which is a different structure from the facet index
+and is not built here.
 
 ## What this is not
 
@@ -120,12 +138,86 @@ MIN_LEN, MAX_LEN = 8, 40
 MIN_HOLES, MAX_HOLES = 2, 3
 
 
+#: (particle, predicate) -> the nouns the corpus actually put in that slot.
+#: The wall after grammar: co-occurrence in a store is not selectional fit,
+#: and nothing in a cross says that アドバンテージ is a poor object for
+#: 犯罪係数. The corpus says it, thousands of times, by never writing it.
+SELECTION: Dict[Tuple[str, str], Counter] = defaultdict(Counter)
+
+#: Backing off to the suffix. 5,433 triples over this corpus is sparse — a
+#: specific noun is usually unseen in a specific slot even when its KIND is
+#: attested. 被害/損失/災害 all end differently, but 地震被害 and 経済損失
+#: share their heads with them, so the last one or two characters carry most
+#: of what a slot selects for.
+SELECTION_TAIL: Dict[Tuple[str, str], Counter] = defaultdict(Counter)
+
+_PRED_HEAD = re.compile(r"^([㐀-䶿一-鿿]{1,6})(する|した|される|し|され|できる)")
+_SLOT_PARTICLES = "をにでとがは"
+
+
+def learn_selection(texts: Iterable[Tuple[str, str]]) -> Dict[str, int]:
+    """Read (noun, particle, predicate) from prose. Learned, never listed.
+
+    A slot's preferences are a fact about usage, and usage is what a corpus
+    is. Writing a table by hand would encode my guesses about Japanese into
+    a system whose whole claim is that it only repeats what it was shown.
+    """
+    n = 0
+    for _source, body in texts:
+        for s in re.split(r"[。\n]", body or ""):
+            ms = list(_CONTENT.finditer(s))
+            for i, m in enumerate(ms[:-1]):
+                after = s[m.end():m.end() + 1]
+                if after not in _SLOT_PARTICLES:
+                    continue
+                pm = _PRED_HEAD.match(s[ms[i + 1].start():])
+                if not pm:
+                    continue
+                noun, verb = m.group(0), pm.group(1)
+                if not (2 <= len(noun) <= 8 and 1 <= len(verb) <= 6):
+                    continue
+                SELECTION[(after, verb)][noun] += 1
+                SELECTION_TAIL[(after, verb)][noun[-2:]] += 1
+                SELECTION_TAIL[(after, verb)][noun[-1:]] += 1
+                n += 1
+    return {"triples": n, "slots": len(SELECTION)}
+
+
+def selects(noun: str, particle: str, verb: str) -> Optional[bool]:
+    """Has the corpus put this kind of noun in this slot?
+
+    Three answers, and the third is the important one. True: attested,
+    exactly or by its ending. False: the slot is well attested and nothing
+    like this noun appears in it. None: the slot itself is barely seen, so
+    the corpus has no opinion and refusing on that basis would be inventing
+    a rule.
+    """
+    key = (particle, verb)
+    seen = SELECTION.get(key)
+    if not seen:
+        return None
+    if noun in seen:
+        return True
+    tails = SELECTION_TAIL.get(key) or Counter()
+    if noun[-2:] in tails or noun[-1:] in tails:
+        return True
+    return False if sum(seen.values()) >= SELECTION_MIN else None
+
+
+#: Below this many observations a slot has no opinion worth acting on.
+SELECTION_MIN = 5
+
+
 @dataclass
 class Form:
     """One sentence shape, with a case per hole and where it came from."""
 
     template: str
     cases: List[str] = field(default_factory=list)
+    #: (particle, predicate) per hole where one is visible, else None.
+    #: This is what lets a fill be checked against SELECTION rather than
+    #: only against its case.
+    slots: List[Optional[Tuple[str, str]]] = field(default_factory=list)
     count: int = 0
     example: str = ""
     source: str = ""
@@ -183,11 +275,20 @@ def harvest(
                 continue
             parts: List[str] = []
             cases: List[str] = []
+            slots: List[Optional[Tuple[str, str]]] = []
             pos = 0
-            for m in _CONTENT.finditer(s):
+            marks = list(_CONTENT.finditer(s))
+            for j, m in enumerate(marks):
                 parts.append(s[pos:m.start()])
                 parts.append(f"<{len(cases)}>")
                 cases.append(_case_after(s, m.end()))
+                part = s[m.end():m.end() + 1]
+                pred = None
+                if part in _SLOT_PARTICLES and j + 1 < len(marks):
+                    pm = _PRED_HEAD.match(s[marks[j + 1].start():])
+                    if pm:
+                        pred = (part, pm.group(1))
+                slots.append(pred)
                 pos = m.end()
             parts.append(s[pos:])
             tpl = "".join(parts)
@@ -197,8 +298,8 @@ def harvest(
                 continue
             f = forms.get(tpl)
             if f is None:
-                forms[tpl] = Form(template=tpl, cases=cases, count=1,
-                                  example=s, source=source)
+                forms[tpl] = Form(template=tpl, cases=cases, slots=slots,
+                                  count=1, example=s, source=source)
             else:
                 f.count += 1
     return forms
@@ -279,8 +380,14 @@ def compose(
         picks: List[str] = [subject]
         used: Set[str] = {subject}
         ok = True
-        for case in form.cases[1:]:
+        for hole, case in enumerate(form.cases[1:], start=1):
+            slot = form.slots[hole] if hole < len(form.slots) else None
             cand = [t for t in pool if t not in used and fits(t, case)]
+            if slot:
+                # Attested first, unknown next, never one the corpus rejects.
+                yes = [t for t in cand if selects(t, slot[0], slot[1]) is True]
+                maybe = [t for t in cand if selects(t, slot[0], slot[1]) is None]
+                cand = yes + maybe
             if not cand:
                 ok = False
                 break
