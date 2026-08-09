@@ -270,6 +270,29 @@ def selects(noun: str, particle: str, verb: str) -> Optional[bool]:
 SELECTION_MIN = 5
 
 
+#: What a sentence SHAPE claims about whatever fills it. Prohibition is
+#: listed before permission because 「することができない」 contains no
+#: substring of 「することができる」 but 「してはならない」 must not be read
+#: as the obligation 「ならない」 alone.
+#: Written to OVER-refuse. A licence that misses a modality invents an
+#: obligation; one that fires too often writes a plainer sentence. The first
+#: version anchored on 「することができない」 and 「してはならない」 and was
+#: audited at five survivors per 315 sentences, every one a hole breaking the
+#: pattern up — 「することはできない」 with the topic は inserted, 「くこと
+#: ができる」 on a stem that is not る, and a bare 「地震できる」. So the
+#: できる/できない test is now unanchored.
+_MODALITY: List[Tuple[str, Any]] = [
+    ("prohibition", re.compile(
+        r"できない|得ない|てはならない|てはいけない|限りでない"
+        r"|ことを禁ずる|ずるものでない")),
+    ("obligation", re.compile(
+        r"なければならない|するものとする|を要する|べきである|べきもの"
+        r"|しなければいけない|に処する|ねばならない")),
+    ("permission", re.compile(
+        r"できる|して差し支えない|することを妨げない|してもよい|て差し支えない")),
+]
+
+
 @dataclass
 class Form:
     """One sentence shape, with a case per hole and where it came from."""
@@ -289,13 +312,34 @@ class Form:
         return len(self.cases)
 
     @property
-    def register(self) -> str:
-        """norm / record / unknown — what this SHAPE asserts, before filling.
+    def modality(self) -> str:
+        """obligation / prohibition / permission / none — what this SHAPE
+        asserts, before anything fills it.
 
         A form is not neutral about the relation it states. 「〜しなければ
-        ならない」 asserts an obligation whoever fills the holes, and a store
-        that holds co-occurrence has no obligation to report.
+        ならない」 asserts a duty whoever fills the holes, and a store that
+        holds co-occurrence has no duty to report.
+
+        Separate from `fusion.register_of` on purpose, and wider. That
+        classifier is calibrated for the answer path, where it refines a
+        field's declared register and is deliberately narrow — it fires on
+        17.4% of statute sentences and stays silent elsewhere. Reused here it
+        under-fired on exactly the modality that matters most: 「〜すること
+        ができない」 and 「〜てはならない」 both came back `unknown`, so a
+        first version of this licence let 「アダルトアニメは、制作される
+        ことができない。」 through. Silence is the right default when
+        refining a register and the wrong one when granting a licence.
         """
+        for name, rx in _MODALITY:
+            if rx.search(self.template):
+                return name
+        return "none"
+
+    @property
+    def register(self) -> str:
+        """norm when the shape asserts any modality, else the classifier's."""
+        if self.modality != "none":
+            return "norm"
         from .fusion import register_of
 
         return register_of(self.template + "。")
