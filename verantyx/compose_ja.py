@@ -71,8 +71,33 @@ resolution ladder is right 100% of the time it answers, on exactly these —
 and useless as vocabulary, because a facet is whatever the reader cut out of
 a sentence, not a lexical item.
 
-Selection could only judge 43.8% of candidate fills anyway (3.8
-observations per slot), but that is the smaller problem. A generator over
+## The selection layer had the same blind spot as the vocabulary
+
+Learned from encyclopedia prose alone it was too thin to act on: 8,805
+triples over 2,291 slots, 3.8 observations each. Adding the 29.6M
+characters of statute body that the vocabulary needed anyway:
+
+    encyclopedia only   8,805 triples   2,291 slots   3.8 obs   119 forms
+    + statute bodies  382,884          8,545        44.8       478
+
+    に関〜   50,144  施行 罰則 給与 実施
+    を有〜   12,768  効力 権利 資格 経験
+    を記載〜  5,783  事項 理由 氏名 内容
+
+Ten times the slots and twelve times the density, and the forms follow the
+register they came from — output now reads like a statute because most of
+what attests it is one:
+
+    事情は、いつでも届出を選択することができる。
+    西文化圏において関係とする。
+
+The share of fills selection can judge FELL, 43.8% to 32.7%, and that is
+not a regression. Thin data said "no opinion" less often because a slot
+with three observations rejects almost nothing; a slot with forty-five
+knows what does not belong there.
+
+Selection could only judge 43.8% of candidate fills at first (3.8
+observations per slot), but that was the smaller problem. A generator over
 this store is choosing from a bag that is 93% not-words.
 
 ## The vocabulary layer, and what it fixed
