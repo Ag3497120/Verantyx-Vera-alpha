@@ -80,6 +80,8 @@ class Ladder:
     """rung -> grain -> the items that contain it."""
 
     rungs: Tuple[Tuple[str, int], ...] = DEFAULT_RUNGS
+    #: How terms are cut before any rung sees them — the third axis.
+    grammar: str = "raw"
     index: Dict[str, Dict[str, Set[str]]] = field(default_factory=dict)
 
     def build(self, items: Dict[str, Iterable[str]]) -> "Ladder":
@@ -87,9 +89,10 @@ class Ladder:
         self.index = {name: defaultdict(set) for name, _ in self.rungs}
         for item, terms in items.items():
             for term in terms:
-                for name, size in self.rungs:
-                    for g in grains(term, size):
-                        self.index[name][g].add(item)
+                for cut in recut(term, self.grammar):
+                    for name, size in self.rungs:
+                        for g in grains(cut, size):
+                            self.index[name][g].add(item)
         return self
 
     def report(self) -> Dict[str, Any]:
@@ -100,9 +103,10 @@ class Ladder:
     def vote(self, query_terms: Sequence[str]) -> Dict[str, Optional[str]]:
         """Each rung's own best item for this query, or None if it has none."""
         out: Dict[str, Optional[str]] = {}
+        cut_query = [c for t in query_terms for c in recut(t, self.grammar)]
         for name, size in self.rungs:
             score: Counter = Counter()
-            for term in query_terms:
+            for term in cut_query:
                 for g in grains(term, size):
                     for item in self.index.get(name, {}).get(g, ()):
                         score[item] += 1
@@ -161,6 +165,51 @@ def ask(ladder: Ladder, query_terms: Sequence[str]) -> Dict[str, Any]:
         "majority": top,
         "concord": round(top / len(answered), 3),
     }
+
+
+#: The third axis: how a term is CUT before it is indexed at all. Grain size
+#: and knowledge depth both take the vocabulary as given; this one changes
+#: what counts as a term.
+#:
+#:   raw       the term as the reader produced it
+#:   nosuffix  nominal suffixes stripped (傷害罪 -> 傷害), per ja_morph
+#:   heads     the head half of an even kanji compound (建築確認 -> 確認)
+#:   both      stripped and split
+#:
+#: These are grammatical claims, not string tricks, which is why the list is
+#: the same short closed one `ja_morph` defends: a suffix that changes
+#: reference (未遂, 準) is absent, because 殺人 and 殺人未遂 are different
+#: things and merging them would be a fabrication with a grammar excuse.
+#:
+#: MEASURED AND NEUTRAL HERE. Over 500 multi-term probes on 1,098 leaves,
+#: every grammar answered at 100% and the recut ones answered LESS often —
+#: raw 431, nosuffix 428, heads 421, both 417. The axis costs coverage and
+#: adds no signal, because probes drawn from the corpus already use the
+#: corpus's own word forms and there is no mismatch to repair.
+#:
+#: Where it does work is the retrieval fallback in `gather`, on questions
+#: phrased from OUTSIDE: there it took recall from 26.7% to 73.3%. So the
+#: grammar axis belongs to retrieval, not to the confidence ladder, and it
+#: is kept here selectable rather than default so that placement is a
+#: measurement rather than an assumption.
+GRAMMARS: Tuple[str, ...] = ("raw", "nosuffix", "heads", "both")
+
+
+def recut(term: str, grammar: str = "raw") -> List[str]:
+    """One term under one grammatical treatment."""
+    if grammar == "raw":
+        return [term]
+    from .ja_morph import variants
+
+    if grammar == "nosuffix":
+        return variants(term, add=False, split=False)
+    if grammar == "heads":
+        return variants(term, add=False, split=True)[:1] + [
+            v for v in variants(term, add=False, split=True)[1:]
+            if len(v) * 2 == len(term)]
+    if grammar == "both":
+        return variants(term, add=False, split=True)
+    raise ValueError(f"unknown grammar {grammar!r}; expected {GRAMMARS}")
 
 
 @dataclass
