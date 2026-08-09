@@ -1098,10 +1098,17 @@ def granularity_composes_fork() -> Dict[str, Any]:
     generated them. The control is the finding: what the character model
     contributes is not the characters, it is where they go.
 
+    Longer words compose from UNITS, not from characters: 公務員 is 公務+員,
+    not three characters chosen by position, which would propose 公再員. At
+    three and four characters the yield falls and the advantage RISES —
+    2字 x4.9, 3字 x15.5, 4字 x16.0 — because a random four-kanji string is
+    almost never Japanese (0.01%), so structure is doing nearly all of it.
+
     This fork asserts the ADVANTAGE, not the yield. A yield alone could be a
     fact about how many kanji pairs happen to be Japanese.
     """
-    from .granularity import decompose, propose, verify, control
+    from .granularity import (control, control_units, decompose,
+                              decompose_units, propose, propose_units, verify)
 
     # A miniature corpus with a real positional regularity: 災/断/給 begin,
     # 害/水/電 end, and the held-out text contains the crossings.
@@ -1115,16 +1122,25 @@ def granularity_composes_fork() -> Dict[str, Any]:
     got = verify(propose(model, top=6), held, min_standalone=2)
     ctl = verify(control(model, 40, seed=1), held, min_standalone=2)
 
+    # Three characters, composed from units rather than positions.
+    words3 = ["行政処分", "行政指導", "懲戒処分", "懲戒解雇"]
+    held3 = ("行政解雇の例はない。懲戒指導が行われた。懲戒指導。懲戒指導の記録。"
+             "行政解雇。行政解雇の通知。行政解雇。")
+    m3 = decompose_units(words3)
+    got3 = verify(propose_units(m3, length=4, top=8), held3, min_standalone=2)
+
     ok = (model.report()["words"] == 6
           and got["words"] >= 2                 # composed real strings
-          and got["words"] > ctl["words"])      # and beat the same characters
+          and got["words"] > ctl["words"]       # and beat the same characters
+          and got3["words"] >= 2)               # and units compose too
     return {
         "experiment": "cross_geometry",
         "fork": "GRANULARITY_COMPOSES",
         "pass": bool(ok),
         "result": {"model": model.report(),
                    "proposed_words": got["words"], "proposed_top": got["top"][:5],
-                   "control_words": ctl["words"]},
+                   "control_words": ctl["words"],
+                   "unit_composition": got3["top"][:4]},
     }
 
 

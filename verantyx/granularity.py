@@ -128,6 +128,153 @@ def propose(
     return [w for _s, w in scored]
 
 
+# ---------------------------------------------------------------------------
+# Longer words are composed of UNITS, not of characters
+# ---------------------------------------------------------------------------
+
+#: How a word of length n is cut. Japanese compounds are morphemic, not
+#: positional: 公務員 is 公務+員 and 再開発 is 再+開発, so a three-character
+#: proposal is a two-character word beside a one-character affix — never
+#: three characters chosen by position, which would propose 公再員.
+SPLITS: Dict[int, Tuple[Tuple[int, int], ...]] = {
+    2: ((1, 1),),
+    3: ((2, 1), (1, 2)),
+    4: ((2, 2), (3, 1), (1, 3)),
+    5: ((3, 2), (2, 3)),
+}
+
+
+@dataclass
+class UnitModel:
+    """Which units of each length open and close the words of a corpus.
+
+    A superset of CharModel: at (1,1) the units are characters and this is
+    the same model. The reason to generalise is that the productive layer of
+    Japanese compounding is the morpheme — 損害 + 賠償, 行政 + 処分 — and a
+    character-position model cannot see it.
+    """
+
+    #: (part length, position) -> unit -> count, position in {"L", "R"}
+    slots: Dict[Tuple[int, str], Counter] = field(default_factory=dict)
+    units: Dict[int, Set[str]] = field(default_factory=dict)
+    source_words: Set[str] = field(default_factory=set)
+
+    def _slot(self, size: int, side: str) -> Counter:
+        return self.slots.setdefault((size, side), Counter())
+
+    def report(self) -> Dict[str, Any]:
+        return {
+            "words": len(self.source_words),
+            "units_by_length": {k: len(v) for k, v in sorted(self.units.items())},
+            "slots": {f"{k[0]}{k[1]}": len(v) for k, v in sorted(self.slots.items())},
+        }
+
+
+def decompose_units(
+    words: Iterable[str], *, lengths: Sequence[int] = (2, 3, 4),
+) -> UnitModel:
+    """Read a vocabulary as units in left and right positions.
+
+    A unit is only counted as such when the WHOLE word it came from is in
+    the vocabulary, so 賠償 earns its right-hand slot from 損害賠償 rather
+    than from any string that happens to end in those characters.
+    """
+    m = UnitModel()
+    kept = [w.strip() for w in words if w and _KANJI.match(w.strip())]
+    m.source_words = set(kept)
+    for w in kept:
+        m.units.setdefault(len(w), set()).add(w)
+    for w in kept:
+        for a, b in SPLITS.get(len(w), ()):
+            m._slot(a, "L")[w[:a]] += 1
+            m._slot(b, "R")[w[a:]] += 1
+    return m
+
+
+def propose_units(
+    model: UnitModel,
+    *,
+    length: int = 3,
+    top: int = 60,
+    exclude: Optional[Set[str]] = None,
+) -> List[str]:
+    """Compositions of ``length`` the vocabulary does not already hold.
+
+    Every split of that length is tried and the results merged, so a
+    three-character proposal may be 2+1 or 1+2 and a reader cannot tell
+    which — nor should they, since both are ordinary Japanese.
+    """
+    known = set(model.source_words) | set(exclude or ())
+    scored: Dict[str, int] = {}
+    for a, b in SPLITS.get(length, ()):
+        left = model.slots.get((a, "L"), Counter()).most_common(top)
+        right = model.slots.get((b, "R"), Counter()).most_common(top)
+        for l, lc in left:
+            for r, rc in right:
+                w = l + r
+                if len(w) != length or w in known:
+                    continue
+                scored[w] = max(scored.get(w, 0), lc * rc)
+    return [w for w, _s in sorted(scored.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def control_units(
+    model: UnitModel,
+    n: int,
+    *,
+    length: int = 3,
+    seed: int = 0,
+    exclude: Optional[Set[str]] = None,
+) -> List[str]:
+    """The same units, paired at random. The number a proposal must beat."""
+    import random
+
+    rng = random.Random(seed)
+    known = set(model.source_words) | set(exclude or ())
+    pools: List[Tuple[List[str], List[str]]] = []
+    for a, b in SPLITS.get(length, ()):
+        L = sorted(model.slots.get((a, "L"), Counter()))
+        R = sorted(model.slots.get((b, "R"), Counter()))
+        if L and R:
+            pools.append((L, R))
+    if not pools:
+        return []
+    out: Set[str] = set()
+    for _ in range(n * 8):
+        L, R = pools[rng.randrange(len(pools))]
+        w = rng.choice(L) + rng.choice(R)
+        if len(w) == length and w not in known:
+            out.add(w)
+        if len(out) >= n:
+            break
+    return sorted(out)
+
+
+def discover_units(
+    words: Iterable[str],
+    held_out: str,
+    *,
+    length: int = 3,
+    top: int = 60,
+    min_standalone: int = MIN_STANDALONE,
+) -> Dict[str, Any]:
+    """Compose at ``length``, verify against held-out text, report the lift."""
+    model = decompose_units(words)
+    proposals = propose_units(model, length=length, top=top)
+    got = verify(proposals, held_out, min_standalone=min_standalone)
+    ctl = verify(control_units(model, len(proposals), length=length),
+                 held_out, min_standalone=min_standalone)
+    lift = (got["word_rate"] / ctl["word_rate"]) if ctl["word_rate"] else None
+    return {
+        "length": length,
+        "model": model.report(),
+        "proposed": got,
+        "control": ctl,
+        "lift_over_chance": round(lift, 2) if lift else None,
+        "verdict": "ANSWER" if lift and lift > 1.0 else "UNKNOWN_NO_ADVANTAGE",
+    }
+
+
 def standalone_count(word: str, text: str) -> int:
     """How often ``word`` appears not flanked by further kanji.
 
