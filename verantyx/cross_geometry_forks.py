@@ -412,6 +412,134 @@ def placement_cannot_manufacture_confidence_fork() -> Dict[str, Any]:
     }
 
 
+def ja_coverage_gate_fork() -> Dict[str, Any]:
+    """The Japanese path must refuse a question it did not address.
+
+    `consensus_over_store` ran three gates; `ja_consensus_ask` ran none. So
+    on the language this engine was built for, a two-party question came
+    back as a confident answer about one party:
+
+        「甲は乙を脅迫した。乙は丙を傷害した。」
+        ask 「甲 丙」 -> ANSWER 「甲は主犯、乙、脅迫」
+
+    Every word of that is true and it is still a fabrication, because 丙 was
+    asked about and silently dropped. Three cases are pinned: the covered
+    question still answers, the uncovered one refuses, and an entirely
+    unknown term is REPORTED rather than refused — that one is a vocabulary
+    gap, and conflating it with a reading failure would send it to the wrong
+    queue.
+    """
+    from .consensus_store import ja_consensus_ask
+    from .document_ingest import Document, ingest_documents
+
+    store = CrossStore()
+    ingest_documents(store, [Document(
+        source="事件記録",
+        text="甲は乙を脅迫した。乙は丙を傷害した。丙は負傷した。甲は主犯である。")])
+
+    covered = ja_consensus_ask(store, "甲 乙")
+    dropped = ja_consensus_ask(store, "甲 丙")
+    unknown = ja_consensus_ask(store, "甲 未知語")
+
+    ok = (covered.get("verdict") == "ANSWER"
+          and dropped.get("verdict") != "ANSWER"
+          and "丙" in (dropped.get("uncovered_terms") or [])
+          and unknown.get("verdict") == "ANSWER"
+          and "未知語" in (unknown.get("uncovered_terms") or []))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "JA_COVERAGE_GATE",
+        "pass": bool(ok),
+        "result": {
+            "covered": covered.get("verdict"),
+            "dropped_party": {"verdict": dropped.get("verdict"),
+                              "uncovered": dropped.get("uncovered_terms")},
+            "unknown_term": {"verdict": unknown.get("verdict"),
+                             "uncovered": unknown.get("uncovered_terms")},
+        },
+    }
+
+
+def placement_invariance_fork() -> Dict[str, Any]:
+    """An answer that depends on an arbitrary tie-break must not stand.
+
+    Placement cannot add information: the store holds the same facts either
+    way, and only which four reach the faces changes. So a core that wins
+    under one arbitrary ordering of equally-scored facts and loses under
+    another won on the ordering. Same argument shape as "layout cannot add
+    information" in docs/METAMORPHIC.md, and the same property — no answer
+    key, no human, no model, both readings in this process.
+
+    Two halves, and the second is what stops this being a gate that simply
+    refuses everything: an answer grounded in counts the store can actually
+    tell apart must SURVIVE, because ties are not what carried it.
+
+    The fixture needs RIVALS. A single-arm store was the first attempt and
+    the gate could never fire on it: with one candidate the core wins
+    whatever occupies the faces, so the two readings always agree on the
+    core and only the text differs — which is placement doing its ordinary
+    job, not an artifact. Fabrication needs somebody to beat.
+    """
+    import random
+
+    from .consensus_store import candidates_for_query, consensus_over_store
+
+    # Six rivals, every facet count 1, each carrying eight of twelve aspects.
+    # The whole ordering is therefore a tie-break, and a descriptive question
+    # that several of them satisfy can only be "won" by the tie-break.
+    aspects = [f"asp{chr(97 + i)}" for i in range(12)]
+    rng = random.Random(5)
+    tied = CrossStore()
+    for i in range(6):
+        core = f"unit{chr(97 + i)}"
+        for a in rng.sample(aspects, 8):
+            tied.ingest_sentence(f"{core} has {a}")
+    # This exact question is a fabrication under the default tie-break:
+    # FOUR of the six units carry both aspd and aspf, and the engine names
+    # one of them. The owner count is asserted below so that a fixture drift
+    # which made the question legitimately decidable would fail here rather
+    # than quietly turn this into a test of nothing.
+    q = "what has aspd aspf"
+    owners = [c for c in candidates_for_query(tied, q, k=6)
+              if "aspd" in tied.crosses[c] and "aspf" in tied.crosses[c]]
+    tied_off = consensus_over_store(tied, q)
+    tied_on = consensus_over_store(tied, q, placement_invariant=True)
+
+    # Counts differ -> the top four are not tied -> the gate must not fire.
+    weighted = CrossStore()
+    for _ in range(5):
+        weighted.ingest_sentence("gadget is heavy")
+    for _ in range(4):
+        weighted.ingest_sentence("gadget is fast")
+    for _ in range(3):
+        weighted.ingest_sentence("gadget is small")
+    for _ in range(2):
+        weighted.ingest_sentence("gadget is quiet")
+    weighted.ingest_sentence("gadget is rare")
+    w_on = consensus_over_store(weighted, "what is gadget heavy",
+                                placement_invariant=True)
+
+    ok = (len(owners) > 1                       # the question IS undecidable
+          and tied_off.get("verdict") == "ANSWER"   # and the engine answered it
+          and tied_on.get("verdict") != "ANSWER"    # and the gate refuses it
+          and tied_on.get("reason") == "placement_dependent_answer"
+          and w_on.get("verdict") == "ANSWER"       # without refusing everything
+          and w_on.get("placement_invariant") is True)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "PLACEMENT_INVARIANCE",
+        "pass": bool(ok),
+        "result": {
+            "owners_of_the_question": owners,
+            "all_ties_gate_off": tied_off.get("verdict"),
+            "all_ties_gate_on": {"verdict": tied_on.get("verdict"),
+                                 "reason": tied_on.get("reason")},
+            "distinct_counts_gate_on": {"verdict": w_on.get("verdict"),
+                                        "invariant": w_on.get("placement_invariant")},
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -463,6 +591,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_granularity_fork(),
         placement_simulation_fork(),
         placement_cannot_manufacture_confidence_fork(),
+        placement_invariance_fork(),
+        ja_coverage_gate_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

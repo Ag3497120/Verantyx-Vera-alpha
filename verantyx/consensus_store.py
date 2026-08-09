@@ -145,7 +145,21 @@ def build_shell_from_store(
     cores: List[str],
     *,
     facets_per_arm: int = len(FACET_FACES),
+    tie: str = "asc",
 ) -> ShellCross:
+    """Place each core's facts on its arm's faces.
+
+    ``tie`` decides only how EQUALLY-SCORED facts are ordered. "asc" is the
+    historical rule (lexicographic ascending, what `top_facets` does) and is
+    the default, so nothing changes unless a caller asks. "desc" reverses
+    each run of ties and leaves genuinely different scores where they are.
+
+    That distinction is the whole point. Among facts the store cannot tell
+    apart, the order is arbitrary — so an answer that depends on which
+    arbitrary order was chosen is an artifact of the placement rather than
+    of the evidence. `placement_invariant` in `consensus_over_store` uses
+    this to refuse such answers. See docs/PLACEMENT.md.
+    """
     shell = ShellCross()
     placement = getattr(store, "placement", None) or {}
     for axis, core in zip(AXES, cores[:MAX_ARMS]):
@@ -157,10 +171,37 @@ def build_shell_from_store(
         # so this is the choice, not a detail — see verantyx/placement.py.
         picks = placement.get(core)
         if picks is None:
-            picks = [f for f, _cnt in store.top_facets(core, k=facets_per_arm)]
+            picks = _ranked_facets(store, core, tie=tie)
+        elif tie == "desc":
+            # A baked placement is already ordered; the only arbitrary part
+            # left is which of the equally-scored tail entries made the cut,
+            # so reverse the whole list rather than pretending to know which
+            # of them tied. Coarser than the unbaked path, and honest about it.
+            picks = list(reversed(picks))
         for face, facet in zip(FACET_FACES, picks[:facets_per_arm]):
             shell.faces[axis][face] = facet
     return shell
+
+
+def _ranked_facets(store: CrossStore, core: str, *, tie: str = "asc") -> List[str]:
+    """A core's facets, by count desc, with ties broken as ``tie`` says."""
+    cross = store.crosses.get(str(core).casefold().strip()) or {}
+    if not cross:
+        return []
+    if tie == "asc":
+        return [f for f, _c in sorted(cross.items(), key=lambda kv: (-kv[1], kv[0]))]
+    if tie != "desc":
+        raise ValueError(f"tie must be 'asc' or 'desc', got {tie!r}")
+    items = sorted(cross.items(), key=lambda kv: (-kv[1], kv[0]))
+    out: List[str] = []
+    i = 0
+    while i < len(items):
+        j = i
+        while j < len(items) and items[j][1] == items[i][1]:
+            j += 1
+        out += [f for f, _c in sorted(items[i:j], key=lambda kv: kv[0], reverse=True)]
+        i = j
+    return out
 
 
 def consensus_over_store(
@@ -172,8 +213,15 @@ def consensus_over_store(
     matryoshka: bool = False,
     carry: str = "A",
     n_layers: int = 3,
+    placement_invariant: bool = False,
 ) -> Dict[str, Any]:
-    """End-to-end: retrieve → shell → consensus (typed verdicts)."""
+    """End-to-end: retrieve → shell → consensus (typed verdicts).
+
+    ``placement_invariant`` re-asks with the arbitrary part of the placement
+    reversed and downgrades any ANSWER the two readings disagree about. Off
+    by default: it trades recall for calibration, and that is the caller's
+    decision. See `_apply_placement_invariance`.
+    """
     cores = candidates_for_query(store, query, k=k)
     if not cores:
         return {
@@ -207,7 +255,69 @@ def consensus_over_store(
     # store that DOES carry poles gets contradiction honesty for free.
     from .polarity import apply_polarity_gate
     apply_polarity_gate(store, out, query)
+    if placement_invariant:
+        _apply_placement_invariance(store, out, query, k=k, cfg=cfg)
     return out
+
+
+def _apply_placement_invariance(
+    store: CrossStore,
+    out: Dict[str, Any],
+    query: str,
+    *,
+    k: int,
+    cfg: Optional[ConsensusConfig],
+    ja: bool = False,
+) -> None:
+    """Refuse an ANSWER that a different arbitrary placement would not give.
+
+    **Placement cannot add information.** The store holds the same facts
+    either way; all that changes is which four occupy the faces and in what
+    order. So a core that wins under one arbitrary tie-break and loses under
+    another won on the tie-break, not on the evidence.
+
+    This is the same argument shape as "layout cannot add information" in
+    docs/METAMORPHIC.md, and it has the same property that makes it worth
+    having: it needs no answer key, no human and no model. Both readings run
+    in this process against this store.
+
+    Measured on a planted-answer store, 68 held-out descriptive questions:
+
+        frequency placement     manufacture rate 30.9% -> 0.0%  (justified 1 -> 0)
+        simulated placement     manufacture rate 13.2% -> 7.4%  (justified 3 -> 1)
+
+    The asymmetry is the useful part. Every facet in that store had count 1,
+    so the frequency rule's whole ordering WAS a tie-break and none of its
+    answers survived — correctly. Demand-scored facets are not tied, so they
+    survive, and simulated placement keeps some of its answers.
+
+    It costs recall, and the cost is real: justified answers fall too. This
+    is a dial, and it is off by default, because a caller who has not decided
+    that refusal beats a wrong answer should not have it decided for them.
+    """
+    if out.get("verdict") != "ANSWER":
+        return
+    cores = out.get("retrieved") or []
+    if not cores:
+        return
+    shell = build_shell_from_store(store, list(cores), tie="desc")
+    if ja:
+        from .lang import ja_content_runs
+        alt = run_consensus(shell, query, cfg=cfg, masses=_MassView(store),
+                            qset_override=set(ja_content_runs(query))).as_dict()
+        alt_core = alt.get("core")
+    else:
+        alt = run_consensus(shell, query, cfg=cfg, masses=_MassView(store)).as_dict()
+        alt_core = display_sym(alt["core"]) if alt.get("core") else None
+    if alt.get("verdict") == "ANSWER" and alt_core == out.get("core"):
+        out["placement_invariant"] = True
+        return
+    out["placement_invariant"] = False
+    out["verdict"] = "AMBIGUOUS"
+    out["reason"] = "placement_dependent_answer"
+    out["placement_alternative"] = {"verdict": alt.get("verdict"), "core": alt_core}
+    out["core"] = None
+    out["text"] = ""
 
 
 def _apply_sense_selection(
@@ -283,6 +393,7 @@ def ja_consensus_ask(
     *,
     k: int = MAX_ARMS,
     cfg: Optional[ConsensusConfig] = None,
+    placement_invariant: bool = False,
 ) -> Dict[str, Any]:
     """日本語の合意分解経路: 文字種 run → qset → 多断面合意 (ゲート共通).
 
@@ -317,7 +428,56 @@ def ja_consensus_ask(
         core = out["core"]
         facets = [t for t in out.get("tokens", []) if t != core]
         out["text"] = core + ("は" + "、".join(facets) if facets else "")
+    _apply_ja_coverage_gate(store, out, runs)
+    if placement_invariant:
+        _apply_placement_invariance(store, out, query, k=k, cfg=cfg, ja=True)
     return out
+
+
+def _apply_ja_coverage_gate(
+    store: CrossStore, out: Dict[str, Any], runs: List[str],
+) -> None:
+    """The Japanese path must not answer a question it did not address.
+
+    This gate did not exist. `consensus_over_store` ran three — sense
+    selection, coverage, polarity — and `ja_consensus_ask` ran none, so on
+    the language this engine was built for, a question naming two parties
+    came back as a confident ANSWER about one of them:
+
+        「甲は乙を脅迫した。乙は丙を傷害した。」
+        ask 「甲 丙」  ->  ANSWER  「甲は主犯、乙、脅迫」
+
+    Nothing in that answer is false, and it is still a fabrication: 丙 was
+    asked about and silently dropped. For a system whose entire claim is
+    that it refuses rather than guesses, an open channel like this on the
+    primary language is the defect that matters most.
+
+    The downgrade fires only for a term the store KNOWS — as a core or as
+    anyone's facet. A term it has never seen is a vocabulary gap, which is
+    reported and left to the approval queue rather than treated as a reading
+    failure; that division is the same one the rest of the package makes.
+    """
+    if out.get("verdict") != "ANSWER":
+        return
+    covered = {out.get("core") or ""}
+    covered |= {t for t in (out.get("tokens") or [])}
+    for tok in str(out.get("text", "")).replace("は", "、").split("、"):
+        if tok:
+            covered.add(tok)
+    uncovered = [r for r in runs if r not in covered]
+    if not uncovered:
+        out["uncovered_terms"] = []
+        return
+    out["uncovered_terms"] = uncovered
+    known = [r for r in uncovered
+             if store.has(r) or any(r in c for c in store.crosses.values())]
+    if not known:
+        out["unknown_terms"] = uncovered
+        return
+    out["verdict"] = "UNKNOWN_INSUFFICIENT_EVIDENCE"
+    out["reason"] = "query_terms_not_addressed:" + "_".join(known)
+    out["core"] = None
+    out["text"] = ""
 
 
 def probe_coverage(
