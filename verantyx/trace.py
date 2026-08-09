@@ -157,6 +157,65 @@ def _pick(store: Any, candidates: Sequence[str], t: Trace) -> str:
     return max(ordered, key=lambda f: len(_facets(store, f) & anchor))
 
 
+def export_view(
+    root: Any,
+    traces: Sequence["Trace"],
+    *,
+    max_nodes: int = 4000,
+) -> Dict[str, Any]:
+    """The real tree and the real walks, in a shape a viewer can draw.
+
+    Deliberately a RECORDING, not a feed. A published page cannot reach a
+    running process — the sandbox has no network — so anything claiming to
+    show inference "live" would be showing an animation of nothing. What
+    this exports is what actually happened: the tree that was built, and the
+    path a walk really took through it, with each step's own read-out.
+
+    Nodes are truncated at ``max_nodes`` and the real count is reported
+    beside the drawn one, for the same reason the simulator does it: a
+    federation of 1,600 leaves is drawable and one of 60 million is not, and
+    quietly drawing a sample as if it were the whole thing is the failure
+    this project keeps refusing.
+    """
+    nodes: List[Dict[str, Any]] = []
+    edges: List[List[int]] = []
+    idx: Dict[str, int] = {}
+    total = 0
+
+    def add(node: Any, parent: Optional[int], depth: int) -> None:
+        nonlocal total
+        total += 1
+        me = None
+        if len(nodes) < max_nodes:
+            me = len(nodes)
+            idx[node.name] = me
+            nodes.append({"name": node.name, "depth": depth,
+                          "leaf": node.is_leaf})
+            if parent is not None:
+                edges.append([parent, me])
+        for child in node.children.values():
+            add(child, me, depth + 1)
+
+    add(root, None, 0)
+
+    walks: List[Dict[str, Any]] = []
+    for t in traces:
+        walks.append({
+            "seed": t.seed,
+            "mode": t.mode,
+            "steps": [{"core": s["core"], "text": s.get("text", "")[:120],
+                       "node": idx.get(s["core"])}
+                      for s in t.steps],
+            "horizon": len(t.horizon),
+        })
+    return {
+        "nodes": nodes, "edges": edges,
+        "drawn_nodes": len(nodes), "real_nodes": total,
+        "truncated": total > len(nodes),
+        "walks": walks,
+    }
+
+
 def replay(store: Any, t: Trace) -> List[Dict[str, Any]]:
     """Read the path again against the current store.
 
