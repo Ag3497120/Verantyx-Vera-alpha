@@ -78,6 +78,16 @@ MIN_ENTITIES = 2
 _NUMERAL = re.compile(r"^[〇一二三四五六七八九十百千万0-9０-９]+$")
 
 
+#: Cores that are article enumeration, not entities. 3.3% of the cores in
+#: the reference federation are bare numerals — 三, 二, 五 — and a join
+#: whose evidence on both sides is those is a join between two lists.
+_BARE_NUMERAL = re.compile(r"^[〇一二三四五六七八九十百千]+$")
+
+
+def _real_entities(entities: Iterable[str]) -> List[str]:
+    return [e for e in entities if not _BARE_NUMERAL.match(e)]
+
+
 def usable(term: str) -> bool:
     """Is this a concept, or is it bookkeeping?
 
@@ -215,9 +225,42 @@ def delta(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+#: What kind of thing a field's documents are. A statute says what must be
+#: so; a commentary says what was. Read as poles those are opposite and they
+#: are not a disagreement, which is why 22.0% of joins came back
+#: "contradiction" before this distinction existed.
+REGISTERS = ("norm", "record", "unknown")
+
+#: Sentence endings that mark a claim as normative rather than reported.
+#: Narrow on purpose: measured over 8,572 statute sentences and 15,553
+#: encyclopedia ones, these fire on 17.4% of law and 1.3% of prose, and the
+#: descriptive set on 0.6% and 5.8%. They separate the registers where they
+#: fire and say nothing on the 82-93% where they do not — so they REFINE the
+#: field's declared register and never override it.
+_NORM = re.compile(
+    r"(なければならない|するものとする|してはならない|することができる"
+    r"|に処する|を要する|とする。?$)")
+_RECORD = re.compile(r"(した。?$|している|であった|された。?$|となった)")
+
+
+def register_of(text: str) -> str:
+    """norm / record / unknown, from a sentence's own ending."""
+    s = (text or "").strip()
+    if not s:
+        return "unknown"
+    n, d = bool(_NORM.search(s)), bool(_RECORD.search(s))
+    if n and not d:
+        return "norm"
+    if d and not n:
+        return "record"
+    return "unknown"
+
+
 def classify(
     fields: Dict[str, Dict[str, CrossStore]],
     point: "Point",
+    *,
+    registers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Is this join an agreement, a contradiction, or a complement?
 
@@ -251,10 +294,16 @@ def classify(
     from .ja_grammar import ASPECT_OF as _JA
 
     sides: Dict[str, Set[Tuple[str, str]]] = {}
+    witness: Dict[str, Set[str]] = {}
     for name, entities in point.by_field.items():
         poles: Set[Tuple[str, str]] = set()
+        seen_by: Set[str] = set()
         for store in (fields.get(name) or {}).values():
-            for entity in entities:
+            # Only entities that are entities. A bare numeral is article
+            # enumeration — 3.3% of cores in the reference federation — and
+            # every candidate that survived the register test was evidenced
+            # on both sides by nothing but those.
+            for entity in _real_entities(entities):
                 cross = store.crosses.get(entity)
                 if not cross:
                     continue
@@ -262,7 +311,9 @@ def classify(
                     hit = _JA.get(facet)
                     if hit:
                         poles.add((hit[0], hit[1]))
+                        seen_by.add(entity)
         sides[name] = poles
+        witness[name] = seen_by
 
     speaking = [n for n, p in sides.items() if p]
     if len(speaking) < 2:
@@ -278,14 +329,34 @@ def classify(
     clash = sorted(s for s in shared
                    if ((s, "+") in a and (s, "-") in b)
                    or ((s, "-") in a and (s, "+") in b))
+    if not clash:
+        return {"concept": point.concept, "kind": "AGREEMENT",
+                "fields": speaking[:2], "aspects": sorted(shared)[:4]}
+
+    # A norm and a record can carry opposite poles and disagree about
+    # nothing: the statute says a thing must be so, the commentary reports an
+    # occasion when it was not. Only two sides of the SAME register are
+    # candidates for contradiction.
+    reg = registers or {}
+    ra, rb = reg.get(speaking[0], "unknown"), reg.get(speaking[1], "unknown")
+    if "norm" in (ra, rb) and "record" in (ra, rb):
+        return {
+            "concept": point.concept, "kind": "NORM_VS_RECORD",
+            "fields": speaking[:2], "registers": [ra, rb],
+            "aspects": sorted(shared)[:4], "opposed": clash[:4],
+            "note": "one side prescribes, the other reports — opposite poles, "
+                    "no disagreement",
+        }
     return {
         "concept": point.concept,
-        "kind": "CONTRADICTION_CANDIDATE" if clash else "AGREEMENT",
+        "kind": "CONTRADICTION_CANDIDATE",
         "fields": speaking[:2],
+        "registers": [ra, rb],
         "aspects": sorted(shared)[:4],
         "opposed": clash[:4],
-        "caveat": ("same aspect, opposite poles — not yet checked to be "
-                   "about the same occasion") if clash else "",
+        "witnesses": {n: sorted(witness.get(n, ()))[:3] for n in speaking[:2]},
+        "caveat": "same register and opposite poles — still not checked to be "
+                  "about the same occasion",
     }
 
 
