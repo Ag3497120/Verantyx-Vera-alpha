@@ -152,6 +152,84 @@ def ingest_law(store: Any, path: Path, *, law: str = "") -> Dict[str, Any]:
             "sentences": len(sentences)}
 
 
+def divisions(path: Path, *, law: str = "") -> List[Dict[str, Any]]:
+    """The statute's own 編 / 章 / 節 structure, with its articles.
+
+    A statute is already a tree, drawn by the legislature: 刑法 is two 編
+    over 55 章 over 357 条. Partitioning it any other way — article-number
+    buckets, term clustering — would invent divisions where authoritative
+    ones exist, and a routing path through an invented group tells a reader
+    nothing about why the question went that way.
+
+    Returns one record per leaf division, each with the articles beneath it.
+    Articles outside any 章 (short statutes, supplementary provisions) come
+    back under a division named for the law itself, so nothing is dropped.
+    """
+    from .lang import ja_content_runs
+
+    root = ET.parse(Path(path)).getroot()
+    name = law or law_title(Path(path))
+
+    def title_of(el: Any, *tags: str) -> str:
+        for t in tags:
+            n = el.find(t)
+            if n is not None and (n.text or "").strip():
+                return (n.text or "").strip()
+        return ""
+
+    def articles_in(el: Any, marker: str, seen: set) -> List[Tuple[str, str, List[str]]]:
+        out: List[Tuple[str, str, List[str]]] = []
+        for art in el.iter("Article"):
+            t = art.find("ArticleTitle")
+            c = art.find("ArticleCaption")
+            atitle = (t.text or "").strip() if t is not None else ""
+            caption = (c.text or "").strip("（）()") if c is not None else ""
+            body = "".join((s.text or "") for s in art.iter("Sentence"))
+            if not (atitle and body):
+                continue
+            core = f"{name}{marker}{atitle}"
+            if core in seen:
+                continue
+            seen.add(core)
+            terms = [caption] if caption else []
+            terms += [r for r in ja_content_runs(body)
+                      if MIN_TERM <= len(r) <= MAX_TERM][:TERMS_PER_ARTICLE]
+            out.append((core, caption, list(dict.fromkeys(terms))))
+        return out
+
+    seen: set = set()
+    divs: List[Dict[str, Any]] = []
+
+    def collect(container: Any, part_title: str, marker: str) -> None:
+        # Chapters are the leaf division when they exist; a Part without
+        # Chapters becomes one itself. ElementTree has no parent pointer, so
+        # the Part title is carried down rather than looked up.
+        chapters = container.findall("Chapter")
+        for ch in chapters:
+            arts = articles_in(ch, marker, seen)
+            if arts:
+                divs.append({
+                    "law": name, "part": part_title, "marker": marker,
+                    "division": title_of(ch, "ChapterTitle") or name,
+                    "articles": arts,
+                })
+        rest = articles_in(container, marker, seen)
+        if rest:
+            divs.append({
+                "law": name, "part": part_title, "marker": marker,
+                "division": (part_title or f"{name}{marker or '本則'}") + "・他",
+                "articles": rest,
+            })
+
+    for scope, marker in ((".//MainProvision", ""), (".//SupplProvision", "附則")):
+        for node in root.findall(scope):
+            parts = node.findall("Part")
+            for pt in parts:
+                collect(pt, title_of(pt, "PartTitle"), marker)
+            collect(node, "", marker)
+    return divs
+
+
 def ingest_laws(store: Any, paths: Iterable[Path]) -> Dict[str, Any]:
     """Several laws into one store — the "one brain, many fields" shape.
 

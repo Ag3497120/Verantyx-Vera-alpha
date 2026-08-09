@@ -504,6 +504,29 @@ def cmd_placement(args) -> int:
     return _placement_main(argv)
 
 
+def cmd_sovereign(args) -> int:
+    """Documents in, one sovereign node out — every stage, in order.
+
+    ingest -> simulate placement -> plan the depth capacity requires ->
+    assemble routers -> federate -> descend real questions. Refuses to skip
+    a stage; a tree assembled without the placement simulation routes on
+    whichever four facts sorted first.
+    """
+    from .sovereign import main as _sovereign_main
+
+    argv: list = []
+    for d in args.domain:
+        argv += ["--domain", d]
+    for q in args.ask or []:
+        argv += ["--ask", q]
+    if args.questions:
+        argv += ["--questions", args.questions]
+    argv += ["--n-queries", str(args.n_queries), "--name", args.name]
+    if args.out:
+        argv += ["--out", args.out]
+    return _sovereign_main(argv)
+
+
 def cmd_self_audit(args) -> int:
     """Signals a defect leaves in the store, without anybody reading output.
 
@@ -853,6 +876,19 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--write", metavar="OUT",
                    help="bake the placement into a copy of the store")
     p.set_defaults(fn=cmd_placement)
+
+    p = sub.add_parser(
+        "sovereign",
+        help="build one federated node from documents, stage by stage")
+    p.add_argument("--domain", action="append", metavar="NAME=PATH", required=True,
+                   help="a field and the folder its documents live in")
+    p.add_argument("--ask", action="append", default=[],
+                   help="a question to descend after the build")
+    p.add_argument("--questions", help="a file of questions, one per line")
+    p.add_argument("--n-queries", type=int, default=200)
+    p.add_argument("--name", default="主権")
+    p.add_argument("--out", help="write the build record as JSON")
+    p.set_defaults(fn=cmd_sovereign)
 
     p = sub.add_parser(
         "self-audit",

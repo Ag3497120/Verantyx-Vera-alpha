@@ -262,37 +262,168 @@ def route(node: Node, query: str) -> Dict[str, Any]:
     out = ja_consensus_ask(node.router, query)
     if out.get("verdict") == "ANSWER" and out.get("core") in node.children:
         return {"verdict": "ANSWER", "child": out["core"], "node": node.name}
+    # A router that answers with a core which is not one of this node's
+    # children has not routed — it has named something off the tree. Passing
+    # its verdict through said ANSWER with no branch attached, and the
+    # descent crashed reaching for one. Downgraded here rather than guarded
+    # at the call site, because the caller should not have to know that an
+    # ANSWER from this function might not carry a destination.
+    verdict = out.get("verdict", "UNKNOWN_NO_EVIDENCE")
+    if verdict == "ANSWER":
+        verdict = "UNKNOWN_ROUTE_OFF_TREE"
     return {
-        "verdict": out.get("verdict", "UNKNOWN_NO_EVIDENCE"),
+        "verdict": verdict,
         "node": node.name,
+        "named": out.get("core"),
         "candidates": [c for c in (out.get("retrieved") or [])
                        if c in node.children],
         "reason": "no_branch_reachable",
     }
 
 
-def descend(root: Node, query: str, *, max_depth: int = 16) -> Dict[str, Any]:
-    """Walk from the root to a leaf, then answer there. Stops at a refusal."""
-    from .consensus_store import ja_consensus_ask
+def terms_beneath(node: Node) -> set:
+    """Every term anywhere under this node. Cached; build-time cost.
 
+    This is an INDEX, not a router. Kept separate on purpose: a router
+    infers which branch a question is about from four facts per arm, and is
+    bounded by CAPACITY; an index answers "is this string down there at
+    all", exactly, and is bounded only by memory. Conflating them would let
+    a 24-term claim be defended by a mechanism that is not doing the
+    24-term work.
+    """
+    cached = getattr(node, "_terms", None)
+    if cached is not None:
+        return cached
+    out: set = set()
+    if node.store is not None:
+        for core, cross in node.store.crosses.items():
+            out.add(core)
+            out |= set(cross)
+    for c in node.children.values():
+        out |= terms_beneath(c)
+    setattr(node, "_terms", out)
+    return out
+
+
+def probe(node: Node, runs: List[str]) -> Dict[str, Any]:
+    """Which children actually contain these terms.
+
+    The fallback for a question the router cannot place — and it refuses on
+    ambiguity exactly as the router does. Two subtrees containing 正当防衛
+    is not a tie to be broken; the criminal code and the civil code both
+    provide for it and naming one would be the fabrication this design is
+    built against.
+    """
+    hits: List[Tuple[int, str]] = []
+    for name, child in node.children.items():
+        have = terms_beneath(child)
+        n = sum(1 for r in runs if r in have)
+        if n:
+            hits.append((n, name))
+    if not hits:
+        return {"verdict": "UNKNOWN_NOT_PRESENT", "candidates": []}
+    best = max(h[0] for h in hits)
+    top = sorted(n for c, n in hits if c == best)
+    if len(top) > 1:
+        return {"verdict": "AMBIGUOUS", "candidates": top,
+                "reason": "several branches contain the query terms"}
+    return {"verdict": "ANSWER", "child": top[0],
+            "candidates": [n for _c, n in sorted(hits, reverse=True)][:6]}
+
+
+def descend(root: Node, query: str, *, max_depth: int = 32,
+            use_probe: bool = True) -> Dict[str, Any]:
+    """Walk from the root to a leaf, then answer there. Stops at a refusal.
+
+    Routing is tried first; ``use_probe`` allows the index fallback when it
+    refuses. With probing off, a 164-leaf tree answered 0 of 8 real
+    questions — correctly, because the root routes on eight terms and none
+    of them was asked. The router is what the capacity law describes; the
+    index is what makes a deep tree usable, and the two are reported apart
+    so a reading of one is never credited to the other.
+    """
+    from .consensus_store import ja_consensus_ask
+    from .lang import ja_content_runs
+
+    runs = ja_content_runs(query) or [query]
     path: List[str] = [root.name]
+    how: List[str] = []
     node = root
     for _ in range(max_depth):
         if node.is_leaf:
             break
         step = route(node, query)
+        used = "router"
+        if step["verdict"] != "ANSWER" and use_probe:
+            step = probe(node, runs)
+            used = "index"
         if step["verdict"] != "ANSWER":
-            return {"verdict": step["verdict"], "path": path,
+            return {"verdict": step["verdict"], "path": path, "via": how,
                     "stopped_at": node.name,
                     "candidates": step.get("candidates", []),
                     "reason": step.get("reason", "")}
         node = node.children[step["child"]]
         path.append(node.name)
+        how.append(used)
     if node.store is None:
-        return {"verdict": "UNKNOWN_EMPTY_LEAF", "path": path}
+        return {"verdict": "UNKNOWN_EMPTY_LEAF", "path": path, "via": how}
     out = ja_consensus_ask(node.store, query)
     out["path"] = path
+    out["via"] = how
     return out
+
+
+def gather(root: Node, query: str, *, limit: int = 12) -> Dict[str, Any]:
+    """Every leaf that holds the query's terms, each answered where it lives.
+
+    `descend` chooses one branch, so a term that spans branches has no
+    single destination and it refuses — correctly, and uselessly for the
+    commonest question a domain gets. 労働時間 is in four chapters of the
+    Labour Standards Act; the answer is those four, not a refusal and not
+    one of them picked by a tie-break.
+
+    This is a LIST, and listing is not choosing: nothing here decides which
+    destination is the right one, so nothing here can fabricate. Where two
+    branches disagree about the same thing, both come back with their own
+    path and the reader sees the disagreement — which is the whole reason
+    the domains were kept apart.
+    """
+    from .consensus_store import ja_consensus_ask
+    from .lang import ja_content_runs
+
+    runs = ja_content_runs(query) or [query]
+    found: List[Dict[str, Any]] = []
+
+    def walk(node: Node, path: List[str]) -> None:
+        if len(found) >= limit:
+            return
+        if node.is_leaf:
+            have = terms_beneath(node)
+            if not any(r in have for r in runs):
+                return
+            out = ja_consensus_ask(node.store, query) if node.store else {}
+            found.append({
+                "leaf": node.name, "path": path + [node.name],
+                "verdict": out.get("verdict"), "core": out.get("core"),
+                "text": out.get("text", ""),
+            })
+            return
+        for name, child in node.children.items():
+            have = terms_beneath(child)
+            if any(r in have for r in runs):
+                walk(child, path + [node.name])
+
+    walk(root, [])
+    answered = [f for f in found if f["verdict"] == "ANSWER"]
+    return {
+        "verdict": "ANSWER" if answered else
+                   ("UNKNOWN_NOT_PRESENT" if not found else "UNKNOWN_NO_EVIDENCE"),
+        "query": query,
+        "destinations": len(found),
+        "answered": len(answered),
+        "truncated": len(found) >= limit,
+        "results": found,
+    }
 
 
 def shape(root: Node) -> Dict[str, Any]:

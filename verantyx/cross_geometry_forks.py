@@ -748,6 +748,76 @@ def egov_article_is_a_citation_key_fork() -> Dict[str, Any]:
     }
 
 
+def sovereign_build_fork() -> Dict[str, Any]:
+    """The whole procedure, end to end, on a miniature federation.
+
+    Three things are pinned, and the second is the one that keeps the first
+    honest:
+
+      * a question whose term lives in one leaf reaches it, with a path
+      * a question whose term spans two DOMAINS refuses to choose, and
+        names both — 緊急避難 is in the criminal code and the civil code,
+        and picking one would be the fabrication this shape exists against
+      * a term in neither comes back NOT PRESENT rather than as the nearest
+        thing available
+
+    `gather` lists rather than chooses, so it is allowed to return both
+    branches where `descend` must refuse; both are exercised here because
+    shipping only the listing path would quietly drop the refusal.
+    """
+    from .hierarchy import descend, gather
+    from .sovereign import assemble
+
+    crim = CrossStore()
+    for s in ["刑法第三十七条は緊急避難である。", "刑法第三十七条は危難である。",
+              "刑法第百九十九条は殺人である。", "刑法第百九十九条は死刑である。"]:
+        _ingest_ja(crim, s)
+    civ = CrossStore()
+    for s in ["民法第七百二十条は緊急避難である。", "民法第七百二十条は不法行為である。",
+              "民法第七百九条は損害賠償である。"]:
+        _ingest_ja(civ, s)
+    lab = CrossStore()
+    for s in ["労働基準法第二十条は解雇である。", "労働基準法第二十条は予告である。"]:
+        _ingest_ja(lab, s)
+
+    domains = {"刑事": {"刑法": crim}, "民事": {"民法": civ}, "労働": {"労基": lab}}
+    grouping = {"刑事": {"刑法": ["刑法"]}, "民事": {"民法": ["民法"]},
+                "労働": {"労基": ["労基"]}}
+    root = assemble(domains, grouping, sovereign="主権")
+
+    one = gather(root, "解雇")
+    both = gather(root, "緊急避難")
+    absent = gather(root, "断水")
+    chosen = descend(root, "緊急避難")
+
+    domains_hit = {r["path"][1] for r in both["results"] if len(r["path"]) > 1}
+
+    ok = (one["answered"] == 1
+          and "労基" in one["results"][0]["leaf"]
+          and both["destinations"] == 2
+          and len(domains_hit) == 2
+          and chosen["verdict"] != "ANSWER"
+          and absent["verdict"] == "UNKNOWN_NOT_PRESENT")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "SOVEREIGN_BUILD",
+        "pass": bool(ok),
+        "result": {
+            "single_leaf": {"answered": one["answered"],
+                            "leaf": one["results"][0]["leaf"] if one["results"] else None},
+            "spans_two_domains": {"destinations": both["destinations"],
+                                  "domains": sorted(domains_hit),
+                                  "descend_refused": chosen["verdict"]},
+            "absent": absent["verdict"],
+        },
+    }
+
+
+def _ingest_ja(store: CrossStore, sentence: str) -> None:
+    from .document_ingest import Document, ingest_documents
+    ingest_documents(store, [Document(source="fixture", text=sentence)])
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -804,6 +874,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         reified_event_fork(),
         event_extractor_refuses_statute_prose_fork(),
         egov_article_is_a_citation_key_fork(),
+        sovereign_build_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
