@@ -48,7 +48,8 @@ def prose_corpora(root: Path) -> List[Tuple[str, str]]:
     """
     out: List[Tuple[str, str]] = []
     for label, folder in (("百科", "wikipedia_domains"),
-                          ("引用", "wikipedia_cited")):
+                          ("引用", "wikipedia_cited"),
+                          ("法学", "wikipedia_doctrine")):
         d = root / folder
         if not d.is_dir():
             continue
@@ -119,19 +120,27 @@ def build_federation(root: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, A
             if st.crosses:
                 doms["法令"][label] = st
 
-    for p in sorted((root / "wikipedia_cited").rglob("*.txt")):
-        st = CrossStore()
-        label = f"百科／{p.name}"
-        st.source_labels.add(label)
-        try:
-            ingest_documents(st, [Document(
-                source=label,
-                text=p.read_text(encoding="utf-8", errors="ignore"))])
-        except Exception:
-            stats["unreadable"] += 1
-            continue
-        if st.crosses:
-            doms["百科"][label] = st
+    # A separate domain per SELECTION RULE, not per topic. 引用 is "articles
+    # that cite statutes" and 法学 is "articles in these Wikipedia
+    # categories"; they overlap in subject and were chosen by different
+    # rules, and the fusion measurement is only readable when one field is
+    # one source — slicing a source across fields makes its prose style
+    # arrive as if it were agreement between them.
+    for folder, domain in (("wikipedia_cited", "百科"),
+                           ("wikipedia_doctrine", "法学")):
+        for p in sorted((root / folder).rglob("*.txt")):
+            label = f"{domain}／{p.name}"
+            st = CrossStore()
+            st.source_labels.add(label)
+            try:
+                ingest_documents(st, [Document(
+                    source=label,
+                    text=p.read_text(encoding="utf-8", errors="ignore"))])
+            except Exception:
+                stats["unreadable"] += 1
+                continue
+            if st.crosses:
+                doms.setdefault(domain, {})[label] = st
     return doms, stats
 
 
@@ -147,7 +156,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     fed_path, writer_path = build / "federation.pkl", build / "writer.json"
 
     corpus_at = max(_newest(root / "bulk"), _newest(root / "wikipedia_cited"),
-                    _newest(root / "wikipedia_domains"))
+                    _newest(root / "wikipedia_domains"),
+                    _newest(root / "wikipedia_doctrine"))
     fresh = (fed_path.exists() and writer_path.exists()
              and fed_path.stat().st_mtime > corpus_at
              and writer_path.stat().st_mtime > corpus_at)
