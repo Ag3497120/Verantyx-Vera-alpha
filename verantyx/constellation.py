@@ -64,7 +64,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .resolution import DEFAULT_RUNGS, Ladder
 
@@ -120,16 +120,52 @@ class Constellation:
 
     members: List[Sovereign] = field(default_factory=list)
 
-    def add(self, s: Sovereign) -> "Constellation":
-        self.members.append(s)
-        return self
-
     def report(self) -> Dict[str, Any]:
         return {"sovereigns": len(self.members),
                 "members": [m.report() for m in self.members]}
 
+    #: Every term any member indexed, built once. Scanning the leaves per
+    #: query term is 5,401 leaves x 7 members x 400 terms per lookup, which
+    #: turns a 7-millisecond census into a walk of the whole federation.
+    _terms: Optional[Set[str]] = None
+
+    def vocabulary(self) -> Set[str]:
+        if self._terms is None:
+            t: Set[str] = set()
+            for m in self.members:
+                for terms in m.items.values():
+                    t |= set(terms)
+            self._terms = t
+        return self._terms
+
+    def add(self, s: Sovereign) -> "Constellation":
+        self.members.append(s)
+        self._terms = None
+        return self
+
+    def indexed(self, term: str) -> bool:
+        """Is this term anywhere in any member's index?"""
+        return term in self.vocabulary()
+
     def ask(self, query_terms: Sequence[str]) -> Dict[str, Any]:
-        """The census. Not a vote that resolves — a count that is reported."""
+        """The census, and what of the question it actually covers.
+
+        Concord counts sovereigns that agree on a LEAF. It does not say the
+        question was answered, and the two come apart badly when a query
+        mixes a term the federation holds with one it does not: measured
+        over 80 such questions, only 3 were refused and 8 reached four or
+        more concurring — the band calibrated at 100% — while the answer was
+        about the other term entirely. A reader asking about 超伝導 got a
+        confident leaf chosen on the word next to it.
+
+        So coverage is reported beside the census and never folded into it.
+        `ja_consensus_ask` has refused on unaddressed terms since it was
+        written; this path had the same hole and no gate. Uncovered terms do
+        not lower the concord — they are a different fact about the answer,
+        and a reader who wants the leaf anyway can still have it.
+        """
+        covered = [t for t in query_terms if self.indexed(t)]
+        missing = [t for t in query_terms if t not in covered]
         votes: Dict[str, Optional[str]] = {}
         for m in self.members:
             votes[m.name] = m.vote(query_terms)
@@ -137,7 +173,9 @@ class Constellation:
         if not spoke:
             return {"verdict": "UNKNOWN_NOT_PRESENT", "item": None,
                     "spoke": 0, "of": len(self.members), "agreeing": 0,
-                    "concord": 0.0, "votes": votes}
+                    "concord": 0.0, "covered": covered, "missing": missing,
+                "coverage": round(len(covered) / max(len(query_terms), 1), 3),
+                "votes": votes}
         tally = Counter(spoke)
         top = max(tally.values())
         leaders = sorted(k for k, v in tally.items() if v == top)
@@ -145,13 +183,17 @@ class Constellation:
             return {"verdict": "AMBIGUOUS", "item": None, "spoke": len(spoke),
                     "of": len(self.members), "agreeing": top,
                     "concord": round(top / len(spoke), 3),
-                    "leaders": leaders[:4], "votes": votes}
+                    "leaders": leaders[:4], "covered": covered, "missing": missing,
+                "coverage": round(len(covered) / max(len(query_terms), 1), 3),
+                "votes": votes}
         return {
             "verdict": "ANSWER" if len(tally) == 1 else "MAJORITY",
             "item": leaders[0],
             "spoke": len(spoke), "of": len(self.members),
             "agreeing": top, "concord": round(top / len(spoke), 3),
-            "votes": votes,
+            "covered": covered, "missing": missing,
+                "coverage": round(len(covered) / max(len(query_terms), 1), 3),
+                "votes": votes,
         }
 
 

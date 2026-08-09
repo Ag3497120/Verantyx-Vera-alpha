@@ -1630,6 +1630,56 @@ def form_may_not_assert_more_than_content_licenses_fork() -> Dict[str, Any]:
     }
 
 
+def concord_is_not_coverage_fork() -> Dict[str, Any]:
+    """Agreement about a leaf is not evidence the question was answered.
+
+    The census bands are sharp on questions the corpus can answer: over 300
+    in-corpus probes, three or more concurring was right 185 times out of
+    185, two 71.4%, one 8.7%. That calibration was built from anticipated
+    questions over the corpus, so it says nothing about a question the
+    corpus cannot answer — and the two come apart hardest in the middle
+    case, where a query mixes a term the federation holds with one it does
+    not. Measured over 80 such questions only 3 were refused and 8 reached
+    four or more concurring, the band calibrated at 100%, each time by
+    answering about the other word.
+
+    Coverage is reported beside the concord and never folded into it. A
+    reader who wants the leaf anyway can still have it; a reader who assumed
+    a high count meant their term was addressed can now see it was not.
+    """
+    from .constellation import staircase
+
+    items = {"甲葉": ["登記", "申請", "期間"], "乙葉": ["解雇", "予告", "賃金"]}
+    c = staircase(items)
+
+    hit = c.ask(["登記"])
+    mixed = c.ask(["登記", "超伝導"])
+    absent = c.ask(["超伝導"])
+
+    ok = (hit["coverage"] == 1.0 and hit["missing"] == []
+          # the mixed query still answers, and still says what it missed
+          and mixed["verdict"] in ("ANSWER", "MAJORITY")
+          and mixed["missing"] == ["超伝導"]
+          and mixed["coverage"] == 0.5
+          # coverage does NOT quietly lower the concord
+          and mixed["agreeing"] == hit["agreeing"]
+          and absent["verdict"] == "UNKNOWN_NOT_PRESENT"
+          and absent["coverage"] == 0.0)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CONCORD_IS_NOT_COVERAGE",
+        "pass": bool(ok),
+        "result": {
+            "in_corpus": {k: hit[k] for k in
+                          ("verdict", "agreeing", "coverage", "missing")},
+            "mixed": {k: mixed[k] for k in
+                      ("verdict", "agreeing", "coverage", "missing")},
+            "absent": {k: absent[k] for k in
+                       ("verdict", "agreeing", "coverage", "missing")},
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1699,6 +1749,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         constellation_beats_one_sovereign_fork(),
         writer_never_reaches_the_answer_path_fork(),
         form_may_not_assert_more_than_content_licenses_fork(),
+        concord_is_not_coverage_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
