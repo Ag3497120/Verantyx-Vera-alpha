@@ -25,6 +25,33 @@ the most facets picked a junk hub — 「殺人罪の刑は」 came back 至 —
 coarsening answered 「超伝導とは」, a term the corpus does not hold, out of
 a two-character collision. Reusing the calibrated machinery is the fix.
 
+## Does coarsening generalize to a word the store does not hold
+
+Measurably, partly, and by composition rather than by meaning. 120 cores
+with eight or more facets were REMOVED from the index and then asked for.
+57% were refused outright. Of the 43% answered, the core that came back
+shared 19.0% of the removed core's facets against 1.6% for a random core of
+the same richness — 12.1x, and only 12% landed with no overlap at all
+against 84% at random.
+
+Most of that survives the obvious confound. A held-out 電波法第二十九条 can
+be answered by 電波法施行規則第二十九条, which shares facets because it
+shares a name, not because anything was inferred. Splitting on a shared
+three-character prefix: siblings 21.0%, genuinely different strings 17.9%,
+still 11.4x over chance.
+
+The mechanism is visible in what it returns. アバター lands on 人工知能ホロ
+アバター and 火山活動 on 活動火山対策特別措置法 — Japanese is head-final and
+its compounds are transparent, so a coarse window finds the compound that
+CONTAINS the unheld term and inherits its subject. It also finds
+鉱業法第百一条 for 漁業法第百一条, sharing a numeral and 0% of the facets.
+
+So this reaches unseen WORDS and not unseen MEANINGS. 17.9% overlap is a
+lead, not an answer, which is the whole reason a coarse reading is typed
+`ANSWER_BY_COARSENING` and never promoted. The 0.0% generalization measured
+on held-out terms elsewhere in this package is unchanged: nothing here
+infers what a word means, it finds a longer word the corpus already held.
+
 ## Coarsening may add a reading and may never overturn one
 
 A verdict that only a coarse member reached is typed `ANSWER_BY_COARSENING`
