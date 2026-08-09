@@ -65,6 +65,22 @@ _WORD = r"[㐀-䶿一-鿿]{2,6}"
 
 _MID = r"[^。、\n]{0,14}?"
 
+#: A row in a parallel list: a subject, whitespace, a predicate, an optional
+#: state marker. Anchored at both ends so a fragment of prose cannot match.
+_ROW = re.compile(r"^\s*([㐀-䶿一-鿿ァ-ヺー]{2,10})\s+"
+                  r"([㐀-䶿一-鿿]{2,6})(あり|なし|中|済み?)?\s*$")
+
+#: Predicate positions that are never a state, however parallel the rows look.
+#: A place name in the predicate column is the failure mode this guard exists
+#: for: 「天草市 熊本県あり」 is a malformed row, not evidence that 熊本県 is
+#: a state word, and without this the sibling rule proposes prefecture names.
+_NOT_A_STATE = re.compile(r"(?:都|道|府|県|市|区|町|村|郡|島|港|駅|線|川|山)$")
+
+#: How the marker fixes the pole when there is no anchor to borrow it from.
+#: あり asserts the state; なし denies it; 〜中 and 〜済 are the two ends of a
+#: process. These are facts about the marker, not about any vocabulary.
+_MARKER_POLE = {"あり": None, "なし": None, "中": "-", "済": "+", "済み": "+"}
+
 
 @dataclass
 class Proposal:
@@ -114,6 +130,75 @@ def _slot_patterns() -> List[Tuple[str, re.Pattern]]:
             "(" + _WORD + ")" + r"[はがも]" + _MID
             + "(" + "|".join(map(re.escape, pos)) + ")" + _TAIL)))
     return out
+
+
+def siblings(paths: List[str]) -> List[Proposal]:
+    """Parallel rows: one row's predicate is known, the next one's is not.
+
+        宇城市 断水あり     断水 is in the vocabulary
+        天草市 冠水あり     冠水 is not — but it is in the same column, of the
+        八代市 断水あり     same table, under the same marker, beside rows that
+        氷川町 冠水あり     ARE known
+
+    The succession slots need an anchor inside the same sentence, so on a
+    corpus whose vocabulary barely overlaps this engine's they find nothing —
+    measured: 0 candidates on 8 FDMA bulletins, where 2 of the 31 known terms
+    appear at all. A list does not need the anchor in the sentence. It needs
+    it in a SIBLING, which is a much weaker requirement and the shape official
+    documents are actually written in.
+
+    The pole comes from the parallel rather than from the word. 断水 is the
+    negative pole of 復旧; 冠水 stands in the same construction under the same
+    marker, so it is the negative pole of the same aspect. That is exactly the
+    question a frozen embedding table could not answer — 64.5% leave-one-out,
+    a coin flip — and structure settles it without one.
+    """
+    from .catalog import collect
+    from .defect_report import skeleton
+    from .document_loaders import load_paths
+    from .ja_grammar import ALIASES, ASPECT_OF
+
+    docs = load_paths(collect(list(paths))["files"])["documents"]
+    found: Dict[Tuple[str, str, str], Proposal] = {}
+
+    for doc in docs:
+        # Group by MARKER, not by position: a table's rows are siblings when
+        # they say the same kind of thing, and 「…あり」 beside 「…なし」 are
+        # opposite claims rather than parallel ones.
+        by_marker: Dict[str, List[Tuple[str, str, str]]] = {}
+        for line in doc.text.split("\n"):
+            m = _ROW.match(line)
+            if not m:
+                continue
+            subj, pred, marker = m.group(1), m.group(2), m.group(3) or ""
+            by_marker.setdefault(marker, []).append((subj, pred, line.strip()))
+
+        for marker, rows in by_marker.items():
+            if len(rows) < 2:
+                continue
+            anchors = [(p, ASPECT_OF[ALIASES.get(p, p)])
+                       for _s, p, _l in rows if ALIASES.get(p, p) in ASPECT_OF]
+            if not anchors:
+                continue
+            aspect, pole = anchors[0][1]
+            # Every anchor in the group must agree. A column holding both
+            # poles is not a parallel list, it is a status column, and
+            # borrowing a pole from it would be a coin flip with extra steps.
+            if len({a[1] for a in anchors}) > 1:
+                continue
+            for subj, pred, line in rows:
+                if ALIASES.get(pred, pred) in ASPECT_OF:
+                    continue
+                if _NOT_A_STATE.search(pred) or pred == subj:
+                    continue
+                key = (pred, aspect, pole)
+                if key in found:
+                    found[key].seen += 1
+                else:
+                    found[key] = Proposal(
+                        pred, aspect, pole, "S", anchors[0][0],
+                        shapes=[skeleton(line, keep={pred, anchors[0][0]})])
+    return sorted(found.values(), key=lambda p: -p.seen)
 
 
 def successions(paths: List[str]) -> List[Proposal]:
@@ -208,7 +293,11 @@ def propose(paths: List[str], *, home: Path) -> List[Dict[str, Any]]:
     from .proposal_verify import check as _verify
 
     out: List[Dict[str, Any]] = []
-    for prop in successions(paths):
+    seen_words = set()
+    for prop in list(successions(paths)) + list(siblings(paths)):
+        if prop.word in seen_words:
+            continue
+        seen_words.add(prop.word)
         old = existing.get(prop.word)
         if old and old.get("status") in ("accepted", "refused"):
             # A judgement was made; re-proposing it every run would teach the

@@ -483,6 +483,27 @@ def cmd_self_evolve(args) -> int:
     return 0
 
 
+def cmd_placement(args) -> int:
+    """Decide which facts occupy an arm's four faces — once, before shipping.
+
+    A build-time stage, not a query-time one: it computes the anticipated
+    answer distribution, bakes a placement into a copy of the store, and the
+    engine that reads it stays as deterministic as it was. Refuses to write
+    unless the placement is measured better on held-out questions.
+    """
+    from .placement import main as _placement_main
+
+    argv = [args.store, "--n-queries", str(args.n_queries),
+            "--demand", args.demand, "--weight", str(args.weight)]
+    if args.queries:
+        argv += ["--queries", args.queries]
+    if args.sweep:
+        argv += ["--sweep"]
+    if args.write:
+        argv += ["--write", args.write]
+    return _placement_main(argv)
+
+
 def cmd_self_audit(args) -> int:
     """Signals a defect leaves in the store, without anybody reading output.
 
@@ -812,6 +833,26 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--overlay", default=None,
                    help="default ~/.verantyx-audit/grammar.json")
     p.set_defaults(fn=cmd_self_evolve)
+
+    p = sub.add_parser(
+        "placement",
+        help="simulate which facts go on the faces, before shipping a store")
+    p.add_argument("store")
+    p.add_argument("--queries",
+                   help="one anticipated question per line; strongly "
+                        "preferred over the synthetic stand-in")
+    p.add_argument("--n-queries", type=int, default=120)
+    p.add_argument("--demand", choices=("zipf", "uniform"), default="zipf",
+                   help="how synthetic questions pick a facet; zipf models "
+                        "concentrated stable demand, uniform models none")
+    p.add_argument("--weight", type=float, default=0.0,
+                   help="discrimination weight; measured as unhelpful at "
+                        "one arm per query, see verantyx/placement.py")
+    p.add_argument("--sweep", action="store_true",
+                   help="measure the weight instead of using it")
+    p.add_argument("--write", metavar="OUT",
+                   help="bake the placement into a copy of the store")
+    p.set_defaults(fn=cmd_placement)
 
     p = sub.add_parser(
         "self-audit",

@@ -147,12 +147,18 @@ def build_shell_from_store(
     facets_per_arm: int = len(FACET_FACES),
 ) -> ShellCross:
     shell = ShellCross()
+    placement = getattr(store, "placement", None) or {}
     for axis, core in zip(AXES, cores[:MAX_ARMS]):
         shell.faces[axis]["tip"] = core
         shell.reflections[axis] = core
-        for face, (facet, _cnt) in zip(
-            FACET_FACES, store.top_facets(core, k=facets_per_arm)
-        ):
+        # A baked placement, if this store has one for this core; otherwise
+        # the historical frequency rule. Which four facets occupy the faces
+        # was measured to change the answer text on 120 of 120 real queries,
+        # so this is the choice, not a detail — see verantyx/placement.py.
+        picks = placement.get(core)
+        if picks is None:
+            picks = [f for f, _cnt in store.top_facets(core, k=facets_per_arm)]
+        for face, facet in zip(FACET_FACES, picks[:facets_per_arm]):
             shell.faces[axis][face] = facet
     return shell
 

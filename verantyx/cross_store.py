@@ -53,6 +53,16 @@ class CrossStore:
     #: story, and reporting it as a conflict is how a tool loses the trust
     #: of the first responder who reads it.
     source_meta: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    #: core → the facets that should occupy its four faces, in read order.
+    #: Computed once before shipping by `verantyx.placement`, never at query
+    #: time. Absent for every store built before that module existed, and the
+    #: shell builder falls back to top_facets when a core is missing here —
+    #: so an old store keeps its exact historical behaviour.
+    placement: Dict[str, List[str]] = field(default_factory=dict)
+    #: What produced `placement`: policy, weight, query source, measured delta.
+    #: A placement without this is unattributable, and an unattributable
+    #: geometry is the thing this project keeps refusing to ship.
+    placement_meta: Dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # accumulate
@@ -254,6 +264,8 @@ class CrossStore:
             "provenance": self.provenance if self.track_provenance else {},
             "track_provenance": self.track_provenance,
             "source_meta": self.source_meta,
+            "placement": self.placement,
+            "placement_meta": self.placement_meta,
         }
         # Atomic replace: the old failure mode was a half-written JSON on
         # crash mid-save, which loads as nothing — the store looked empty
@@ -283,6 +295,8 @@ class CrossStore:
             },
         )
         st.source_meta = {k: dict(v) for k, v in d.get("source_meta", {}).items()}
+        st.placement = {k: list(v) for k, v in d.get("placement", {}).items()}
+        st.placement_meta = dict(d.get("placement_meta", {}))
         st.proper_lexicon = proper_lexicon_from_stats(st.cap_stats)
         return st
 

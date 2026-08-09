@@ -273,6 +273,116 @@ def placement_granularity_fork() -> Dict[str, Any]:
     }
 
 
+def placement_simulation_fork() -> Dict[str, Any]:
+    """Pre-simulation must beat frequency when demand is concentrated,
+    and must be REFUSED when it is flat.
+
+    Both halves are the fork. A placement policy that always looks like an
+    improvement is one whose gate does not work, and this project's whole
+    claim rests on gates that can say no — so the flat-demand case is
+    checked as hard as the concentrated one.
+
+    The mechanism: an arm has four facet faces, a contested core has more
+    than four facts, and so shipping is a choice of which four. Frequency
+    picks the four the corpus repeats. Simulation picks the four the
+    anticipated questions ask for. When questions are uniform over facts,
+    every policy covers the asked fact with probability 4/N and simulation
+    has nothing to learn — which is what the flat half pins down.
+    """
+    from .placement import accept, compare, derive_split
+
+    store = CrossStore()
+    # Twelve facts per core, well over the four faces, so placement is a
+    # real choice rather than an identity. The words must be alphabetic:
+    # a first version used fact0..fact11, the query synthesiser skips
+    # non-alphabetic facets, no queries were generated, and the fork passed
+    # on 0.0 <= 0.0. A fork that passes on an empty measurement is worse
+    # than no fork, so the emptiness is now checked explicitly below.
+    words = ("redness", "sweetness", "crispness", "firmness", "roundness",
+             "brightness", "weight", "colour", "texture", "flavour",
+             "season", "origin")
+    # Forty cores, not three: with three the whole measurement is three
+    # questions and a coincidence reads as a result. This is small enough to
+    # stay a unit test and large enough that a 12-point gap is not noise.
+    # Purely alphabetic names: the query synthesiser also skips non-alpha
+    # CORES, so topica0 produced zero test queries the same way fact0 did.
+    cores = [f"topic{chr(97 + i // 10)}{chr(97 + i % 10)}" for i in range(40)]
+    for core in cores:
+        for w in words:
+            store.ingest_sentence(f"{core} is {w}")
+
+    out: Dict[str, Any] = {}
+    for demand in ("zipf", "uniform"):
+        train, test = derive_split(store, len(cores), demand=demand, reps=8)
+        cmp_ = compare(store, test, train=train)
+        out[demand] = {
+            "verdict": accept(cmp_)["verdict"],
+            "n_test": cmp_["n_queries"],
+            "uncovered_frequency":
+                cmp_["summary"]["frequency"]["mean_uncovered_terms"],
+            "uncovered_simulated":
+                cmp_["summary"]["simulated"]["mean_uncovered_terms"],
+            "answer_rate_delta": cmp_["delta"]["answer_rate"],
+        }
+
+    measured = all(
+        out[d]["n_test"] > 0 and out[d]["uncovered_frequency"] > 0
+        for d in ("zipf", "uniform")
+    )
+    ok = (measured
+          and out["zipf"]["uncovered_simulated"] < out["zipf"]["uncovered_frequency"]
+          and out["zipf"]["answer_rate_delta"] >= 0
+          and out["uniform"]["uncovered_simulated"]
+              >= out["uniform"]["uncovered_frequency"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "PLACEMENT_SIMULATION",
+        "pass": bool(ok),
+        "result": dict(out, measured=measured),
+    }
+
+
+def placement_is_backward_compatible_fork() -> Dict[str, Any]:
+    """A store with no baked placement must answer exactly as it always did.
+
+    Every store built before `placement` existed lacks the field, and the
+    shell builder falls back to top_facets for any core it does not cover.
+    This pins that the fallback is byte-identical rather than merely similar,
+    because a silent shift in every historical store's answers is the kind
+    of regression that only shows up as "the numbers in the README are wrong
+    now" months later.
+    """
+    from .consensus_store import consensus_over_store
+
+    store = CrossStore()
+    for s in ["apple is red", "apple is sweet", "apple is crisp",
+              "apple is bright", "apple is round", "apple is firm"]:
+        store.ingest_sentence(s)
+
+    before = consensus_over_store(store, "what is apple")
+    store.placement = {}          # explicitly empty, as a loaded old store is
+    empty = consensus_over_store(store, "what is apple")
+    # And a placement that names a core must actually be used.
+    store.placement = {"apple": ["firm", "round", "bright", "crisp"]}
+    steered = consensus_over_store(store, "what is apple")
+
+    ok = (before.get("text") == empty.get("text")
+          and before.get("verdict") == "ANSWER"
+          and steered.get("verdict") == "ANSWER"
+          and steered.get("text") != before.get("text")
+          and "firm" in str(steered.get("text", "")))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "PLACEMENT_BACKWARD_COMPATIBLE",
+        "pass": bool(ok),
+        "result": {
+            "no_placement": before.get("text"),
+            "empty_placement": empty.get("text"),
+            "baked_placement": steered.get("text"),
+        },
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -281,6 +391,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         layered_ask_stability_fork(),
         layered_carry_drift_fork(),
         placement_granularity_fork(),
+        placement_simulation_fork(),
+        placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
         conversation_speaker_attribution_fork(),
