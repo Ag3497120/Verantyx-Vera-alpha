@@ -25,6 +25,26 @@ say every field is fused with every other, which is true and useless.
 The informative band is small: concepts held by BAND_LOW..BAND_HIGH fields.
 Two fields sharing a term is a bridge; twelve fields sharing it is grammar.
 
+## One field per SOURCE, or the measurement reads the prose style
+
+Built at scale the first time with twenty-five fields — statutes split by
+legal area, and ja.wikipedia split three ways by category — the largest
+join was 全_文学 x 引用_法 at 202 concepts. Literature and jurisprudence had
+not converged; both slices were Wikipedia, and what they shared was its
+prose. Slicing one source into several fields makes the source's own style
+arrive as fusion.
+
+Re-cut so that each SOURCE is one field (e-Gov statutes by law, all of
+ja.wikipedia as one), on nearly the same leaves:
+
+    25 fields, source mixed   1,223 joins   top pair 全_文学 x 引用_法  202
+     9 fields, one per source   858 joins   top pair 法令_民事 x 百科   240
+
+Fewer joins and every top pair is now primary-source-against-commentary,
+which is a relation that exists. Abstention in the resolution ladder fell
+too, 24.9% to 20.3%: leaves cut from one source were more alike than the
+field labels claimed.
+
 ## Why a baseline is computed before anything changes
 
 The number that matters is not the fusion index — it is the DELTA when a
