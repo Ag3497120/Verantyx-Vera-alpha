@@ -2867,6 +2867,119 @@ def cut_agreement_is_not_evidence_and_must_not_be_pooled_fork() -> Dict[str, Any
     }
 
 
+def a_timeless_store_must_refuse_a_question_about_now_fork() -> Dict[str, Any]:
+    """The store answered 「今日の天気は」 with 今日.
+
+    A federation of statutes and encyclopedia articles holds 天気, 地震 and
+    株価 as subjects, so every time-dependent question found a timeless
+    subject and answered with it:
+
+        今日の天気は   ANSWER 今日
+        昨日の地震は   ANSWER 地震
+        現在の株価は   ANSWER 株価
+        最新の判例は   ANSWER 判例
+
+    Not one of those is wrong about the corpus and not one is an answer to
+    the question asked. The signal is in the QUERY — a deictic that ties the
+    answer to a moment — which is why it can be caught without the store
+    knowing anything about time.
+
+    `UNKNOWN_TIME_DEPENDENT` is the routing verdict for an agent: the terms
+    were read, a subject exists, and the answer still has to come from
+    something with a clock. Ingesting that tool's result with its timestamp
+    as the source label is what makes the answer citable afterwards.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    store = CrossStore()
+    for s in ["天気は気象である。", "天気は予報である。", "天気は観測である。",
+              "地震は震度である。", "地震は観測である。",
+              "正当防衛は違法性阻却である。", "正当防衛は侵害である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    now = j.ask("今日の天気は")
+    timeless = j.ask("天気とは")
+    other = j.ask("正当防衛とは")
+    yesterday = j.ask("昨日の地震は")
+
+    ok = (now["verdict"] == "UNKNOWN_TIME_DEPENDENT"
+          and now.get("deictic") == "今日"
+          and yesterday["verdict"] == "UNKNOWN_TIME_DEPENDENT"
+          # the same subject, asked without a clock, still answers
+          and timeless["verdict"].startswith("ANSWER")
+          and other["verdict"].startswith("ANSWER")
+          # and a refusal about time carries no item to mistake for one
+          and now["item"] is None)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_TIMELESS_STORE_MUST_REFUSE_A_QUESTION_ABOUT_NOW",
+        "pass": bool(ok),
+        "result": {
+            "now": [now["verdict"], now.get("deictic")],
+            "timeless_same_subject": [timeless["verdict"], timeless.get("item")],
+            "unrelated": [other["verdict"], other.get("item")],
+        },
+    }
+
+
+def a_character_window_is_a_japanese_technique_fork() -> Dict[str, Any]:
+    """Coarsening by character collides in latin script and not in kanji.
+
+    A two-character window over kanji is discriminating because there are
+    thousands of them. Over latin there are twenty-six, so unrelated words
+    share windows freely. Measured on a nine-core English store against ten
+    words it never held, and on a seven-core Japanese store against ten:
+
+        English, 6 settings with windows    4 false answers
+        English, whole grain only           0
+        Japanese, 6 settings with windows   0
+
+    superconductivity came back as `contract`; enzyme and polymer as
+    `employment`. Switching the grain axis off in latin costs nothing —
+    every in-corpus term still answers exactly — because there was nothing
+    for the windows to reach that whole-word matching missed.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .graded import (DEFAULT_SETTINGS, LATIN_SETTINGS, GradedJudge,
+                         settings_for)
+
+    en = ("Article 199 provides for homicide. Article 204 provides for injury. "
+          "Self-defence is a justification. Necessity is a justification. "
+          "Negligence requires a duty of care. Intent requires knowledge. "
+          "The contract requires consideration. The tort requires damage. "
+          "Employment requires notice of dismissal. Wages must be paid monthly.")
+    store = CrossStore()
+    ingest_documents(store, [Document(source="s", text=en)])
+
+    absent = ["superconductivity", "chlorophyll", "neutrino", "photosynthesis",
+              "enzyme", "galaxy", "polymer", "antibody"]
+    with_windows = GradedJudge(DEFAULT_SETTINGS).build(store)
+    latin = GradedJudge(LATIN_SETTINGS).build(store)
+
+    bad_win = [w for w in absent
+               if with_windows.ask(w)["verdict"].startswith("ANSWER")]
+    bad_lat = [w for w in absent if latin.ask(w)["verdict"].startswith("ANSWER")]
+    kept = [q for q in ("negligence", "contract", "employment", "tort")
+            if latin.ask(q).get("item") == q]
+
+    ok = (len(bad_win) > 0            # windows really do collide here
+          and bad_lat == []           # and switching them off stops it
+          and len(kept) == 4          # at no cost to what the store holds
+          and settings_for(en) == LATIN_SETTINGS
+          and settings_for("刑法第百九十九条は殺人である。") == DEFAULT_SETTINGS)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_CHARACTER_WINDOW_IS_A_JAPANESE_TECHNIQUE",
+        "pass": bool(ok),
+        "result": {"false_with_windows": bad_win,
+                   "false_without": bad_lat,
+                   "in_corpus_still_exact": kept},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2956,6 +3069,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         only_data_varied_sovereigns_can_dissent_fork(),
         a_coarser_cut_recovers_words_the_word_reader_buried_fork(),
         a_store_must_be_asked_the_way_it_was_read_fork(),
+        a_timeless_store_must_refuse_a_question_about_now_fork(),
+        a_character_window_is_a_japanese_technique_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),

@@ -141,6 +141,62 @@ WIDE_SETTINGS = staircase()
 FULL_SETTINGS = staircase(depths=DEPTH_AXIS)
 
 
+#: Grain-free settings, for scripts where a character window collides.
+#:
+#: A two-character window over kanji is discriminating because there are
+#: thousands of them; over latin there are twenty-six, so words share
+#: windows freely. Measured on a nine-core English store against ten words
+#: it never held:
+#:
+#:     English, 6 settings with windows   4 false answers
+#:     English, whole grain only          0
+#:     Japanese, 6 settings with windows  0
+#:
+#: superconductivity came back as `contract`, enzyme and polymer as
+#: `employment`. The grain axis is a Japanese technique, not a general one,
+#: and switching it off is not a loss in latin script — there was nothing
+#: for it to reach.
+LATIN_SETTINGS: Tuple[Tuple[str, Dict[str, Any]], ...] = (
+    ("whole", {"rungs": (("whole", 0),), "grammar": "raw", "depth": 1}),
+    ("mentions", {"rungs": (("whole", 0),), "grammar": "raw"}),
+)
+
+
+def settings_for(text: str) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+    """The staircase this script can carry.
+
+    Latin gets no character windows; anything else gets the measured six.
+    """
+    from .lang import detect
+
+    return LATIN_SETTINGS if detect(text) in ("en", "latin") else DEFAULT_SETTINGS
+
+
+#: Words that make an answer depend on WHEN it was asked. A store has no
+#: clock, so a question carrying one of these cannot be answered from it —
+#: and the failure is silent rather than absent: 「今日の天気は」 came back
+#: ANSWER 今日, 「昨日の地震は」 ANSWER 地震, 「現在の株価は」 ANSWER 株価.
+#: The corpus holds articles about weather and earthquakes, so every
+#: time-dependent question found a timeless subject and answered with it.
+#:
+#: The signal is in the QUERY, not the store, which is why it can be caught
+#: at all. `UNKNOWN_TIME_DEPENDENT` is the routing verdict for a tool: the
+#: terms were read, a subject exists, and the answer still has to come from
+#: something with a clock.
+_TIME_DEICTIC = ("今日", "本日", "昨日", "明日", "今", "現在", "最新", "直近",
+                 "今週", "今月", "今年", "最近", "リアルタイム", "いま",
+                 "today", "now", "current", "latest", "yesterday", "tomorrow")
+
+
+def time_dependent(query: str, terms: Sequence[str]) -> Optional[str]:
+    """The deictic that makes this question about a moment, if any."""
+    q = (query or "").lower()
+    for w in _TIME_DEICTIC:
+        if w in q or w in terms:
+            return w
+    return None
+
+
 def cores_as_items(store: Any, *, depth: Optional[int] = None) -> Dict[str, List[str]]:
     """core -> the terms that identify it: itself plus its facets.
 
@@ -215,6 +271,16 @@ class GradedJudge:
                 "query": query, "terms": [],
                 "note": "read without difficulty and holds no content word; "
                         "a knowledge store has nothing to say about it",
+            }
+
+        deictic = time_dependent(query, terms)
+        if deictic is not None:
+            return {
+                "verdict": "UNKNOWN_TIME_DEPENDENT",
+                "item": None, "terms": terms, "deictic": deictic,
+                "note": "the answer depends on when this is asked and the "
+                        "store has no clock; route to a source that does, "
+                        "then ingest its result to make it citable",
             }
 
         readings: Dict[str, Optional[str]] = {}
