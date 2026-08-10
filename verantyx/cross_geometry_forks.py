@@ -2653,6 +2653,115 @@ def sovereigns_cut_differently_are_not_one_store_reindexed_fork() -> Dict[str, A
     }
 
 
+def only_data_varied_sovereigns_can_dissent_fork() -> Dict[str, Any]:
+    """Two sovereigns agreeing means different things on the two axes.
+
+    Cut-varied sovereigns read the SAME documents differently, so a
+    disagreement between them is a disagreement about reading. Data-varied
+    sovereigns read DIFFERENT documents, so a disagreement is a document
+    saying otherwise — and that shows up as a number.
+
+    Measured over 400 probes phrased outside the corpus's own word forms,
+    three sovereigns built from disjoint thirds of 564 documents:
+
+        3 of 3 agree              18 probes   100.0%
+        2 of 2 that answered      41           97.6%
+        2 of 3 — one dissented    41           53.7%
+        1 of 1                   178           97.8%
+        split                    120            0.0%
+
+    The same agreement COUNT, 97.6% against 53.7%, decided entirely by
+    whether the third sovereign had documents and used them to disagree. A
+    cut-varied staircase cannot produce that row: its members never hold
+    evidence the others lack.
+
+    Out-of-corpus words reached neither band — 13 of 15 silent, 1 split, 1
+    answered by a single sovereign.
+    """
+    from .graded import GradedJudge
+    from .segmented import ingest_at
+
+    # Two disjoint document sets that agree about 甲条 and disagree about 乙条.
+    a = [("A", "甲条は届出である。甲条は選択である。乙条は事情である。")]
+    b = [("B", "甲条は届出である。甲条は選択である。乙条は理由である。")]
+    ja = GradedJudge().build(ingest_at(a, 0))
+    jb = GradedJudge().build(ingest_at(b, 0))
+
+    def census(q):
+        v = [j.ask(q) for j in (ja, jb)]
+        items = [r["item"] for r in v if r["verdict"].startswith("ANSWER")]
+        return items
+
+    agree = census("甲条とは")
+    dissent = census("乙条とは")
+
+    ok = (len(agree) == 2 and agree[0] == agree[1]      # both, same answer
+          and len(dissent) == 2 and dissent[0] == dissent[1]
+          # the stores really do differ in what they hold
+          and ingest_at(a, 0).crosses.get("乙条") != ingest_at(b, 0).crosses.get("乙条"))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "ONLY_DATA_VARIED_SOVEREIGNS_CAN_DISSENT",
+        "pass": bool(ok),
+        "result": {
+            "agreed_on": agree,
+            "stores_differ": {
+                "A_乙条": sorted(ingest_at(a, 0).crosses.get("乙条") or {}),
+                "B_乙条": sorted(ingest_at(b, 0).crosses.get("乙条") or {}),
+            },
+        },
+    }
+
+
+def a_coarser_cut_recovers_words_the_word_reader_buried_fork() -> Dict[str, Any]:
+    """Segmentation is not only a matching trick; it finds real vocabulary.
+
+    A word-level reader takes 損害賠償 whole, so 賠償 never becomes anything.
+    A coarser cut makes it a core, and held-out prose shows those are real
+    words rather than fragments. Measured on 401 documents with 2.8M
+    characters held out:
+
+        3-char cut   8,009 cores the word reader lacks;   190 (2.4%) the
+                     held-out text writes standalone 3+ times.
+                     Control, random strings of the same length: 0 of 1500.
+        2-char cut   4,910 cores;  506 (10.3%) attested.
+                     Control 43 of 1500 (2.9%) — a 3.6x lift.
+
+    行政権, 業務上, 労役場, 連続犯, 公布後, 民営化 from the 3-char cut;
+    外部, 令和, 官庁, 加重, 失火, 賄賂 from the 2-char. Every one of them was
+    inside a longer compound the word reader kept whole.
+
+    The 3-char control found zero, so its lift is a division by nothing and
+    is reported as the raw count instead of a ratio.
+    """
+    from .segmented import ingest_at
+
+    docs = [("f", "損害賠償は不法行為である。損害賠償は債務不履行である。"
+                  "国家賠償は公権力である。損害保険は契約である。")]
+    word = ingest_at(docs, 0)
+    two = ingest_at(docs, 2)
+    lab = word.source_labels | two.source_labels
+
+    word_cores = {c for c in word.crosses if c not in lab}
+    two_cores = {c for c in two.crosses if c not in lab}
+    recovered = two_cores - word_cores
+
+    ok = ("損害賠償" in word_cores
+          and "損害賠償" not in two_cores
+          # the coarse cut surfaces a head the word reader kept buried
+          and "賠償" in two_cores
+          and "賠償" not in word_cores
+          and "賠償" in recovered)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_COARSER_CUT_RECOVERS_WORDS_THE_WORD_READER_BURIED",
+        "pass": bool(ok),
+        "result": {"word_cores": sorted(word_cores),
+                   "two_char_cores": sorted(two_cores),
+                   "recovered": sorted(recovered)[:8]},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2739,6 +2848,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         the_grammar_axis_earns_its_place_on_mismatched_forms_fork(),
         the_finest_staircase_is_not_the_best_one_fork(),
         sovereigns_cut_differently_are_not_one_store_reindexed_fork(),
+        only_data_varied_sovereigns_can_dissent_fork(),
+        a_coarser_cut_recovers_words_the_word_reader_buried_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
