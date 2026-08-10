@@ -320,6 +320,80 @@ def serve(store_path: str) -> int:
         return json.dumps(store.report(), ensure_ascii=False)
 
     @mcp.tool()
+    def attest_claim(subject: str, text: str) -> str:
+        """Judge whether THIS store supports what a claim says about a
+        subject. Built for grading an LLM's output: paste the assistant's
+        sentences and the subject they are about.
+
+        Returns ANSWER or UNSUPPORTED_BY_CORPUS with the terms the
+        subject's own cross does and does not hold.
+
+        It measures the link to the SUBJECT, not the presence of words.
+        Measured against a local 4B model over 14 subjects, checking mere
+        presence ranked FREE generation ABOVE grounded (95.7% to 85.5%),
+        because a fluent answer about Japanese law is built from words a
+        legal corpus holds anyway. Subject linkage split them 64.1% to 6.4%
+        and flagged 14 of 14 free-generated answers with no false alarm.
+
+        It says "this corpus does not support that", NEVER "that is false".
+        A subject the corpus never covered is unsupported and may be
+        perfectly true."""
+        from .attest_llm import check_all
+
+        return json.dumps(check_all(store, subject, text), ensure_ascii=False)
+
+    @mcp.tool()
+    def record_baseline(label: str = "baseline", keep_cores: str = "") -> str:
+        """Record what the store holds now, to compare against later.
+
+        `keep_cores` is a comma-separated list of cores whose facets should
+        be kept in FULL — name the ones the design depends on. Everything
+        else is stored as a digest, which answers "did this change" without
+        becoming a second copy of the store that drifts on its own."""
+        from .drift import save, snapshot
+
+        keep = [c.strip() for c in keep_cores.split(",") if c.strip()]
+        snap = snapshot(store, label=label, keep=keep)
+        return json.dumps(save(snap, path.with_name(
+            path.stem + f".baseline.{label}.json")), ensure_ascii=False)
+
+    @mcp.tool()
+    def check_drift(label: str = "baseline") -> str:
+        """Compare the store against a recorded baseline.
+
+        Reports added / removed / changed cores, each listed rather than
+        summed, plus what a named core gained and lost. DRIFTED is not a
+        failure and STABLE is not a pass: a gain is usually a lesson and a
+        loss is usually a correction, and only a reader knows which the
+        design intended.
+
+        The case a count hides is flagged explicitly — `replaced` marks a
+        core whose facets were swapped wholesale while its size stayed the
+        same, which no total would show."""
+        from .drift import compare, load as load_snap
+
+        f = path.with_name(path.stem + f".baseline.{label}.json")
+        if not f.is_file():
+            return json.dumps({"verdict": "UNKNOWN_NO_BASELINE",
+                               "expected": str(f),
+                               "advice": "call record_baseline first"},
+                              ensure_ascii=False)
+        return json.dumps(compare(load_snap(f), store), ensure_ascii=False)
+
+    @mcp.tool()
+    def list_baselines() -> str:
+        """Every baseline recorded beside this store."""
+        out = []
+        for f in sorted(path.parent.glob(path.stem + ".baseline.*.json")):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                out.append({"label": d.get("label"), "recorded": d.get("recorded"),
+                            "cores": d.get("cores"), "file": f.name})
+            except Exception:
+                continue
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
     def graph_snapshot(limit: int = 24, facets_per_core: int = 6, focus_cores: str = "") -> str:
         """Structural snapshot of the store for visualization -- NOT for
         grounded QA (that's `ask`). Returns the top `limit` cores ranked

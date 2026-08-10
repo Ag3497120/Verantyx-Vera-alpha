@@ -2011,6 +2011,57 @@ def presence_in_the_corpus_is_not_support_fork() -> Dict[str, Any]:
     }
 
 
+def a_wholesale_replacement_is_not_no_change_fork() -> Dict[str, Any]:
+    """Drift has to name what moved, because a count cannot see the worst case.
+
+    A store that is written to keeps moving, and "it grew" is rarely the
+    interesting event. The one that matters is a core recorded one way and
+    now recorded another with nobody deciding — and if a baseline reports
+    only totals, the case where every facet was swapped and the SIZE stayed
+    the same reads as no change at all.
+
+    So `compare` lists added, removed and changed rather than summing them,
+    and flags `replaced` explicitly. DRIFTED is not a failure and STABLE is
+    not a pass: a gain is usually a lesson, a loss is usually a correction,
+    and only a reader knows which the design intended.
+    """
+    from .cross_store import CrossStore
+    from .drift import compare, snapshot
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "乙条は事情である。"]:
+        _ingest_ja(store, s)
+    base = snapshot(store, label="design", keep=["甲条"])
+
+    same = compare(base, store)
+
+    # Swap every facet, keep the count identical.
+    before = sorted(base["kept"]["甲条"])
+    store.crosses["甲条"] = {f + "改": 1 for f in before}
+    after = compare(base, store)
+    det = next((d for d in after["detail"] if d["core"] == "甲条"), None)
+
+    ok = (same["verdict"] == "STABLE"
+          and after["verdict"] == "DRIFTED"
+          and after["changed"] == 1
+          # the totals alone would show a core count that never moved
+          and after["cores_then"] == after["cores_now"]
+          and det is not None and det["replaced"] is True
+          and det["lost"] and det["gained"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_WHOLESALE_REPLACEMENT_IS_NOT_NO_CHANGE",
+        "pass": bool(ok),
+        "result": {
+            "unchanged": same["verdict"],
+            "after": {k: after[k] for k in
+                      ("verdict", "added", "removed", "changed",
+                       "cores_then", "cores_now")},
+            "detail": det,
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2087,6 +2138,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_citation_is_listed_not_chosen_fork(),
         a_template_cut_inside_a_word_is_caught_at_the_seam_fork(),
         presence_in_the_corpus_is_not_support_fork(),
+        a_wholesale_replacement_is_not_no_change_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
