@@ -32,6 +32,26 @@ fluent, plausible, and sharing nothing with what the store records under
 
     at a 30% threshold: 0 of 14 grounded flagged, 14 of 14 free flagged
 
+## Not knowing is not disagreeing
+
+The first version returned the same verdict for both of these:
+
+    超伝導は電気抵抗がゼロになる現象である。   true, and absent
+    超伝導は江戸時代の農地制度である。         false, and absent
+
+Both scored 0.00 and came back UNSUPPORTED_BY_CORPUS, because the subject
+has no cross to link to and an empty cross links nothing. A reader would
+have taken that as a judgment on a correct sentence. Every other path in
+this package separates "no evidence" from "evidence against"; this one had
+dropped the distinction.
+
+So the subject is checked FIRST. A subject the store does not hold gets
+`UNKNOWN_SUBJECT_NOT_HELD` — a refusal to judge, not a finding — and a
+subject held too thinly to judge on gets `UNKNOWN_SUBJECT_TOO_THIN` with
+its facet count attached. Measured on the 626MB federation the median core
+carries 11 facets and 3.5% carry fewer than three, so three is the floor:
+below it a 0.30 support figure is one facet's worth of luck.
+
 ## What it can and cannot say
 
 It says "this corpus does not support that", never "that is false". 超伝導
@@ -81,10 +101,33 @@ class Report:
 #: reach down to it and free output does not reach up to it.
 THRESHOLD = 0.30
 
+#: Facets a subject needs before a support figure means anything. The median
+#: core in the 626MB federation holds 11 and 3.5% hold fewer than three;
+#: under that, one facet decides the verdict.
+MIN_FACETS = 3
 
-def check(store: Any, subject: str, sentence: str) -> Report:
+
+def subject_coverage(store: Any, subject: str) -> Dict[str, Any]:
+    """What the store has to judge this subject with, before judging.
+
+    Held as a core is the strong case. Held only as somebody else's facet
+    is weaker and is reported as such: the store knows the word exists and
+    records nothing under it.
+    """
     labels = getattr(store, "source_labels", set()) or set()
     cross = {f for f in (store.crosses.get(subject) or {}) if f not in labels}
+    if cross:
+        return {"held": "core", "facets": len(cross), "cross": cross}
+    seen_as_facet = any(subject in (c or ()) for c in store.crosses.values())
+    return {"held": "facet" if seen_as_facet else "absent",
+            "facets": 0, "cross": set()}
+
+
+def check(store: Any, subject: str, sentence: str,
+          cross: Optional[Set[str]] = None) -> Report:
+    labels = getattr(store, "source_labels", set()) or set()
+    if cross is None:
+        cross = {f for f in (store.crosses.get(subject) or {}) if f not in labels}
     terms: List[str] = []
     for t in _RUN.findall(sentence or ""):
         if t != subject and t not in terms and t not in labels:
@@ -96,9 +139,32 @@ def check(store: Any, subject: str, sentence: str) -> Report:
 
 
 def check_all(store: Any, subject: str, text: str) -> Dict[str, Any]:
-    """Split on 。 and score every sentence against the subject."""
+    """Split on 。 and score every sentence against the subject.
+
+    The subject is checked before the sentences are. Judging a claim about
+    something the store never recorded is not verification, it is a coin
+    flip dressed as one.
+    """
+    cov = subject_coverage(store, subject)
+    if cov["held"] != "core":
+        return {
+            "verdict": "UNKNOWN_SUBJECT_NOT_HELD",
+            "subject": subject, "held": cov["held"], "facets": 0,
+            "note": "the store records nothing under this subject, so it "
+                    "cannot judge the claim either way — this is a refusal "
+                    "to judge, NOT a finding against the claim",
+        }
+    if cov["facets"] < MIN_FACETS:
+        return {
+            "verdict": "UNKNOWN_SUBJECT_TOO_THIN",
+            "subject": subject, "held": "core", "facets": cov["facets"],
+            "min_facets": MIN_FACETS,
+            "note": "too few facets for a support figure to mean anything; "
+                    "one facet would decide it",
+        }
+
     sents = [s.strip() for s in re.split(r"[。\n]", text or "") if s.strip()]
-    reps = [check(store, subject, s) for s in sents]
+    reps = [check(store, subject, s, cross=cov["cross"]) for s in sents]
     reps = [r for r in reps if r.terms]
     if not reps:
         return {"verdict": "UNKNOWN_EMPTY", "sentences": 0}
@@ -108,7 +174,8 @@ def check_all(store: Any, subject: str, text: str) -> Dict[str, Any]:
         # UNSUPPORTED back has been told something a fluent draft cannot
         # tell it, and a reader who sees ANSWER has a link to check.
         "verdict": "ANSWER" if sup >= THRESHOLD else "UNSUPPORTED_BY_CORPUS",
-        "subject": subject, "sentences": len(reps),
+        "subject": subject, "held": "core", "facets": cov["facets"],
+        "sentences": len(reps),
         "support": round(sup, 3), "threshold": THRESHOLD,
         "reports": [r.as_dict() for r in reps],
     }

@@ -2062,6 +2062,64 @@ def a_wholesale_replacement_is_not_no_change_fork() -> Dict[str, Any]:
     }
 
 
+def not_knowing_is_not_disagreeing_fork() -> Dict[str, Any]:
+    """A verifier must refuse a subject it never learned, not fail it.
+
+    The first version of `attest_llm` returned the SAME verdict for a true
+    sentence and a false one about a subject the store does not hold:
+
+        超伝導は電気抵抗がゼロになる現象である。   true, absent
+        超伝導は江戸時代の農地制度である。         false, absent
+
+    Both scored 0.00 and came back UNSUPPORTED_BY_CORPUS, because an empty
+    cross links nothing. Shipped as an MCP tool that would have read as a
+    judgment on a correct sentence — the exact failure this package refuses
+    everywhere else, where "no evidence" and "evidence against" are
+    different typed verdicts.
+
+    So the subject is checked first: `UNKNOWN_SUBJECT_NOT_HELD` is a refusal
+    to judge, and a core too thin to judge on gets its own verdict too. The
+    median core in the 626MB federation holds 11 facets and 3.5% hold fewer
+    than three, which is where the floor sits — below it one facet decides.
+    """
+    from .attest_llm import check_all
+    from .cross_store import CrossStore
+
+    store = CrossStore()
+    for s in ["第三十七条は補償である。", "第三十七条は費用である。",
+              "第三十七条は請求である。", "乙条は単独である。"]:
+        _ingest_ja(store, s)
+
+    good = check_all(store, "第三十七条", "第三十七条は補償の費用を請求する。")
+    bad = check_all(store, "第三十七条", "第三十七条は国家の権限を制定する。")
+    absent_true = check_all(store, "超伝導", "超伝導は電気抵抗がゼロになる現象である。")
+    absent_false = check_all(store, "超伝導", "超伝導は江戸時代の農地制度である。")
+    thin = check_all(store, "乙条", "乙条は単独の規定である。")
+
+    ok = (good["verdict"] == "ANSWER"
+          and bad["verdict"] == "UNSUPPORTED_BY_CORPUS"
+          # the two absent cases agree with each other and differ from `bad`
+          and absent_true["verdict"] == "UNKNOWN_SUBJECT_NOT_HELD"
+          and absent_false["verdict"] == "UNKNOWN_SUBJECT_NOT_HELD"
+          and absent_true["verdict"] != bad["verdict"]
+          # a refusal carries no score at all — there is nothing to score
+          and "support" not in absent_true
+          and thin["verdict"] == "UNKNOWN_SUBJECT_TOO_THIN")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "NOT_KNOWING_IS_NOT_DISAGREEING",
+        "pass": bool(ok),
+        "result": {
+            "supported": good["verdict"],
+            "contradicted": bad["verdict"],
+            "absent_true": absent_true["verdict"],
+            "absent_false": absent_false["verdict"],
+            "thin": thin["verdict"],
+            "refusal_carries_no_score": "support" not in absent_true,
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2139,6 +2197,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_template_cut_inside_a_word_is_caught_at_the_seam_fork(),
         presence_in_the_corpus_is_not_support_fork(),
         a_wholesale_replacement_is_not_no_change_fork(),
+        not_knowing_is_not_disagreeing_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
