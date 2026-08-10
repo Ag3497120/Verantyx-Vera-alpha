@@ -3746,6 +3746,80 @@ def nothing_measured_moves_unknown_word_reach_fork() -> Dict[str, Any]:
     }
 
 
+def unknown_word_reach_and_new_word_creation_are_one_operation_fork() -> Dict[str, Any]:
+    """The mechanism that coins words is the one that reaches unheld ones.
+
+    Four attempts at unknown-word reach failed this session — more grain
+    settings, domain-split sovereigns, cooperating sovereigns, 32,652 more
+    cores — and every one of them varied the index, the partition or the
+    corpus. None varied the DECOMPOSITION, which is what the reach is made
+    of. Run in two directions it is the same operation:
+
+        outward   損害賠償 is held, 賠償 is proposed, and the corpus turns
+                  out to write it — 15x over chance, measured in
+                  `granularity` as new-word creation
+        inward    電荷密度 is NOT held; split it, and 電荷 is
+
+    Measured over 150 held-out cores:
+
+        containment (the staircase)   65 of 150   4.5% facet overlap    7.5x
+        unit decomposition            50 of 150  10.4%                 14.5x
+
+    Fewer answers and more than twice the overlap — 電荷密度 -> 電荷,
+    保護司 -> 保護, 症例記述 -> 記述, 社会的貢献 -> 貢献, 居場所 -> 場所. The
+    unit model splits where the corpus's own vocabulary splits and respects
+    position, so 賠償 earns its right-hand slot from 損害賠償 rather than
+    from any string ending in those characters.
+
+    Layered rather than pooled, the two cover 96 of 150 and stay
+    distinguishable: 50 by UNITS at 16.3x, 46 by CONTAINMENT at 3.9x. A
+    reader discounting one of them needs to know which they were handed.
+
+    Japanese is head-final so the right half is tried first, and 発明者 ->
+    者 is what that costs when the head is a bare suffix.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+    from .reach import build_model, reach
+
+    # 電荷密度 is deliberately NOT ingested — it is the term to be reached.
+    # The unit slots it needs are earned by OTHER compounds: 電荷量 puts 電荷
+    # in the left slot, 質量密度 puts 密度 in the right. A first version
+    # ingested 電荷密度 itself and the fork measured HELD, which tests
+    # nothing.
+    store = CrossStore()
+    for s in ["電荷は物理量である。", "電荷は保存する。", "電荷は素量である。",
+              "電荷量は単位である。", "電荷量は測定である。",
+              "質量密度は分布である。", "質量密度は物性である。",
+              "密度は質量である。", "密度は体積である。",
+              "保護は制度である。", "保護は対象である。"]:
+        _ingest_ja(store, s)
+    model = build_model(store)
+    judge = GradedJudge().build(store)
+
+    held = reach(store, "電荷", model=model, judge=judge)
+    split = reach(store, "電荷密度", model=model, judge=judge)
+    nothing = reach(store, "超伝導", model=model, judge=judge)
+
+    ok = (held["verdict"] == "HELD"
+          # a term the store lacks is reached by its attested unit
+          and split["verdict"] in ("UNITS", "CONTAINMENT")
+          and split["item"] in ("電荷", "密度", "電荷密度")
+          # and one it cannot decompose or contain is refused outright
+          and nothing["verdict"] == "UNKNOWN_NO_REACH"
+          and nothing["item"] is None)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "UNKNOWN_WORD_REACH_AND_NEW_WORD_CREATION_ARE_ONE_OPERATION",
+        "pass": bool(ok),
+        "result": {
+            "held": [held["verdict"], held.get("item")],
+            "decomposed": [split["verdict"], split.get("item")],
+            "no_reach": nothing["verdict"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3847,6 +3921,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         the_polite_register_was_invisible_to_the_harvester_fork(),
         a_polite_imperative_still_needs_a_licence_fork(),
         nothing_measured_moves_unknown_word_reach_fork(),
+        unknown_word_reach_and_new_word_creation_are_one_operation_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
