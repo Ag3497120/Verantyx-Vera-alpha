@@ -2181,6 +2181,114 @@ def a_covenant_binds_the_exchange_not_the_wording_fork() -> Dict[str, Any]:
     }
 
 
+def the_store_infers_the_prohibition_nobody_wrote_fork() -> Dict[str, Any]:
+    """Siblings come from the geometry, and only after the hubs are removed.
+
+    A covenant registered by hand catches the substitution somebody
+    anticipated and nothing else. The alternatives are already in the store:
+    the cores that hold 拘禁刑 hold 罰金 too, because an article setting a
+    penalty names the choice. Two terms are siblings when the same cores
+    hold both — no embedding, no nearest neighbour, no meaning.
+
+    Raw co-occurrence does not give that. Unweighted, 拘禁刑 came back beside
+    法学, 百科, 日本, 規定 — domain labels and the words every article uses.
+    Weighting by 1/fanout and dropping facets common to more than 2% of
+    cores put 罰金 first. Measured over four legal alternative sets, 11 of
+    14 terms recovered another member of their own set, most at rank one:
+    死刑/拘禁刑/罰金/拘留/科料 5 of 5, 故意/過失 2 of 2.
+
+    An inferred hit is reported apart from a registered one. A registered
+    prohibition is what the user said; an inferred one is what the corpus
+    suggests they meant.
+    """
+    from .covenant import Covenant, Register, siblings
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+
+    store = CrossStore()
+    # Articles that set a penalty, plus a hub that co-occurs with everything
+    # and must NOT come back as a sibling.
+    body = ("甲条は拘禁刑を科する。甲条は規定である。"
+            "乙条は罰金を科する。乙条は規定である。"
+            "丙条は拘禁刑を科する。丙条は罰金を科する。"
+            "丁条は拘禁刑を科する。丁条は罰金を科する。")
+    ingest_documents(store, [Document(source="刑法", text=body)])
+
+    sibs = [w for w, _s in siblings(store, "拘禁刑", limit=8)]
+
+    reg = Register()
+    reg.add(Covenant(name="刑は拘禁刑で", requires=["拘禁刑"], forbids=[],
+                     topic=["刑", "罰"], quote="刑は拘禁刑で述べてください。"))
+    listed = reg.check("この刑は罰金である。", asked="刑について")
+    inferred = reg.check("この刑は罰金である。", asked="刑について", store=store)
+    subs = [s for v in inferred["violations"] for s in v.get("substituted", [])]
+
+    ok = ("罰金" in sibs                      # the alternative is recovered
+          and "規定" not in sibs               # the hub is not
+          and listed["verdict"] == "BROKEN"    # the register knows it is wrong
+          and not [s for v in listed["violations"] for s in v.get("substituted", [])]
+          and any(s["used"] == "罰金" and s["instead_of"] == "拘禁刑" for s in subs))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_STORE_INFERS_THE_PROHIBITION_NOBODY_WROTE",
+        "pass": bool(ok),
+        "result": {
+            "siblings_of_拘禁刑": sibs,
+            "hub_excluded": "規定" not in sibs,
+            "registered_only_names_substitution": bool(
+                [s for v in listed["violations"] for s in v.get("substituted", [])]),
+            "inferred_substitutions": subs[:3],
+        },
+    }
+
+
+def a_rule_that_just_started_breaking_is_the_one_to_resend_fork() -> Dict[str, Any]:
+    """Re-injecting everything every turn is what already fails.
+
+    A system prompt resends every rule on every turn and long sessions drift
+    anyway, because a rule seen a hundred times carries no information. A
+    rule kept for twenty turns and broken twice just now does.
+
+    Each covenant is compared against ITS OWN history. A rule broken from
+    the first check was never understood and needs rewriting rather than
+    repeating — reporting it as "fading" would spend context re-sending
+    something that has never worked.
+    """
+    from .covenant import Covenant, Register
+
+    reg = Register()
+    reg.add(Covenant(name="TS", requires=["TypeScript"], topic=["言語"],
+                     quote="TypeScriptを使います。"))
+    reg.add(Covenant(name="KEY", requires=["APIキー"], topic=["認証"],
+                     quote="認証はAPIキーで行います。"))
+
+    for _ in range(10):
+        reg.check("言語はTypeScriptです", asked="言語について")
+    for _ in range(3):
+        reg.check("言語はPythonです", asked="言語について")
+    for _ in range(6):
+        reg.check("認証はOAuthです", asked="認証について")
+
+    f = reg.fading()
+    fading = {r["covenant"] for r in f["fading"]}
+    stable = {r["covenant"] for r in f["stable"]}
+
+    ok = (f["verdict"] == "FADING"
+          and "TS" in fading             # kept, then started breaking
+          and "KEY" not in fading        # never kept — not a decay
+          and "KEY" in stable
+          and f["advise"] == ["TypeScriptを使います。"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_RULE_THAT_JUST_STARTED_BREAKING_IS_THE_ONE_TO_RESEND",
+        "pass": bool(ok),
+        "result": {"fading": [r["covenant"] for r in f["fading"]],
+                   "stable": [r["covenant"] for r in f["stable"]],
+                   "advise": f["advise"],
+                   "detail": f["fading"][:1]},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2260,6 +2368,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_wholesale_replacement_is_not_no_change_fork(),
         not_knowing_is_not_disagreeing_fork(),
         a_covenant_binds_the_exchange_not_the_wording_fork(),
+        the_store_infers_the_prohibition_nobody_wrote_fork(),
+        a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

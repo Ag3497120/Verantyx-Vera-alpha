@@ -368,7 +368,25 @@ def serve(store_path: str) -> int:
         the forbidden term used, and the exact sentence to re-inject. It is
         a PROPOSAL: the user may have changed the rule one turn ago and this
         cannot see intent, only text."""
-        return json.dumps(_register.check(reply, asked=asked), ensure_ascii=False)
+        return json.dumps(_register.check(reply, asked=asked, store=store),
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def fading_covenants(window: int = 5) -> str:
+        """Which rules have STARTED being broken — the only ones worth
+        re-injecting.
+
+        Re-sending every rule every turn is what a system prompt already
+        does, and long sessions drift anyway: a rule the model has seen a
+        hundred times has stopped carrying information. A rule kept for
+        twenty turns and broken twice just now has not.
+
+        Each covenant is compared against ITS OWN history, never against the
+        others. A hard rule that was always half-kept is not degrading; one
+        broken from the very first check was never understood and needs
+        rewriting rather than repeating — it is reported as stable, which is
+        the honest reading, not a pass."""
+        return json.dumps(_register.fading(window=window), ensure_ascii=False)
 
     @mcp.tool()
     def check_context_drift(reply: str) -> str:
