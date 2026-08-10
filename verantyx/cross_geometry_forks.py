@@ -3415,6 +3415,100 @@ def the_path_is_the_content_and_the_writer_only_supplies_form_fork() -> Dict[str
         JOIN.update(saved)
 
 
+def the_vocabulary_is_not_the_lever_fork() -> Dict[str, Any]:
+    """Growing the vocabulary does not make a path centre speakable.
+
+    71% of converged paths produce no sentence because the centre is a
+    retrieval key the corpus never writes standalone — 相続順位 is a fine
+    place to arrive at and not a word to begin a sentence with. Four
+    expansions, scored against 20M held-out characters for whether the
+    admitted terms are words the held-out text also writes:
+
+        current vocabulary                52% real   centres speakable 32%
+        MIN_ATTEST 3 -> 1                  4%                          64%
+        morphological variants             2%                          48%
+        cores from a 2/3-character cut    62%                          32%
+
+    The two that doubled the speakable share did it by calling proper nouns
+    and fragments words — 小林一三, 各出展, 物価統制令第三十八条. The one
+    that raised quality added 6,776 terms at a HIGHER attestation rate than
+    the vocabulary already had and moved the speakable share by nothing,
+    because the terms it recovered (北航路, 絶縁物, 放牧地) are not the
+    centres that fail.
+
+    Nor is the subject choice a lever. Letting any path node be the subject
+    lifts sentences from 29% to 85% and drops on-topic from 100% to 34%:
+    「新路線とは」 became 「上祐の事態がある」. Restricting the subject to a
+    query term returns exactly 29% — the centre already IS the query term
+    almost always, so there is nothing to gain and a question to lose.
+
+    ## Conditioning the INGEST is a different operation, and it costs
+
+    Re-placing cannot do this; placement cannot add information. Changing
+    the DECOMPOSITION can, and does: preferring heads that are attested
+    words took cores-in-vocabulary from 43% to 60% with retrieval still
+    300/300 on names.
+
+    It also destroyed 6,451 cores, 59% of which the conditioned store cannot
+    reach at all. The casualties are 空港法施行規則, 特定建築物所有者,
+    第八十六条第十三項, 第一条中健康保険法第七条 — 7% are explicit article
+    names, and they are what a legal system exists to answer about. The same
+    operation drops 史上34人目 and 2015年4月1日現在, which nobody wants, and
+    there is no version of the rule that keeps one and not the other.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from . import lang
+
+    text = ("相続順位は法定である。相続順位は配偶者である。"
+            "空港法施行規則は基準である。空港法施行規則は告示である。")
+    vocab = {"法定", "配偶者", "基準", "告示", "順位", "規則"}
+
+    plain = CrossStore()
+    ingest_documents(plain, [Document(source="f", text=text)])
+
+    original = lang.ja_content_runs
+
+    def conditioned(t: str):
+        out = []
+        for r in original(t):
+            if r in vocab or len(r) <= 2:
+                out.append(r)
+                continue
+            for k in range(len(r) - 1, 1, -1):
+                if r[-k:] in vocab:
+                    out.append(r[-k:])
+                    break
+            else:
+                out.append(r)
+        return out
+
+    lang.ja_content_runs = conditioned
+    try:
+        cut = CrossStore()
+        ingest_documents(cut, [Document(source="f", text=text)])
+    finally:
+        lang.ja_content_runs = original
+
+    labels = plain.source_labels | cut.source_labels
+    a = {c for c in plain.crosses if c not in labels}
+    b = {c for c in cut.crosses if c not in labels}
+
+    ok = (# the compound is a core when read by word
+          "相続順位" in a and "空港法施行規則" in a
+          # conditioning replaces it with its attested tail — and loses it
+          and "相続順位" not in b
+          and "空港法施行規則" not in b
+          and (a - b))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_VOCABULARY_IS_NOT_THE_LEVER",
+        "pass": bool(ok),
+        "result": {"by_word": sorted(a), "conditioned": sorted(b),
+                   "lost": sorted(a - b)},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3511,6 +3605,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_puzzle_narrows_where_a_chain_decays_fork(),
         layered_recovers_where_pooled_destroys_fork(),
         the_path_is_the_content_and_the_writer_only_supplies_form_fork(),
+        the_vocabulary_is_not_the_lever_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
