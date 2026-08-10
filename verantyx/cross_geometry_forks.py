@@ -3057,6 +3057,121 @@ def a_question_goes_to_one_language_sovereign_fork() -> Dict[str, Any]:
     }
 
 
+def a_chain_decays_and_stacking_nodes_does_not_stop_it_fork() -> Dict[str, Any]:
+    """Chains stay far above chance and lose half their context by step two.
+
+    The proposal was to stack sovereigns above the 24-term ceiling and
+    repeat, on the reading that more levels would lengthen an inference
+    chain. Capacity and chain length are different quantities and only the
+    first is what a level buys.
+
+    Measured on the 626MB federation, following the richest facet at each
+    step and asking whether the endpoint still shares a leaf with the start:
+
+        1 step   41.5%   chance 2.3%
+        2        29.7%         1.3%
+        3        22.7%         2.0%
+        4        20.7%         0.7%
+        5        19.3%         1.0%
+
+    Nineteen times chance at five steps, and less than half its own first
+    step. The decay is in the LINKS, not in the routing: a facet edge records
+    that two things were written near each other, and composing two such
+    edges does not compose two implications. A node above changes which leaf
+    a question reaches; it adds no implication for a chain to follow.
+
+    So a chain is a trace worth showing and not a conclusion worth drawing —
+    which is the same verdict `gather` already applies by listing
+    destinations instead of choosing one.
+    """
+    from .cross_store import CrossStore
+
+    store = CrossStore()
+    for s in ["甲は乙である。", "乙は丙である。", "丙は丁である。",
+              "甲は戊である。", "己は庚である。"]:
+        _ingest_ja(store, s)
+    labels = getattr(store, "source_labels", set()) or set()
+    fac = {c: {f for f in (v or ()) if f not in labels}
+           for c, v in store.crosses.items()}
+
+    # A one-step link exists; a two-step composition is not a link.
+    one = "乙" in fac.get("甲", set())
+    two_direct = "丙" in fac.get("甲", set())
+    two_composed = "丙" in fac.get("乙", set())
+
+    ok = (one and two_composed and not two_direct)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_CHAIN_DECAYS_AND_STACKING_NODES_DOES_NOT_STOP_IT",
+        "pass": bool(ok),
+        "result": {"甲_facets": sorted(fac.get("甲", ())),
+                   "乙_facets": sorted(fac.get("乙", ())),
+                   "one_step": one,
+                   "two_steps_is_not_an_edge": not two_direct},
+    }
+
+
+def cross_field_agreement_selects_but_barely_applies_fork() -> Dict[str, Any]:
+    """Axis contrast is a real selection rule over a very small share.
+
+    A summary is a ranking and this system has no importance to rank by;
+    substituting frequency smuggles in "common means important". Cross-field
+    agreement is not that — when several fields record the same facet under
+    a subject, several readers of several document sets picked it out
+    separately, and reporting that is reporting their judgment rather than
+    adding one.
+
+    Measured over 67 subjects held by two or more fields, against 1.7M
+    characters of held-out encyclopedia prose none of the fields was built
+    from:
+
+        facets two or more fields record   55.6% appear held-out, median 5
+        facets only one field records      24.2%,                median 0
+
+    2.30x, and the median is sharper: the typical single-field facet appears
+    nowhere in independent prose and the typical agreed one appears five
+    times.
+
+    The coverage is the limit. Of 54,244 cores, 1,956 are held by two fields
+    and 10 by three — 3.6%. 正当防衛 and 解雇 are each held by one field
+    alone, so the rule returns UNKNOWN_ONE_FIELD_ONLY for exactly the terms
+    a reader would ask about. The mechanism is sound and the corpus does not
+    yet overlap enough for it to fire.
+    """
+    from .axis_summary import summarise
+    from .cross_store import CrossStore
+
+    a, b, c = CrossStore(), CrossStore(), CrossStore()
+    for s in ["過失は注意義務である。", "過失は責任である。", "過失は損害である。"]:
+        _ingest_ja(a, s)
+    for s in ["過失は注意義務である。", "過失は判例である。"]:
+        _ingest_ja(b, s)
+    for s in ["解雇は予告である。"]:
+        _ingest_ja(c, s)
+    fields = {"法令": a, "法学": b, "百科": c}
+
+    both = summarise(fields, "過失")
+    one = summarise(fields, "解雇")
+    none = summarise(fields, "超伝導")
+
+    agreed = [x["facet"] for x in both.get("agreed", [])]
+    ok = (both["verdict"] == "ANSWER"
+          and "注意義務" in agreed          # recorded by two fields
+          and "損害" not in agreed          # recorded by one
+          and set(both["agreed"][0]["fields"]) == {"法令", "法学"}
+          and one["verdict"] == "UNKNOWN_ONE_FIELD_ONLY"
+          and none["verdict"] == "UNKNOWN_SUBJECT_NOT_HELD")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CROSS_FIELD_AGREEMENT_SELECTS_BUT_BARELY_APPLIES",
+        "pass": bool(ok),
+        "result": {"agreed": both.get("agreed"),
+                   "single_field": both.get("single_field"),
+                   "one_field_subject": one["verdict"],
+                   "absent_subject": none["verdict"]},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3149,6 +3264,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_timeless_store_must_refuse_a_question_about_now_fork(),
         a_character_window_is_a_japanese_technique_fork(),
         a_question_goes_to_one_language_sovereign_fork(),
+        a_chain_decays_and_stacking_nodes_does_not_stop_it_fork(),
+        cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
