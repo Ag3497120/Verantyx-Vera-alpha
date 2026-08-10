@@ -2349,32 +2349,36 @@ def latin_is_a_content_word_in_japanese_prose_fork() -> Dict[str, Any]:
     }
 
 
-def more_grain_does_not_reach_further_fork() -> Dict[str, Any]:
-    """Adding quantization levels was measured, and it costs precision.
+def the_staircase_grades_doubt_and_finds_none_to_grade_fork() -> Dict[str, Any]:
+    """More rungs help where the answer is in doubt, and CORE identity is not.
 
-    The proposal was more intermediate grains — g1, g4, g5 beside the
-    existing whole/g3/g2 — on the reading that finer steps would reach
-    free-form questions and unknown words. Measured on the 626MB federation
-    against 300 morphological variants, 15 out-of-corpus words and 10
-    free-form questions:
+    A staircase of resolutions grades doubt: on LEAF routing, measured here
+    over 600 probes through `gather(concord=True)`, one agreeing rung is
+    right 19.3% of the time and three are right 67.7% — the mechanism works,
+    which the earlier 29.8% -> 100% measurement on statute captions found
+    first.
 
-        6 settings    99% reach   0 false answers   5/10 free-form
-        11 settings   99% reach   2 false answers   5/10 free-form
+    Adding g1, g4, g5 beside whole/g3/g2 for CORE identification did not
+    reproduce that, and the banding says why rather than contradicting it:
 
-    Nothing gained, precision lost. The failures were never about grain.
-    「こんにちは」 yields no content run at all — hiragana is grammar in
-    Japanese, so there is nothing to cut at any size — and
-    「パワハラを受けたら…」 lost by CENSUS, not by grain: g2 had already
-    reached パワーハラスメント and was outvoted 3-2 by 受.
+        6 settings    1 rung 96.9%   2+ rungs 100%
+        11 settings   1 rung 95.3%   3+ rungs 100%
 
-    Splitting the corpus by domain instead of by setting was worse on every
-    axis: 284 of 300 answered at 100% against 208 at 96%, with 2 false
-    answers against 0. Varying settings helped LEAF routing, where many
-    candidates make diversity break ties; subject identification is mostly
-    exact match, and diversity only adds voters who are wrong.
+    A single rung is already right 96.9% of the time, so there are three
+    points of doubt for a staircase to grade and eleven rungs cannot find
+    them. What the extra rungs did find was two out-of-corpus words to
+    answer wrongly, 0 -> 2. Naming a subject is near-exact matching; picking
+    a leaf out of thousands is not, and only the second has room.
 
-    This fork pins the four verdicts that separate the real cases, since
-    that separation is what the measurement actually bought.
+    Twice I measured this with a probe the machinery does not answer — first
+    on variants, where a single rung already succeeds, then by querying a
+    name-indexed judge with facets, which inverted the banding entirely
+    (1 rung 55.8%, 3 rungs 1.0%). The staircase was never in question; the
+    probe was.
+
+    「こんにちは」 is outside all of it: no content run at any grain, because
+    hiragana is grammar in Japanese and there is nothing to cut. This fork
+    pins the four verdicts that keep those cases apart.
     """
     from .cross_store import CrossStore
     from .graded import GradedJudge
@@ -2532,7 +2536,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_covenant_binds_the_exchange_not_the_wording_fork(),
         the_store_infers_the_prohibition_nobody_wrote_fork(),
         latin_is_a_content_word_in_japanese_prose_fork(),
-        more_grain_does_not_reach_further_fork(),
+        the_staircase_grades_doubt_and_finds_none_to_grade_fork(),
         the_structure_is_deterministic_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
