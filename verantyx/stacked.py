@@ -116,6 +116,75 @@ def in_words(
     }
 
 
+def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
+    """Does the staircase's seed actually cover what the question asked about?
+
+    The staircase names a subject by coarsening, and coarsening has a failure
+    mode that the verdict never showed: it keeps whatever part of the term it
+    recognises and drops the rest without a word. Measured on 200 invented
+    compounds, 77% came back answered, and in every answered case the seed
+    was a substring — ヒュペリオン数人 answered about 数人, ズミルノフ環礁の面積
+    about 面積. The reader is told about a different thing than the one they
+    asked about, in the shape of a real answer.
+
+    The subject is the LEFTMOST content run of the question. Japanese noun
+    phrases are head-final inside a compound but topic-first across の:
+    in 殺人罪の刑は the specific thing is 殺人罪 and 刑 is the aspect asked
+    about it, so a seed that keeps the leftmost run and drops later ones is
+    the measured-good case (subject alone, 113/120), while a seed that keeps
+    a LATER run and drops the leftmost is the theft this exists to catch —
+    相殺の効果は seeded on 効果 answered with the Meissner effect.
+
+    The seed covers the subject when any of these holds:
+
+      * the seed IS the subject, or contains it as a substring —
+        相続の順位は seeded on 相続順位 stays a success
+      * the subject is a facet of the seed's own cross — 背任罪とは seeded
+        on 利得罪 stays, because crosses[利得罪] holds 背任罪: the arm the
+        answer reads actually mentions the asked subject
+
+    When none holds but the subject is itself a held core, the seed is
+    REPLACED by the subject rather than refused — the staircase picked a
+    worse entry than the question already contained.
+
+    Otherwise the honest verdict is the one that already exists for a term
+    the store does not hold: UNKNOWN_NOT_PRESENT, carrying the missing
+    subject by name and the nearest held thing the staircase reached. That
+    is a refusal with a pointer, not an answer about something else.
+    """
+    from .lang import ja_content_runs
+
+    runs = ja_content_runs(query)
+    if not runs:
+        # Latin or contentless — the gate has nothing to anchor on and an
+        # anchorless gate would fire on noise. Inert by design.
+        return {"ok": True, "subject": None}
+    # The subject is the leftmost content PHRASE, not the leftmost run.
+    # `ja_content_runs` splits on script boundaries, so ヴォルフガング粒子 is
+    # two runs — and taking only the first made the subject equal the seed
+    # by construction, which let every katakana-headed invented compound
+    # straight through the gate it was built for. Adjacent runs (no gap in
+    # the query between them) are one phrase; a particle like の ends it.
+    subject = runs[0]
+    pos = query.find(subject)
+    if pos >= 0:
+        end = pos + len(subject)
+        for nxt in runs[1:]:
+            if query.startswith(nxt, end):
+                subject += nxt
+                end += len(nxt)
+            else:
+                break
+    if subject == seed or subject in seed:
+        return {"ok": True, "subject": subject}
+    cross = store.crosses.get(seed) or {}
+    if subject in cross:
+        return {"ok": True, "subject": subject, "via": "facet_of_seed"}
+    if subject in store.crosses:
+        return {"ok": True, "subject": subject, "reseed": subject}
+    return {"ok": False, "subject": subject}
+
+
 def ask(
     store: Any,
     query: str,
@@ -158,6 +227,23 @@ def ask(
     # is no ordering left to pick, so nothing here decides the answer by
     # how a list happened to be sorted.
     seed = g["item"]
+    # The seed must cover the asked subject, or say that it cannot. Without
+    # this check, 77% of invented compounds were answered about a substring.
+    cov = subject_check(store, query, seed)
+    if not cov["ok"]:
+        return {
+            "verdict": "UNKNOWN_NOT_PRESENT",
+            "core": None,
+            "text": "",
+            "subject": cov["subject"],
+            "nearest_held": seed,
+            "staircase": g.get("verdict"),
+            "note": ("the question's subject is not held; the staircase "
+                     "reached only a part of it, and answering about the "
+                     "part would answer a different question"),
+        }
+    if cov.get("reseed"):
+        seed = cov["reseed"]
     seeded_query = seed
     out = consensus_over_store(store, seeded_query, **kwargs)
     if out.get("verdict") == "ANSWER":

@@ -1,7 +1,7 @@
 {
  "meta": {
   "artifact": "kofdai/vera-alpha :: vera.db",
-  "sha256": "d1e988e282ccace8",
+  "sha256": "f0b8be8596521c38",
   "mb": 140.0,
   "computed_at": "2026-08-10",
   "ja_cores": 86992,
@@ -12,7 +12,7 @@
    "q": "正当防衛とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 35.2,
+   "ms": 35.9,
    "core": "正当防衛",
    "path": [
     "正当防衛",
@@ -33,7 +33,7 @@
    "q": "殺人罪の刑は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 34.8,
+   "ms": 35.3,
    "core": "殺人罪",
    "path": [
     "殺人罪",
@@ -51,16 +51,19 @@
    "q": "契約の成立要件は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
-   "core": "犯罪成立要件",
+   "ms": 32.7,
+   "core": "契約",
    "path": [
-    "犯罪成立要件",
-    "38条1項",
-    "事前収賄罪",
-    "例",
-    "充足"
+    "契約",
+    "債権",
+    "取得",
+    "結",
+    "譲渡"
    ],
-   "sentences": [],
+   "sentences": [
+    "契約は、取得とする。",
+    "契約の取得は、譲渡のとおりとする。"
+   ],
    "register": null,
    "closes": false,
    "why": null
@@ -69,7 +72,7 @@
    "q": "時効とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
+   "ms": 32.5,
    "core": "時効",
    "path": [
     "時効",
@@ -90,7 +93,7 @@
    "q": "過失相殺とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.4,
+   "ms": 41.0,
    "core": "民法第七百二十二条",
    "path": [
     "民法第七百二十二条",
@@ -108,7 +111,7 @@
    "q": "所有権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 48.6,
    "core": "所有権",
    "path": [
     "所有権",
@@ -129,7 +132,7 @@
    "q": "民法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.2,
+   "ms": 33.6,
    "core": "民法",
    "path": [
     "民法",
@@ -150,7 +153,7 @@
    "q": "相続とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 32.5,
    "core": "相続",
    "path": [
     "相続",
@@ -171,7 +174,7 @@
    "q": "抵当権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.1,
+   "ms": 32.9,
    "core": "抵当権",
    "path": [
     "抵当権",
@@ -190,30 +193,21 @@
   },
   {
    "q": "不法行為とは",
-   "verdict": "SEEDED",
+   "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 31.9,
-   "core": "不法",
-   "path": [
-    "不法",
-    "cb",
-    "キャリア",
-    "スカイ",
-    "トラック"
-   ],
-   "sentences": [
-    "不法にはトラックさない。",
-    "不法にはトラックでキャリアかかっている。"
-   ],
-   "register": null,
-   "closes": false,
+   "ms": 30.2,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "sentences about the subject, in the register the corpus is judged in",
+   "closes": true,
    "why": null
   },
   {
    "q": "詐欺罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 32.2,
    "core": "詐欺罪",
    "path": [
     "詐欺罪",
@@ -234,7 +228,7 @@
    "q": "窃盗罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.7,
+   "ms": 32.6,
    "core": "窃盗罪",
    "path": [
     "窃盗罪",
@@ -254,7 +248,7 @@
    "q": "名誉毀損とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
+   "ms": 32.4,
    "core": "名誉毀損罪",
    "path": [
     "名誉毀損罪",
@@ -275,7 +269,7 @@
    "q": "労働基準法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 33.0,
+   "ms": 33.7,
    "core": "労働基準法",
    "path": [
     "労働基準法",
@@ -296,7 +290,7 @@
    "q": "著作権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 32.9,
    "core": "著作権",
    "path": [
     "著作権",
@@ -317,7 +311,7 @@
    "q": "超伝導とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
+   "ms": 32.2,
    "core": "超伝導",
    "path": [
     "超伝導",
@@ -338,7 +332,7 @@
    "q": "光合成とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.4,
+   "ms": 32.9,
    "core": "光合成",
    "path": [
     "光合成",
@@ -359,7 +353,7 @@
    "q": "量子力学とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.6,
+   "ms": 32.4,
    "core": "量子力学",
    "path": [
     "量子力学",
@@ -380,7 +374,7 @@
    "q": "民主主義とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
+   "ms": 32.5,
    "core": "民主主義",
    "path": [
     "民主主義",
@@ -401,7 +395,7 @@
    "q": "インフレとは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.9,
+   "ms": 30.8,
    "core": null,
    "path": [],
    "sentences": [],
@@ -431,7 +425,7 @@
    "q": "consideration",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.5,
+   "ms": 0.6,
    "core": "consideration",
    "path": [
     "consideration",
@@ -449,7 +443,7 @@
    "q": "jurisdiction",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.5,
+   "ms": 0.6,
    "core": "jurisdiction",
    "path": [
     "jurisdiction",
@@ -554,7 +548,7 @@
    "q": "こんにちは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.6,
+   "ms": 30.5,
    "core": null,
    "path": [],
    "sentences": [],
@@ -566,7 +560,7 @@
    "q": "ありがとう",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.3,
+   "ms": 30.2,
    "core": null,
    "path": [],
    "sentences": [],
@@ -576,45 +570,33 @@
   },
   {
    "q": "ヴォルフガング粒子とは",
-   "verdict": "SEEDED",
+   "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 34.5,
-   "core": "ヴォルフガング",
-   "path": [
-    "ヴォルフガング",
-    "c60",
-    "donald",
-    "fostiropoulos",
-    "huffman"
-   ],
+   "ms": 30.9,
+   "core": null,
+   "path": [],
    "sentences": [],
-   "register": null,
-   "closes": false,
+   "register": "sentences about the subject, in the register the corpus is judged in",
+   "closes": true,
    "why": null
   },
   {
    "q": "ズミルノフ環礁の面積は",
-   "verdict": "SEEDED",
+   "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 34.7,
-   "core": "面積",
-   "path": [
-    "面積",
-    "俊敏性",
-    "2番目",
-    "2項道路",
-    "3辺"
-   ],
+   "ms": 30.2,
+   "core": null,
+   "path": [],
    "sentences": [],
-   "register": null,
-   "closes": false,
+   "register": "sentences about the subject, in the register the corpus is judged in",
+   "closes": true,
    "why": null
   },
   {
    "q": "Wie geht es dir",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "en",
-   "ms": 9.7,
+   "ms": 10.0,
    "core": null,
    "path": [],
    "sentences": [],
