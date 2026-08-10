@@ -2522,6 +2522,63 @@ def the_grammar_axis_earns_its_place_on_mismatched_forms_fork() -> Dict[str, Any
     }
 
 
+def the_finest_staircase_is_not_the_best_one_fork() -> Dict[str, Any]:
+    """Three axes, all measured to carry signal, and more steps still costs.
+
+    Each axis earned its place separately: grain graded leaf routing from
+    19.3% at one rung to 67.7% at three, knowledge depth gave 98.1% on
+    unanimity against 14.0% alone, and grammar added 69 answers on probes
+    whose word form differs from the stored one. Combining all three is the
+    staircase the design asked for, and it does smooth: 6 settings produce
+    one band that was right every time, 12 produce four, 48 produce
+    thirteen and can say "9 of 12 agreed", which 6 cannot express at all.
+
+    Measured over 500 probes phrased outside the corpus's own word forms,
+    20 out-of-corpus words and 150 held-out cores:
+
+        lean (6)     1.1s   464 reached   2 false   1 band   16.7x
+        wide (12)    2.5s   460           3         4         6.5x
+        full (48)   52.2s   450           7        13          --
+
+    One column of four improves with more steps. Reach falls, out-of-corpus
+    answers triple, the build takes 47x longer, and the unknown-word reach
+    lands further from the mark — 16.7x facet overlap over chance down to
+    6.5x, because the extra settings answer through weaker paths.
+
+    So the staircases are named and selectable rather than one being the
+    default everywhere. A caller wanting graded confidence over a corpus it
+    trusts takes `wide`; one answering open questions, where a wrong answer
+    costs more than a refusal, takes `lean`.
+    """
+    from .graded import (DEFAULT_SETTINGS, FULL_SETTINGS, GRAIN_AXIS,
+                         GRAMMAR_AXIS, WIDE_SETTINGS, staircase)
+
+    names = lambda s: [n for n, _ in s]
+    wide, full = names(WIDE_SETTINGS), names(FULL_SETTINGS)
+
+    ok = (len(DEFAULT_SETTINGS) == 6
+          and len(wide) == len(GRAIN_AXIS) * len(GRAMMAR_AXIS)
+          and len(full) == len(wide) * 4
+          # every axis is actually varied, not just relabelled
+          and len({n.split(".")[0] for n in wide}) == len(GRAIN_AXIS)
+          and len({n.split(".")[1] for n in wide}) == len(GRAMMAR_AXIS)
+          and len({n.split(".")[2] for n in full}) == 4
+          # and a narrower staircase is still a staircase
+          and len(staircase(grammars=("raw",))) == len(GRAIN_AXIS)
+          and len(set(wide)) == len(wide))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_FINEST_STAIRCASE_IS_NOT_THE_BEST_ONE",
+        "pass": bool(ok),
+        "result": {"lean": len(DEFAULT_SETTINGS), "wide": len(wide),
+                   "full": len(full), "wide_names": wide[:4],
+                   "axes_varied": {
+                       "grain": sorted({n.split(".")[0] for n in wide}),
+                       "grammar": sorted({n.split(".")[1] for n in wide}),
+                       "depth": sorted({n.split(".")[2] for n in full})}},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2606,6 +2663,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         the_staircase_grades_doubt_and_finds_none_to_grade_fork(),
         the_structure_is_deterministic_fork(),
         the_grammar_axis_earns_its_place_on_mismatched_forms_fork(),
+        the_finest_staircase_is_not_the_best_one_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),

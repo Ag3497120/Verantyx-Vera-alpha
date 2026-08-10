@@ -88,6 +88,59 @@ DEFAULT_SETTINGS: Tuple[Tuple[str, Dict[str, Any]], ...] = (
 )
 
 
+#: The three axes that were each measured to carry signal, and the
+#: staircases built from them. Selectable rather than fixed, because the
+#: finest staircase is not the best one — measured over 500 probes phrased
+#: OUTSIDE the corpus's own word forms, plus 20 out-of-corpus words and 150
+#: held-out cores:
+#:
+#:     staircase   build   reach   out-of-corpus   100% bands   unknown-word
+#:                                 false answers                quality
+#:     lean (6)     1.1s    464         2               1          16.7x
+#:     wide (12)    2.5s    460         3               4           6.5x
+#:     full (48)   52.2s    450         7              13            --
+#:
+#: Only ONE of four columns improves with more steps. Finer banding is real
+#: — 48 steps expresses degrees of doubt 6 cannot — and it is paid for in
+#: reach, in out-of-corpus precision, and in a 47x build. A caller who needs
+#: graded confidence over a corpus it trusts takes `wide`; one answering
+#: open questions where a wrong answer costs more than a refusal takes
+#: `lean`.
+#:
+#: The axes themselves:
+#:   grain      whole / 3 / 2      1 rung 19.3% -> 3 rungs 67.7% on leaves
+#:   knowledge  facets per core    all-agree 98.1% against 14.0% alone
+#:   grammar    raw/nosuffix/…     290 -> 359 answers on mismatched forms
+GRAIN_AXIS: Tuple[Tuple[str, int], ...] = (("whole", 0), ("g3", 3), ("g2", 2))
+GRAMMAR_AXIS: Tuple[str, ...] = ("raw", "nosuffix", "heads", "both")
+DEPTH_AXIS: Tuple[Optional[int], ...] = (1, 4, 16, None)
+
+
+def staircase(
+    grains: Sequence[Tuple[str, int]] = GRAIN_AXIS,
+    grammars: Sequence[str] = GRAMMAR_AXIS,
+    depths: Sequence[Optional[int]] = (1,),
+) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+    """One setting per combination — the staircase, at the width asked for."""
+    import itertools
+
+    return tuple(
+        ("%s.%s.d%s" % (gn, gr, dp if dp else "all"),
+         {"rungs": ((gn, gs),), "grammar": gr, "depth": dp})
+        for (gn, gs), gr, dp in itertools.product(grains, grammars, depths))
+
+
+#: 12 steps: every grain against every grammar, cores keyed by name. Four
+#: bands that were right every time, at 2.5s.
+WIDE_SETTINGS = staircase()
+
+#: 48 steps: knowledge depth as well. Thirteen bands, and the only
+#: configuration that can say "9 of 12 agreed" — at 52s, seven wrong answers
+#: about words the corpus never held, and unknown-word reach that lands
+#: further from the mark.
+FULL_SETTINGS = staircase(depths=DEPTH_AXIS)
+
+
 def cores_as_items(store: Any, *, depth: Optional[int] = None) -> Dict[str, List[str]]:
     """core -> the terms that identify it: itself plus its facets.
 
