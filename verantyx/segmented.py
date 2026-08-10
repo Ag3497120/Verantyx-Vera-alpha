@@ -44,10 +44,37 @@ than a refusal, and not otherwise.
 """
 from __future__ import annotations
 
+import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+#: Runs when hiragana counts as content. Japanese writes its grammar in
+#: hiragana, so the ordinary reader excludes it and 「こんにちは」 yields no
+#: content run at any window size — there is nothing to cut. A greeting is
+#: not grammar though, and a cut that includes hiragana reaches it:
+#: こんにちは -> こん / んに / にち / ちは.
+#:
+#: The provenance span is excluded here too. Without it the 2-char cut
+#: turned `(reported by policy.docx)` into by / ed / ep / or / po and gave
+#: every core in the corpus the same five facets.
+_HIRA_RUN = re.compile(r"[ぁ-んァ-ヺー㐀-䶿一-鿿々〆A-Za-z]+")
+
+
+def hiragana_runs(text: str) -> List[str]:
+    """Content runs with hiragana included, provenance still excluded."""
+    from .lang import _JA_ATTRIBUTION
+
+    text = text or ""
+    skip = [(m.start(), m.end()) for m in _JA_ATTRIBUTION.finditer(text)]
+    out: List[str] = []
+    for m in _HIRA_RUN.finditer(text):
+        if any(a <= m.start() < b for a, b in skip):
+            continue
+        out.append(m.group(0))
+    return out
+
 
 #: (name, characters per cut). 0 keeps the reader's own word boundaries.
 DEFAULT_CUTS: Tuple[Tuple[str, int], ...] = (
@@ -72,7 +99,8 @@ def cut_runs(runs: Sequence[str], size: int) -> List[str]:
     return out
 
 
-def ingest_at(docs: Sequence[Tuple[str, str]], size: int) -> Any:
+def ingest_at(docs: Sequence[Tuple[str, str]], size: int,
+              *, hiragana: bool = False) -> Any:
     """A whole federation, read at one cut.
 
     The cut is applied inside `lang.ja_content_runs`, so every layer that
@@ -86,9 +114,10 @@ def ingest_at(docs: Sequence[Tuple[str, str]], size: int) -> Any:
     from .document_ingest import Document, ingest_documents
 
     original = lang.ja_content_runs
-    if size:
+    base = hiragana_runs if hiragana else original
+    if size or hiragana:
         def cut(text: str) -> List[str]:
-            return cut_runs(original(text), size)
+            return cut_runs(base(text), size)
         lang.ja_content_runs = cut
     try:
         store = CrossStore()
@@ -103,6 +132,8 @@ class SegmentedStaircase:
     """One federation per cut, asked together."""
 
     cuts: Sequence[Tuple[str, int]] = DEFAULT_CUTS
+    #: Cut names whose store was built with hiragana as content.
+    hiragana_cuts: Sequence[str] = ()
     stores: Dict[str, Any] = field(default_factory=dict)
     judges: Dict[str, Any] = field(default_factory=dict)
     built: Dict[str, Any] = field(default_factory=dict)
@@ -111,11 +142,21 @@ class SegmentedStaircase:
         from .graded import GradedJudge
 
         rec: Dict[str, Any] = {}
+        from .lang import ja_content_runs
+
         for name, size in self.cuts:
             t0 = time.time()
-            st = ingest_at(docs, size)
+            hira = name in self.hiragana_cuts
+            st = ingest_at(docs, size, hiragana=hira)
             self.stores[name] = st
-            self.judges[name] = GradedJudge().build(st)
+            # The query is cut the way the store was. Without this a
+            # hiragana federation holds 「こんにちは」 and cannot be asked
+            # for it, because the ordinary reader gives the question no
+            # terms at all.
+            base = hiragana_runs if hira else ja_content_runs
+            read = (lambda tx, _b=base, _s=size: cut_runs(_b(tx), _s))
+            self.stores[name] = st
+            self.judges[name] = GradedJudge(read=read).build(st)
             rec[name] = {"cores": len(st.crosses),
                          "seconds": round(time.time() - t0, 1)}
         self.built = {"cuts": rec, "documents": len(docs)}

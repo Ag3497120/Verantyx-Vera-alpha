@@ -161,7 +161,15 @@ def cores_as_items(store: Any, *, depth: Optional[int] = None) -> Dict[str, List
 class GradedJudge:
     """One ladder per setting, over the cores of a store."""
 
-    def __init__(self, settings: Sequence[Tuple[str, Dict[str, Any]]] = DEFAULT_SETTINGS):
+    def __init__(self, settings: Sequence[Tuple[str, Dict[str, Any]]] = DEFAULT_SETTINGS,
+                 *, read: Optional[Any] = None):
+        #: How a QUERY is cut. It must match how the store was ingested: a
+        #: federation built with hiragana as content still answered
+        #: 「こんにちは」 with UNKNOWN_NO_SUBJECT, because the question went
+        #: through the ordinary reader, which drops hiragana and produced no
+        #: term to look up. The store held the greeting and the query could
+        #: not spell it.
+        self.read = read
         self.settings = list(settings)
         self.ladders: Dict[str, Ladder] = {}
         #: Every term the store holds, for the coverage report.
@@ -190,7 +198,7 @@ class GradedJudge:
         """Every setting's reading, and the count. Never a promotion."""
         from .lang import ja_content_runs
 
-        terms = ja_content_runs(query)
+        terms = (self.read or ja_content_runs)(query)
         if not terms:
             # Two different failures wore one name. 「こんにちは」 parses
             # perfectly and contains no content word — hiragana is grammar in

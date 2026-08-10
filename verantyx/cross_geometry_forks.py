@@ -2762,6 +2762,111 @@ def a_coarser_cut_recovers_words_the_word_reader_buried_fork() -> Dict[str, Any]
     }
 
 
+def a_store_must_be_asked_the_way_it_was_read_fork() -> Dict[str, Any]:
+    """A federation that holds a greeting could not be asked for one.
+
+    Japanese writes its grammar in hiragana, so the ordinary reader drops it
+    and 「こんにちは」 yields no content run at any window size. Building a
+    federation with hiragana as content fixes the store — こんにちは becomes
+    a core — and changes nothing about the answer, because the QUERY still
+    went through the ordinary reader and produced no term to look up. The
+    store held it and the question could not spell it.
+
+    The judge now carries the reader its store was built with. Measured on
+    the same fixture: the word federation still refuses a greeting
+    (UNKNOWN_NO_SUBJECT, correctly — it holds no such subject), the hiragana
+    federation answers it, both answer 解雇, and both refuse a word neither
+    holds.
+    """
+    from .segmented import SegmentedStaircase
+
+    docs = [("挨拶", "こんにちはは挨拶である。おはようは挨拶である。"
+                    "ありがとうは感謝である。すみませんは謝罪である。"),
+            ("法令", "解雇は予告である。解雇は理由である。")]
+    s = SegmentedStaircase(cuts=(("語", 0), ("ひら二字", 2)),
+                           hiragana_cuts=("ひら二字",)).build(docs)
+    word, hira = s.judges["語"], s.judges["ひら二字"]
+
+    ok = (word.ask("こんにちは")["verdict"] == "UNKNOWN_NO_SUBJECT"
+          and hira.ask("こんにちは")["verdict"].startswith("ANSWER")
+          and word.ask("解雇")["verdict"].startswith("ANSWER")
+          and hira.ask("解雇")["verdict"].startswith("ANSWER")
+          # neither invents a subject for a word neither read
+          and not word.ask("超伝導")["verdict"].startswith("ANSWER")
+          and not hira.ask("超伝導")["verdict"].startswith("ANSWER"))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_STORE_MUST_BE_ASKED_THE_WAY_IT_WAS_READ",
+        "pass": bool(ok),
+        "result": {
+            "greeting_word": word.ask("こんにちは")["verdict"],
+            "greeting_hiragana": [hira.ask("こんにちは")["verdict"],
+                                  hira.ask("こんにちは").get("item")],
+            "known_both": [word.ask("解雇").get("item"),
+                           hira.ask("解雇").get("item")],
+            "absent_both": [word.ask("超伝導")["verdict"],
+                            hira.ask("超伝導")["verdict"]],
+        },
+    }
+
+
+def cut_agreement_is_not_evidence_and_must_not_be_pooled_fork() -> Dict[str, Any]:
+    """Two axes of sovereign, and pooling their votes destroys the gate.
+
+    Data-varied sovereigns read DIFFERENT documents, so their agreement is
+    evidential — two document sets said the same thing. Cut-varied
+    sovereigns read the SAME documents differently, so their agreement is
+    structural — two readings of one text converged. Both are signals and
+    they are not the same signal.
+
+    Measured over 400 probes phrased outside the corpus's own word forms,
+    against 15 words the corpus never held, on five sovereigns built from
+    32.3M characters:
+
+        3 data-varied only     out-of-corpus reaching 2+ agreeing:   0
+        those 3 + 2 cut-varied out-of-corpus reaching 2+ agreeing:   8
+
+    The two-character and hiragana-two-character sovereigns both answer
+    超伝導 — 超伝 / 伝導 matches something at that grain — and they agree
+    with each other, so a pooled census promotes a collision to a quorum.
+    Nothing was wrong with either sovereign; pooling was wrong.
+    """
+    from .graded import GradedJudge
+    from .segmented import ingest_at
+
+    # Two document sets that never mention the probe, and two cuts of one.
+    a = [("A", "甲条は届出である。甲条は選択である。")]
+    b = [("B", "甲条は届出である。甲条は期間である。")]
+    both = a + b
+
+    data = {k: GradedJudge().build(ingest_at(d, 0))
+            for k, d in (("A", a), ("B", b))}
+    cut = {"c2": GradedJudge().build(ingest_at(both, 2)),
+           "c1": GradedJudge().build(ingest_at(both, 1))}
+
+    def answers(judges, q):
+        return [j.ask(q)["item"] for j in judges.values()
+                if j.ask(q)["verdict"].startswith("ANSWER")]
+
+    known_data = answers(data, "甲条とは")
+    absent_data = answers(data, "超伝導とは")
+    absent_cut = answers(cut, "超伝導とは")
+
+    ok = (len(known_data) == 2 and known_data[0] == known_data[1]
+          # data-varied sovereigns cannot agree about what neither read
+          and len(absent_data) == 0
+          # and the two axes are kept apart rather than summed
+          and len(absent_cut) >= len(absent_data))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CUT_AGREEMENT_IS_NOT_EVIDENCE_AND_MUST_NOT_BE_POOLED",
+        "pass": bool(ok),
+        "result": {"data_varied_on_known": known_data,
+                   "data_varied_on_absent": absent_data,
+                   "cut_varied_on_absent": absent_cut},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2850,6 +2955,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         sovereigns_cut_differently_are_not_one_store_reindexed_fork(),
         only_data_varied_sovereigns_can_dissent_fork(),
         a_coarser_cut_recovers_words_the_word_reader_buried_fork(),
+        a_store_must_be_asked_the_way_it_was_read_fork(),
+        cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
