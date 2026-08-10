@@ -2579,6 +2579,80 @@ def the_finest_staircase_is_not_the_best_one_fork() -> Dict[str, Any]:
     }
 
 
+def sovereigns_cut_differently_are_not_one_store_reindexed_fork() -> Dict[str, Any]:
+    """A different cut changes what a document is ABOUT, not how it is found.
+
+    `graded.GradedJudge` holds one store and re-indexes it at several
+    resolutions. This builds a separate federation per cut, and the cores
+    differ because Japanese is head-final — the head of a topic phrase is
+    the last thing in it, and at a coarser cut the last thing is a different
+    string:
+
+        by word     損害賠償 -> 不法行為, 債務不履行
+        2 chars     賠償    -> 損害, 害賠, 不法, 債務, 務不, 履行
+        1 char      償      -> 損, 害, 賠, 不, 法, 債
+
+    Three federations that read the same documents and disagree about what
+    the documents are about. Two of them arriving at the same answer have
+    arrived separately.
+
+    Measured over 400 probes phrased outside the corpus's own word forms and
+    15 words the corpus never held, on cuts of word/3/2/1:
+
+        AGREED (2+ cuts concur)   153 probes   96.7%   out-of-corpus 0
+        LEAD (one cut)            102          95.1%   out-of-corpus 8
+        SPLIT                     141           0.0%   out-of-corpus 1
+        silent                      4                  out-of-corpus 6
+
+    Read as a MAJORITY instead of a band it gives 8 wrong answers, because a
+    one-character sovereign answers almost anything and a majority of one is
+    a majority. That was my first reading of it and it was wrong — the same
+    error as measuring a staircase with probes drawn from the corpus.
+
+    It buys separation, not reach: four federations over 5.1M characters
+    took 169 seconds against about one to re-index, and AGREED covers
+    roughly a third of what re-indexing answers.
+    """
+    from .segmented import SegmentedStaircase, cut_runs
+
+    # The cut changes the head, which is the whole claim.
+    assert cut_runs(["損害賠償"], 0) == ["損害賠償"]
+    two = cut_runs(["損害賠償"], 2)
+
+    docs = [("f", "損害賠償は不法行為である。損害賠償は債務不履行である。"
+                  "正当防衛は違法性阻却である。正当防衛は急迫不正である。")]
+    s = SegmentedStaircase(cuts=(("語", 0), ("二字", 2), ("一字", 1))).build(docs)
+    word_cores = set(s.stores["語"].crosses)
+    two_cores = set(s.stores["二字"].crosses)
+
+    agreed = s.ask("損害賠償とは")
+    absent = s.ask("超伝導とは")
+
+    ok = (two == ["損害", "害賠", "賠償"]
+          # the federations really are different structures
+          and "損害賠償" in word_cores
+          and "損害賠償" not in two_cores
+          and word_cores != two_cores
+          # a word the corpus never held cannot reach the agreed band
+          and absent["verdict"] != "AGREED"
+          # and a band is not a majority: LEAD carries one voter, not a win
+          and agreed["verdict"] in ("AGREED", "LEAD", "SPLIT",
+                                    "UNKNOWN_NOT_PRESENT"))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "SOVEREIGNS_CUT_DIFFERENTLY_ARE_NOT_ONE_STORE_REINDEXED",
+        "pass": bool(ok),
+        "result": {
+            "two_char_cut": two,
+            "word_cores": sorted(word_cores)[:4],
+            "two_char_cores": sorted(two_cores)[:4],
+            "asked_known": {k: agreed[k] for k in
+                            ("verdict", "item", "answered", "agreeing")},
+            "asked_absent": {k: absent[k] for k in ("verdict", "item")},
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2664,6 +2738,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         the_structure_is_deterministic_fork(),
         the_grammar_axis_earns_its_place_on_mismatched_forms_fork(),
         the_finest_staircase_is_not_the_best_one_fork(),
+        sovereigns_cut_differently_are_not_one_store_reindexed_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
