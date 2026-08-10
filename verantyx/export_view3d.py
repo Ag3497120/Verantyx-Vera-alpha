@@ -139,7 +139,9 @@ def build(root: Path, *, max_cores_per_leaf: Optional[int] = None) -> Dict[str, 
     add("root", "主権", 0, -1, (0.0, 0.0, 0.0), -1, -1)
     dom_slots = slots((0.0, 0.0, 0.0), 4200.0, 900.0)
     for di, d in enumerate(dom_names):
-        p = dom_slots[di * len(FACET_FACES)][0]
+        # One arm per domain, not one slot: four domains on four faces of a
+        # single arm would sit almost on top of each other.
+        p = dom_slots[(di % len(ARM_VEC)) * len(FACET_FACES)][0]
         add(f"dom:{d}", d, 1, di, p, di, 0)
 
     edges: List[int] = []

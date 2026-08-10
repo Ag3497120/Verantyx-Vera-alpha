@@ -405,6 +405,46 @@ def serve(store_path: str) -> int:
         what a fact is about, not how it was put."""
         return json.dumps(_collapse(_conversation, reply), ensure_ascii=False)
 
+    _vera_cache: Dict[str, Any] = {}
+
+    @mcp.tool()
+    def vera_ask(query: str, sentences: int = 3) -> str:
+        """Ask the full stack: language, staircase, inference core, reach.
+
+        The same entry the 3D viewer uses, so the picture and the tools
+        cannot answer differently — a reader watching a query resolve is
+        watching the thing that resolved it.
+
+        Layered in the order the measurements put them. Language routes
+        first, because mixing two in one store answered superconductivity
+        with contract. A time deictic is settled before any lookup, because
+        「今日の天気は」 has no answer in a store with no clock. The
+        staircase seeds the core when the core cannot enter on the question
+        as asked — 0 of 200 such questions answered before, 185 after. When
+        nothing is held, the term is split into units the corpus attests
+        (10.4% facet overlap) before falling back on a longer word that
+        contains it (4.5%), and the two are reported apart.
+
+        Every answer says how it was reached: ANSWER entered directly,
+        SEEDED needed the staircase to name the subject, UNITS and
+        CONTAINMENT landed near a word the store never held. The path is the
+        citation; any sentence is a draft."""
+        from .vera import load as load_vera
+
+        if "v" not in _vera_cache:
+            _vera_cache["v"] = load_vera()
+        return json.dumps(_vera_cache["v"].ask(query, limit=sentences),
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_sovereigns() -> str:
+        """Which sovereigns are loaded, and how big each is."""
+        from .vera import load as load_vera
+
+        if "v" not in _vera_cache:
+            _vera_cache["v"] = load_vera()
+        return json.dumps(_vera_cache["v"].report(), ensure_ascii=False)
+
     @mcp.tool()
     def how_to_resolve(verdict: str, subject: str = "") -> str:
         """What an expert should register so a refusal becomes an answer.

@@ -48,31 +48,43 @@ def emit(msg: Dict[str, Any]) -> None:
 
 
 def load(root: Path) -> None:
-    import pickle
+    """Load every sovereign, not just the Japanese one.
 
-    from .cross_store import CrossStore
-    from .graded import GradedJudge
+    `vera.load` is the same entry the MCP server and the IDE use, so the
+    picture and the tools cannot answer differently — a viewer watching a
+    query resolve is watching the thing that actually resolved it.
+    """
+    from .vera import load as load_vera
 
-    doms = pickle.loads((root / "build" / "federation.pkl").read_bytes())
-    st = CrossStore()
-    for d in doms:
-        for s in doms[d].values():
-            st.source_labels |= getattr(s, "source_labels", set())
-            for c, cr in s.crosses.items():
-                st.crosses.setdefault(c, {}).update(cr)
-                st.core_count[c] = st.core_count.get(c, 0) + 1
-    STATE["store"] = st
-    STATE["judge"] = GradedJudge().build(st)
-    STATE["domains"] = doms
+    v = load_vera(root)
+    STATE["vera"] = v
+    STATE["store"] = v.stores["ja"]
+    STATE["judge"] = v.judges["ja"]
 
 
 def run_query(query: str) -> Dict[str, Any]:
-    """Ask, streaming each setting's reading as it is produced."""
-    from .lang import ja_content_runs
+    """Ask, streaming each stage as it happens.
+
+    The stream is the layering: language, then the staircase setting by
+    setting, then the core, then the reach if nothing was held. A viewer
+    sees which stage produced the answer, which is the same thing the
+    verdict name says.
+    """
+    from .lang import detect, ja_content_runs
     from .resolution import ask as rung_ask
 
-    j, st = STATE["judge"], STATE["store"]
-    terms = ja_content_runs(query)
+    v = STATE["vera"]
+    lang = detect(query)
+    if lang == "latin" and "en" in v.stores:
+        lang = "en"
+    emit({"type": "language", "language": lang, "have": sorted(v.stores)})
+    if lang not in v.stores:
+        emit({"type": "verdict", "verdict": "UNKNOWN_LANGUAGE_NOT_HELD",
+              "item": None, "detail": lang})
+        return {"verdict": "UNKNOWN_LANGUAGE_NOT_HELD"}
+
+    j, st = v.judges[lang], v.stores[lang]
+    terms = (j.read or ja_content_runs)(query)
     emit({"type": "ask", "query": query, "terms": terms})
     if not terms:
         emit({"type": "verdict", "verdict": "UNKNOWN_UNPARSED", "item": None})
@@ -95,11 +107,25 @@ def run_query(query: str) -> Dict[str, Any]:
             emit({"type": "touch", "nodes": [item], "why": name})
         time.sleep(.16)          # so a reader can watch the settings differ
 
-    out = j.ask(query)
-    detail = f"{out.get('agreeing', 0)}/{out.get('of', 0)}"
-    emit({"type": "verdict", "verdict": out["verdict"],
-          "item": out.get("item"), "detail": detail, "readings": readings})
-    return out
+    full = v.ask(query)
+    detail = "%s/%s" % (full.get("agreeing", 0), full.get("of", 0))
+    if full.get("reached"):
+        for r in full["reached"]:
+            emit({"type": "touch", "nodes": [r["item"]], "why": r["verdict"]})
+            emit({"type": "reach", "term": r["term"], "route": r["verdict"],
+                  "item": r["item"]})
+    sentences = [s["text"] for s in
+                 (full.get("written") or {}).get("sentences", [])]
+    emit({"type": "verdict", "verdict": full["verdict"],
+          "item": full.get("core") or full.get("item"),
+          "detail": detail, "readings": readings,
+          "language": lang, "path": full.get("text"),
+          "sentences": sentences,
+          "remedy": full.get("remedy"),
+          "coverage": full.get("coverage"),
+          "facet_only": full.get("as_facet_only"),
+          "missing": full.get("missing")})
+    return full
 
 
 class H(BaseHTTPRequestHandler):
@@ -177,8 +203,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print("連合を読み込み中…", flush=True)
     load(Path(a.root))
-    print(f"核 {len(STATE['store'].crosses):,}  → http://localhost:{a.port}/vera3d.html",
-          flush=True)
+    v = STATE["vera"]
+    print("ソブリン: %s  → http://localhost:%d/vera3d.html"
+          % ({k: len(s.crosses) for k, s in v.stores.items()}, a.port), flush=True)
     print(f"問う:  curl 'http://localhost:{a.port}/ask?q=正当防衛とは'", flush=True)
     H.page_dir = Path(a.page)
     ThreadingHTTPServer(("127.0.0.1", a.port), H).serve_forever()
