@@ -3509,6 +3509,74 @@ def the_vocabulary_is_not_the_lever_fork() -> Dict[str, Any]:
     }
 
 
+def a_refusal_says_what_would_close_it_fork() -> Dict[str, Any]:
+    """Four of six refusals close by registration; two must not.
+
+    Typed refusals are only useful to an expert if each says what to
+    register. Measured end to end — register, rebuild, re-ask:
+
+        UNKNOWN_NOT_PRESENT        3 sentences -> ANSWER 超伝導       1.4s
+        UNKNOWN_SUBJECT_TOO_THIN   1 fact NOT_HELD, 4 facts -> ANSWER
+        UNKNOWN_NO_CITATION        one citing document -> 民法第七百九条
+        UNKNOWN_LANGUAGE_NOT_HELD  an English sovereign -> ANSWER negligence
+
+    Two do not move and should not. `UNKNOWN_TIME_DEPENDENT` stayed put
+    after the fact was ingested — the store now holds 「2026年8月10日の東京の
+    天気は晴れである」 and 「今日の天気は」 still routes to a tool, because
+    今日 is a property of the QUESTION. Asking with the date answers.
+
+    `UNKNOWN_NO_SUBJECT` CAN be registered — 「こんにちはは挨拶である」 makes
+    a greeting answerable — and a knowledge store answering こんにちは with
+    挨拶 is not an improvement. That is a routing decision, not a gap, and
+    saying so is more use to an expert than a form to fill in.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .graded import GradedJudge
+    from .remedy import remedy
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "甲条は事情である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    before = j.ask("超伝導とは")
+    r_gap = remedy(before)
+
+    ingest_documents(store, [Document(
+        source="専門家登録",
+        text="超伝導は電気抵抗である。超伝導は臨界温度である。超伝導は効果である。")])
+    after = GradedJudge().build(store).ask("超伝導とは")
+
+    greeting = remedy({"verdict": "UNKNOWN_NO_SUBJECT"})
+    clock = remedy({"verdict": "UNKNOWN_TIME_DEPENDENT", "deictic": "今日"})
+    answered = remedy({"verdict": "ANSWER", "item": "甲条"})
+
+    ok = (before["verdict"] == "UNKNOWN_NOT_PRESENT"
+          and r_gap["needs_registration"] is True
+          and r_gap.get("minimum") == 3
+          # registering closes it
+          and after["verdict"].startswith("ANSWER")
+          and after.get("item") == "超伝導"
+          # the two that are not gaps say so, with a reason
+          and greeting["needs_registration"] is False and greeting.get("why")
+          and clock["needs_registration"] is False and clock.get("deictic") == "今日"
+          # and an answer asks for nothing
+          and answered["needs_registration"] is False)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_REFUSAL_SAYS_WHAT_WOULD_CLOSE_IT",
+        "pass": bool(ok),
+        "result": {
+            "before": before["verdict"],
+            "remedy": {k: r_gap[k] for k in ("needs_registration", "minimum")},
+            "after_registration": [after["verdict"], after.get("item")],
+            "greeting_is_not_a_gap": greeting["needs_registration"],
+            "clock_is_not_a_gap": clock["needs_registration"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3606,6 +3674,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         layered_recovers_where_pooled_destroys_fork(),
         the_path_is_the_content_and_the_writer_only_supplies_form_fork(),
         the_vocabulary_is_not_the_lever_fork(),
+        a_refusal_says_what_would_close_it_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),

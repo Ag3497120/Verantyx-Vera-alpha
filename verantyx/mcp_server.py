@@ -406,6 +406,35 @@ def serve(store_path: str) -> int:
         return json.dumps(_collapse(_conversation, reply), ensure_ascii=False)
 
     @mcp.tool()
+    def how_to_resolve(verdict: str, subject: str = "") -> str:
+        """What an expert should register so a refusal becomes an answer.
+
+        Every refusal here is typed and each type has a different repair.
+        UNKNOWN_SUBJECT_TOO_THIN wants three more sentences;
+        UNKNOWN_LANGUAGE_NOT_HELD wants a sovereign built from documents in
+        that language. Without this the refusal says what happened and
+        leaves the repair to be guessed.
+
+        Measured end to end — register, rebuild, re-ask: NOT_PRESENT closed
+        with three sentences in 1.4s on 54,244 cores; TOO_THIN was still
+        NOT_HELD at one fact and answerable at four; NO_CITATION closed with
+        one citing document; LANGUAGE_NOT_HELD closed by adding a sovereign.
+
+        Three verdicts report `needs_registration: false` and say why.
+        UNKNOWN_TIME_DEPENDENT does not move when the fact is added — 今日 is
+        a property of the question and the store has no clock, so whoever
+        knows the date resolves it first. UNKNOWN_NO_SUBJECT can be
+        registered and should not be: a knowledge store answering こんにちは
+        with 挨拶 is not an improvement. UNKNOWN_SUBJECT_NOT_A_WORD means the
+        path is already the answer."""
+        from .remedy import remedy
+
+        r = {"verdict": verdict}
+        if subject:
+            r["subject"] = subject
+        return json.dumps(remedy(r), ensure_ascii=False)
+
+    @mcp.tool()
     def attest_claim(subject: str, text: str) -> str:
         """Judge whether THIS store supports what a claim says about a
         subject. Built for grading an LLM's output: paste the assistant's
