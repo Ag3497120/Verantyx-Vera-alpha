@@ -201,6 +201,56 @@ def from_stores(
     return attest(ranked, corpora, min_attest=min_attest)
 
 
+def from_cuts(
+    docs: Sequence[Tuple[str, str]],
+    corpora: Sequence[Tuple[str, str]],
+    *,
+    sizes: Sequence[int] = (2, 3),
+    min_attest: int = MIN_ATTEST,
+) -> Vocabulary:
+    """Words a WORD-level reader buried inside longer compounds.
+
+    A reader that takes 損害賠償 whole never proposes 賠償, so the vocabulary
+    is missing terms the corpus writes constantly. Re-reading the same
+    documents at a coarser cut proposes them, and the ordinary attestation
+    test decides — nothing is admitted for being splittable.
+
+    This is the only expansion measured to raise quality rather than trade
+    it away. Against 20M held-out characters, the share of admitted terms
+    that the held-out text also writes standalone three or more times:
+
+        current vocabulary                52%
+        MIN_ATTEST lowered from 3 to 1     4%   (小林一三, 各出展)
+        morphological variants admitted    2%   (物価統制令第三十八条)
+        cores from a 2 or 3 character cut 62%   (北航路, 絶縁物, 放牧地, 借用)
+
+    The first two double the share of path centres that count as words, from
+    32% to 64% and 48%, and they do it by calling proper nouns and extraction
+    fragments words. This adds 7,537 terms at a HIGHER attestation rate than
+    the vocabulary already had.
+    """
+    from .segmented import ingest_at
+
+    proposed: Set[str] = set()
+    for size in sizes:
+        store = ingest_at(docs, size)
+        labels = getattr(store, "source_labels", set()) or set()
+        proposed |= {c for c in store.crosses
+                     if c not in labels and MIN_LEN <= len(c) <= MAX_LEN}
+    return attest(sorted(proposed), corpora, min_attest=min_attest)
+
+
+def merge(*vocabs: Vocabulary) -> Vocabulary:
+    """One vocabulary from several, keeping every attesting corpus."""
+    out = Vocabulary()
+    for v in vocabs:
+        for term, by in v.attested.items():
+            for corpus, n in by.items():
+                cur = out.attested.setdefault(term, {})
+                cur[corpus] = max(cur.get(corpus, 0), n)
+    return out
+
+
 def filter_terms(
     terms: Iterable[str],
     vocab: Vocabulary,

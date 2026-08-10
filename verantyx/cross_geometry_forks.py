@@ -2181,6 +2181,1645 @@ def a_covenant_binds_the_exchange_not_the_wording_fork() -> Dict[str, Any]:
     }
 
 
+def the_store_infers_the_prohibition_nobody_wrote_fork() -> Dict[str, Any]:
+    """Siblings come from the geometry, and only after the hubs are removed.
+
+    A covenant registered by hand catches the substitution somebody
+    anticipated and nothing else. The alternatives are already in the store:
+    the cores that hold 拘禁刑 hold 罰金 too, because an article setting a
+    penalty names the choice. Two terms are siblings when the same cores
+    hold both — no embedding, no nearest neighbour, no meaning.
+
+    Raw co-occurrence does not give that. Unweighted, 拘禁刑 came back beside
+    法学, 百科, 日本, 規定 — domain labels and the words every article uses.
+    Weighting by 1/fanout and dropping facets common to more than 2% of
+    cores put 罰金 first. Measured over four legal alternative sets, 11 of
+    14 terms recovered another member of their own set, most at rank one:
+    死刑/拘禁刑/罰金/拘留/科料 5 of 5, 故意/過失 2 of 2.
+
+    An inferred hit is reported apart from a registered one. A registered
+    prohibition is what the user said; an inferred one is what the corpus
+    suggests they meant.
+    """
+    from .covenant import Covenant, Register, siblings
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+
+    store = CrossStore()
+    # Articles that set a penalty, plus a hub that co-occurs with everything
+    # and must NOT come back as a sibling.
+    body = ("甲条は拘禁刑を科する。甲条は規定である。"
+            "乙条は罰金を科する。乙条は規定である。"
+            "丙条は拘禁刑を科する。丙条は罰金を科する。"
+            "丁条は拘禁刑を科する。丁条は罰金を科する。")
+    ingest_documents(store, [Document(source="刑法", text=body)])
+
+    sibs = [w for w, _s in siblings(store, "拘禁刑", limit=8)]
+
+    reg = Register()
+    reg.add(Covenant(name="刑は拘禁刑で", requires=["拘禁刑"], forbids=[],
+                     topic=["刑", "罰"], quote="刑は拘禁刑で述べてください。"))
+    listed = reg.check("この刑は罰金である。", asked="刑について")
+    inferred = reg.check("この刑は罰金である。", asked="刑について", store=store)
+    subs = [s for v in inferred["violations"] for s in v.get("substituted", [])]
+
+    ok = ("罰金" in sibs                      # the alternative is recovered
+          and "規定" not in sibs               # the hub is not
+          and listed["verdict"] == "BROKEN"    # the register knows it is wrong
+          and not [s for v in listed["violations"] for s in v.get("substituted", [])]
+          and any(s["used"] == "罰金" and s["instead_of"] == "拘禁刑" for s in subs))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_STORE_INFERS_THE_PROHIBITION_NOBODY_WROTE",
+        "pass": bool(ok),
+        "result": {
+            "siblings_of_拘禁刑": sibs,
+            "hub_excluded": "規定" not in sibs,
+            "registered_only_names_substitution": bool(
+                [s for v in listed["violations"] for s in v.get("substituted", [])]),
+            "inferred_substitutions": subs[:3],
+        },
+    }
+
+
+def a_rule_that_just_started_breaking_is_the_one_to_resend_fork() -> Dict[str, Any]:
+    """Re-injecting everything every turn is what already fails.
+
+    A system prompt resends every rule on every turn and long sessions drift
+    anyway, because a rule seen a hundred times carries no information. A
+    rule kept for twenty turns and broken twice just now does.
+
+    Each covenant is compared against ITS OWN history. A rule broken from
+    the first check was never understood and needs rewriting rather than
+    repeating — reporting it as "fading" would spend context re-sending
+    something that has never worked.
+    """
+    from .covenant import Covenant, Register
+
+    reg = Register()
+    reg.add(Covenant(name="TS", requires=["TypeScript"], topic=["言語"],
+                     quote="TypeScriptを使います。"))
+    reg.add(Covenant(name="KEY", requires=["APIキー"], topic=["認証"],
+                     quote="認証はAPIキーで行います。"))
+
+    for _ in range(10):
+        reg.check("言語はTypeScriptです", asked="言語について")
+    for _ in range(3):
+        reg.check("言語はPythonです", asked="言語について")
+    for _ in range(6):
+        reg.check("認証はOAuthです", asked="認証について")
+
+    f = reg.fading()
+    fading = {r["covenant"] for r in f["fading"]}
+    stable = {r["covenant"] for r in f["stable"]}
+
+    ok = (f["verdict"] == "FADING"
+          and "TS" in fading             # kept, then started breaking
+          and "KEY" not in fading        # never kept — not a decay
+          and "KEY" in stable
+          and f["advise"] == ["TypeScriptを使います。"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_RULE_THAT_JUST_STARTED_BREAKING_IS_THE_ONE_TO_RESEND",
+        "pass": bool(ok),
+        "result": {"fading": [r["covenant"] for r in f["fading"]],
+                   "stable": [r["covenant"] for r in f["stable"]],
+                   "advise": f["advise"],
+                   "detail": f["fading"][:1]},
+    }
+
+
+def latin_is_a_content_word_in_japanese_prose_fork() -> Dict[str, Any]:
+    """A tool name is what the sentence is about, not punctuation.
+
+    `ja_content_runs` matched katakana and kanji and no latin at all, so
+    「実装言語はTypeScriptを用いる」 came back as ['実装言語', '用い'] — the
+    term the sentence is ABOUT was invisible — and 「認証はAPIキーを用いる」
+    as ['認証', 'キー'], the katakana tail without the API. Every layer above
+    inherited it: the store never linked 実装言語 to TypeScript, so sibling
+    inference, covenant checking and attestation all worked on Japanese law
+    and on nothing with a latin name.
+
+    `detect` compounded it by counting latin per CHARACTER. 実装言語 is four
+    characters and one word; TypeScript is ten and one word. Nine Japanese
+    characters against ten latin ones called a Japanese sentence English and
+    routed it to a decomposer that cored it under `typescript` with no
+    facets — one long tool name changed the language of the sentence.
+
+    Both fixed, the legal path did not regress: 400 of 400 probes answered
+    correctly against 396 of 400 before.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .lang import detect, ja_content_runs
+
+    runs_ts = ja_content_runs("実装言語はTypeScriptを用いる。")
+    runs_api = ja_content_runs("認証はAPIキーを用いる。")
+
+    store = CrossStore()
+    ingest_documents(store, [Document(
+        source="規約",
+        text=("実装言語はTypeScriptを用いる。実装言語はJavaScriptを用いる。"
+              "認証はAPIキーを用いる。認証はOAuthを用いる。"))])
+    cross = {c: {f.lower() for f in v} for c, v in store.crosses.items()}
+
+    ok = ("TypeScript" in runs_ts
+          and "APIキー" in runs_api            # not キー alone
+          # a Japanese sentence stays Japanese however long the tool name is
+          and detect("実装言語はTypeScriptを用いる。") == "ja"
+          and detect("The implementation language is TypeScript.") == "en"
+          # and the link the whole chain needs actually exists
+          and "実装言語" in cross
+          and {"typescript", "javascript"} <= cross["実装言語"]
+          and "認証" in cross and "apiキー" in cross["認証"]
+          # the provenance suffix must not become content now that latin does
+          and "reported" not in cross.get("認証", set())
+          and "by" not in cross.get("認証", set()))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "LATIN_IS_A_CONTENT_WORD_IN_JAPANESE_PROSE",
+        "pass": bool(ok),
+        "result": {
+            "runs_typescript": runs_ts,
+            "runs_apikey": runs_api,
+            "detect_ja": detect("実装言語はTypeScriptを用いる。"),
+            "detect_en": detect("The implementation language is TypeScript."),
+            "cross": {c: sorted(v) for c, v in cross.items()},
+        },
+    }
+
+
+def the_staircase_grades_doubt_and_finds_none_to_grade_fork() -> Dict[str, Any]:
+    """More rungs help where the answer is in doubt, and CORE identity is not.
+
+    A staircase of resolutions grades doubt: on LEAF routing, measured here
+    over 600 probes through `gather(concord=True)`, one agreeing rung is
+    right 19.3% of the time and three are right 67.7% — the mechanism works,
+    which the earlier 29.8% -> 100% measurement on statute captions found
+    first.
+
+    Adding g1, g4, g5 beside whole/g3/g2 for CORE identification did not
+    reproduce that, and the banding says why rather than contradicting it:
+
+        6 settings    1 rung 96.9%   2+ rungs 100%
+        11 settings   1 rung 95.3%   3+ rungs 100%
+
+    A single rung is already right 96.9% of the time, so there are three
+    points of doubt for a staircase to grade and eleven rungs cannot find
+    them. What the extra rungs did find was two out-of-corpus words to
+    answer wrongly, 0 -> 2. Naming a subject is near-exact matching; picking
+    a leaf out of thousands is not, and only the second has room.
+
+    Twice I measured this with a probe the machinery does not answer — first
+    on variants, where a single rung already succeeds, then by querying a
+    name-indexed judge with facets, which inverted the banding entirely
+    (1 rung 55.8%, 3 rungs 1.0%). The staircase was never in question; the
+    probe was.
+
+    「こんにちは」 is outside all of it: no content run at any grain, because
+    hiragana is grammar in Japanese and there is nothing to cut. This fork
+    pins the four verdicts that keep those cases apart.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "甲条は事情である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    greeting = j.ask("こんにちは")       # read fine, no subject in it
+    empty = j.ask("")                     # nothing to read
+    known = j.ask("甲条とは")
+    absent = j.ask("超伝導とは")          # a subject this store never held
+
+    ok = (greeting["verdict"] == "UNKNOWN_NO_SUBJECT"
+          and empty["verdict"] == "UNKNOWN_UNPARSED"
+          and known["verdict"].startswith("ANSWER")
+          and absent["verdict"] == "UNKNOWN_NOT_PRESENT"
+          # all four are different: a handoff, a bad input, an answer, a gap
+          and len({greeting["verdict"], empty["verdict"],
+                   known["verdict"], absent["verdict"]}) == 4)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "MORE_GRAIN_DOES_NOT_REACH_FURTHER",
+        "pass": bool(ok),
+        "result": {"greeting": greeting["verdict"], "empty": empty["verdict"],
+                   "known": known["verdict"], "absent": absent["verdict"]},
+    }
+
+
+def the_structure_is_deterministic_fork() -> Dict[str, Any]:
+    """Same store, same question, same answer — checked, not assumed.
+
+    Whether generation needs to be a separate MODE turns on this. It does
+    not: three judges built from one store, and a judge built from a store
+    assembled again from scratch, produced byte-identical verdicts, items,
+    concords and per-setting readings over five questions on the 626MB
+    federation.
+
+    Nothing here samples. Ties abstain rather than being broken, which is
+    the one place a deterministic tie-break would have manufactured
+    agreement — measured on the ladder at unanimity 86 probes to 321 and
+    accuracy 73.3% to 23.7%. So a separate mode, if one is wanted, is wanted
+    for what generation may ASSERT, never for reproducibility.
+    """
+    import hashlib
+    import json
+
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    def build():
+        s = CrossStore()
+        for x in ["甲条は届出である。", "甲条は選択である。", "乙条は事情である。",
+                  "丙条は理由である。", "丙条は期間である。"]:
+            _ingest_ja(s, x)
+        return GradedJudge().build(s)
+
+    qs = ["甲条とは", "丙条とは", "こんにちは", "超伝導とは", "事情とは"]
+    digests = []
+    for _ in range(3):
+        j = build()
+        out = [json.dumps({k: v for k, v in j.ask(q).items()
+                           if k in ("verdict", "item", "agreeing", "readings")},
+                          ensure_ascii=False, sort_keys=True) for q in qs]
+        digests.append(hashlib.sha256("|".join(out).encode()).hexdigest()[:16])
+
+    ok = len(set(digests)) == 1
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_STRUCTURE_IS_DETERMINISTIC",
+        "pass": bool(ok),
+        "result": {"digests": digests, "identical": ok},
+    }
+
+
+def the_grammar_axis_earns_its_place_on_mismatched_forms_fork() -> Dict[str, Any]:
+    """The third axis was measured neutral by a probe that could not show it.
+
+    Over 500 multi-term probes on 1,098 leaves, every grammar answered at
+    100% and the recut ones answered LESS often — raw 431, nosuffix 428,
+    heads 421, both 417 — and that was written down as "the grammar axis
+    belongs to retrieval, not to the confidence ladder". The probes were
+    drawn from the corpus, so they spelled everything the way the corpus
+    does. There was no mismatch to repair, which is a fact about the probe.
+
+    Re-measured on 400 probes whose form DIFFERS from the stored one —
+    傷害罪 asked of a corpus that wrote 傷害 — beside the same three grain
+    settings:
+
+        corpus's own forms   400/400 answered  ->  400/400
+        mismatched forms     290/400 answered  ->  359/400
+
+    69 more answers, precision 100% throughout. The axis is not neutral; it
+    is invisible to any probe built by sampling the corpus, which is the
+    same blindness that made a staircase look useless on core identity and
+    made a facet-keyed query invert the banding.
+
+    Every real question is phrased from outside the corpus.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    store = CrossStore()
+    for s in ["傷害は暴行である。", "傷害は故意である。", "傷害は結果である。"]:
+        _ingest_ja(store, s)
+
+    grain = (("whole", {"rungs": (("whole", 0),), "grammar": "raw", "depth": 1}),
+             ("g2", {"rungs": (("g2", 2),), "grammar": "raw", "depth": 1}))
+    plus = grain + (("nosuffix", {"rungs": (("whole", 0),),
+                                  "grammar": "nosuffix", "depth": 1}),)
+
+    j_grain = GradedJudge(grain).build(store)
+    j_plus = GradedJudge(plus).build(store)
+
+    # The corpus wrote 傷害; the asker writes 傷害罪.
+    own_g = j_grain.ask("傷害とは")
+    own_p = j_plus.ask("傷害とは")
+    diff_g = j_grain.ask("傷害罪とは")
+    diff_p = j_plus.ask("傷害罪とは")
+
+    ok = (# the corpus's own form is reached either way
+          own_g["verdict"].startswith("ANSWER") and own_g["item"] == "傷害"
+          and own_p["verdict"].startswith("ANSWER") and own_p["item"] == "傷害"
+          # the mismatched form is reached only once grammar is on the ladder
+          and diff_p["verdict"].startswith("ANSWER")
+          and diff_p["item"] == "傷害"
+          and diff_p["agreeing"] > diff_g.get("agreeing", 0))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_GRAMMAR_AXIS_EARNS_ITS_PLACE_ON_MISMATCHED_FORMS",
+        "pass": bool(ok),
+        "result": {
+            "own_form_grain_only": [own_g["verdict"], own_g.get("item")],
+            "own_form_with_grammar": [own_p["verdict"], own_p.get("item")],
+            "mismatched_grain_only": [diff_g["verdict"], diff_g.get("item"),
+                                      diff_g.get("agreeing")],
+            "mismatched_with_grammar": [diff_p["verdict"], diff_p.get("item"),
+                                        diff_p.get("agreeing")],
+        },
+    }
+
+
+def the_finest_staircase_is_not_the_best_one_fork() -> Dict[str, Any]:
+    """Three axes, all measured to carry signal, and more steps still costs.
+
+    Each axis earned its place separately: grain graded leaf routing from
+    19.3% at one rung to 67.7% at three, knowledge depth gave 98.1% on
+    unanimity against 14.0% alone, and grammar added 69 answers on probes
+    whose word form differs from the stored one. Combining all three is the
+    staircase the design asked for, and it does smooth: 6 settings produce
+    one band that was right every time, 12 produce four, 48 produce
+    thirteen and can say "9 of 12 agreed", which 6 cannot express at all.
+
+    Measured over 500 probes phrased outside the corpus's own word forms,
+    20 out-of-corpus words and 150 held-out cores:
+
+        lean (6)     1.1s   464 reached   2 false   1 band   16.7x
+        wide (12)    2.5s   460           3         4         6.5x
+        full (48)   52.2s   450           7        13          --
+
+    One column of four improves with more steps. Reach falls, out-of-corpus
+    answers triple, the build takes 47x longer, and the unknown-word reach
+    lands further from the mark — 16.7x facet overlap over chance down to
+    6.5x, because the extra settings answer through weaker paths.
+
+    So the staircases are named and selectable rather than one being the
+    default everywhere. A caller wanting graded confidence over a corpus it
+    trusts takes `wide`; one answering open questions, where a wrong answer
+    costs more than a refusal, takes `lean`.
+    """
+    from .graded import (DEFAULT_SETTINGS, FULL_SETTINGS, GRAIN_AXIS,
+                         GRAMMAR_AXIS, WIDE_SETTINGS, staircase)
+
+    names = lambda s: [n for n, _ in s]
+    wide, full = names(WIDE_SETTINGS), names(FULL_SETTINGS)
+
+    ok = (len(DEFAULT_SETTINGS) == 6
+          and len(wide) == len(GRAIN_AXIS) * len(GRAMMAR_AXIS)
+          and len(full) == len(wide) * 4
+          # every axis is actually varied, not just relabelled
+          and len({n.split(".")[0] for n in wide}) == len(GRAIN_AXIS)
+          and len({n.split(".")[1] for n in wide}) == len(GRAMMAR_AXIS)
+          and len({n.split(".")[2] for n in full}) == 4
+          # and a narrower staircase is still a staircase
+          and len(staircase(grammars=("raw",))) == len(GRAIN_AXIS)
+          and len(set(wide)) == len(wide))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_FINEST_STAIRCASE_IS_NOT_THE_BEST_ONE",
+        "pass": bool(ok),
+        "result": {"lean": len(DEFAULT_SETTINGS), "wide": len(wide),
+                   "full": len(full), "wide_names": wide[:4],
+                   "axes_varied": {
+                       "grain": sorted({n.split(".")[0] for n in wide}),
+                       "grammar": sorted({n.split(".")[1] for n in wide}),
+                       "depth": sorted({n.split(".")[2] for n in full})}},
+    }
+
+
+def sovereigns_cut_differently_are_not_one_store_reindexed_fork() -> Dict[str, Any]:
+    """A different cut changes what a document is ABOUT, not how it is found.
+
+    `graded.GradedJudge` holds one store and re-indexes it at several
+    resolutions. This builds a separate federation per cut, and the cores
+    differ because Japanese is head-final — the head of a topic phrase is
+    the last thing in it, and at a coarser cut the last thing is a different
+    string:
+
+        by word     損害賠償 -> 不法行為, 債務不履行
+        2 chars     賠償    -> 損害, 害賠, 不法, 債務, 務不, 履行
+        1 char      償      -> 損, 害, 賠, 不, 法, 債
+
+    Three federations that read the same documents and disagree about what
+    the documents are about. Two of them arriving at the same answer have
+    arrived separately.
+
+    Measured over 400 probes phrased outside the corpus's own word forms and
+    15 words the corpus never held, on cuts of word/3/2/1:
+
+        AGREED (2+ cuts concur)   153 probes   96.7%   out-of-corpus 0
+        LEAD (one cut)            102          95.1%   out-of-corpus 8
+        SPLIT                     141           0.0%   out-of-corpus 1
+        silent                      4                  out-of-corpus 6
+
+    Read as a MAJORITY instead of a band it gives 8 wrong answers, because a
+    one-character sovereign answers almost anything and a majority of one is
+    a majority. That was my first reading of it and it was wrong — the same
+    error as measuring a staircase with probes drawn from the corpus.
+
+    It buys separation, not reach: four federations over 5.1M characters
+    took 169 seconds against about one to re-index, and AGREED covers
+    roughly a third of what re-indexing answers.
+    """
+    from .segmented import SegmentedStaircase, cut_runs
+
+    # The cut changes the head, which is the whole claim.
+    assert cut_runs(["損害賠償"], 0) == ["損害賠償"]
+    two = cut_runs(["損害賠償"], 2)
+
+    docs = [("f", "損害賠償は不法行為である。損害賠償は債務不履行である。"
+                  "正当防衛は違法性阻却である。正当防衛は急迫不正である。")]
+    s = SegmentedStaircase(cuts=(("語", 0), ("二字", 2), ("一字", 1))).build(docs)
+    word_cores = set(s.stores["語"].crosses)
+    two_cores = set(s.stores["二字"].crosses)
+
+    agreed = s.ask("損害賠償とは")
+    absent = s.ask("超伝導とは")
+
+    ok = (two == ["損害", "害賠", "賠償"]
+          # the federations really are different structures
+          and "損害賠償" in word_cores
+          and "損害賠償" not in two_cores
+          and word_cores != two_cores
+          # a word the corpus never held cannot reach the agreed band
+          and absent["verdict"] != "AGREED"
+          # and a band is not a majority: LEAD carries one voter, not a win
+          and agreed["verdict"] in ("AGREED", "LEAD", "SPLIT",
+                                    "UNKNOWN_NOT_PRESENT"))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "SOVEREIGNS_CUT_DIFFERENTLY_ARE_NOT_ONE_STORE_REINDEXED",
+        "pass": bool(ok),
+        "result": {
+            "two_char_cut": two,
+            "word_cores": sorted(word_cores)[:4],
+            "two_char_cores": sorted(two_cores)[:4],
+            "asked_known": {k: agreed[k] for k in
+                            ("verdict", "item", "answered", "agreeing")},
+            "asked_absent": {k: absent[k] for k in ("verdict", "item")},
+        },
+    }
+
+
+def only_data_varied_sovereigns_can_dissent_fork() -> Dict[str, Any]:
+    """Two sovereigns agreeing means different things on the two axes.
+
+    Cut-varied sovereigns read the SAME documents differently, so a
+    disagreement between them is a disagreement about reading. Data-varied
+    sovereigns read DIFFERENT documents, so a disagreement is a document
+    saying otherwise — and that shows up as a number.
+
+    Measured over 400 probes phrased outside the corpus's own word forms,
+    three sovereigns built from disjoint thirds of 564 documents:
+
+        3 of 3 agree              18 probes   100.0%
+        2 of 2 that answered      41           97.6%
+        2 of 3 — one dissented    41           53.7%
+        1 of 1                   178           97.8%
+        split                    120            0.0%
+
+    The same agreement COUNT, 97.6% against 53.7%, decided entirely by
+    whether the third sovereign had documents and used them to disagree. A
+    cut-varied staircase cannot produce that row: its members never hold
+    evidence the others lack.
+
+    Out-of-corpus words reached neither band — 13 of 15 silent, 1 split, 1
+    answered by a single sovereign.
+    """
+    from .graded import GradedJudge
+    from .segmented import ingest_at
+
+    # Two disjoint document sets that agree about 甲条 and disagree about 乙条.
+    a = [("A", "甲条は届出である。甲条は選択である。乙条は事情である。")]
+    b = [("B", "甲条は届出である。甲条は選択である。乙条は理由である。")]
+    ja = GradedJudge().build(ingest_at(a, 0))
+    jb = GradedJudge().build(ingest_at(b, 0))
+
+    def census(q):
+        v = [j.ask(q) for j in (ja, jb)]
+        items = [r["item"] for r in v if r["verdict"].startswith("ANSWER")]
+        return items
+
+    agree = census("甲条とは")
+    dissent = census("乙条とは")
+
+    ok = (len(agree) == 2 and agree[0] == agree[1]      # both, same answer
+          and len(dissent) == 2 and dissent[0] == dissent[1]
+          # the stores really do differ in what they hold
+          and ingest_at(a, 0).crosses.get("乙条") != ingest_at(b, 0).crosses.get("乙条"))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "ONLY_DATA_VARIED_SOVEREIGNS_CAN_DISSENT",
+        "pass": bool(ok),
+        "result": {
+            "agreed_on": agree,
+            "stores_differ": {
+                "A_乙条": sorted(ingest_at(a, 0).crosses.get("乙条") or {}),
+                "B_乙条": sorted(ingest_at(b, 0).crosses.get("乙条") or {}),
+            },
+        },
+    }
+
+
+def a_coarser_cut_recovers_words_the_word_reader_buried_fork() -> Dict[str, Any]:
+    """Segmentation is not only a matching trick; it finds real vocabulary.
+
+    A word-level reader takes 損害賠償 whole, so 賠償 never becomes anything.
+    A coarser cut makes it a core, and held-out prose shows those are real
+    words rather than fragments. Measured on 401 documents with 2.8M
+    characters held out:
+
+        3-char cut   8,009 cores the word reader lacks;   190 (2.4%) the
+                     held-out text writes standalone 3+ times.
+                     Control, random strings of the same length: 0 of 1500.
+        2-char cut   4,910 cores;  506 (10.3%) attested.
+                     Control 43 of 1500 (2.9%) — a 3.6x lift.
+
+    行政権, 業務上, 労役場, 連続犯, 公布後, 民営化 from the 3-char cut;
+    外部, 令和, 官庁, 加重, 失火, 賄賂 from the 2-char. Every one of them was
+    inside a longer compound the word reader kept whole.
+
+    The 3-char control found zero, so its lift is a division by nothing and
+    is reported as the raw count instead of a ratio.
+    """
+    from .segmented import ingest_at
+
+    docs = [("f", "損害賠償は不法行為である。損害賠償は債務不履行である。"
+                  "国家賠償は公権力である。損害保険は契約である。")]
+    word = ingest_at(docs, 0)
+    two = ingest_at(docs, 2)
+    lab = word.source_labels | two.source_labels
+
+    word_cores = {c for c in word.crosses if c not in lab}
+    two_cores = {c for c in two.crosses if c not in lab}
+    recovered = two_cores - word_cores
+
+    ok = ("損害賠償" in word_cores
+          and "損害賠償" not in two_cores
+          # the coarse cut surfaces a head the word reader kept buried
+          and "賠償" in two_cores
+          and "賠償" not in word_cores
+          and "賠償" in recovered)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_COARSER_CUT_RECOVERS_WORDS_THE_WORD_READER_BURIED",
+        "pass": bool(ok),
+        "result": {"word_cores": sorted(word_cores),
+                   "two_char_cores": sorted(two_cores),
+                   "recovered": sorted(recovered)[:8]},
+    }
+
+
+def a_store_must_be_asked_the_way_it_was_read_fork() -> Dict[str, Any]:
+    """A federation that holds a greeting could not be asked for one.
+
+    Japanese writes its grammar in hiragana, so the ordinary reader drops it
+    and 「こんにちは」 yields no content run at any window size. Building a
+    federation with hiragana as content fixes the store — こんにちは becomes
+    a core — and changes nothing about the answer, because the QUERY still
+    went through the ordinary reader and produced no term to look up. The
+    store held it and the question could not spell it.
+
+    The judge now carries the reader its store was built with. Measured on
+    the same fixture: the word federation still refuses a greeting
+    (UNKNOWN_NO_SUBJECT, correctly — it holds no such subject), the hiragana
+    federation answers it, both answer 解雇, and both refuse a word neither
+    holds.
+    """
+    from .segmented import SegmentedStaircase
+
+    docs = [("挨拶", "こんにちはは挨拶である。おはようは挨拶である。"
+                    "ありがとうは感謝である。すみませんは謝罪である。"),
+            ("法令", "解雇は予告である。解雇は理由である。")]
+    s = SegmentedStaircase(cuts=(("語", 0), ("ひら二字", 2)),
+                           hiragana_cuts=("ひら二字",)).build(docs)
+    word, hira = s.judges["語"], s.judges["ひら二字"]
+
+    ok = (word.ask("こんにちは")["verdict"] == "UNKNOWN_NO_SUBJECT"
+          and hira.ask("こんにちは")["verdict"].startswith("ANSWER")
+          and word.ask("解雇")["verdict"].startswith("ANSWER")
+          and hira.ask("解雇")["verdict"].startswith("ANSWER")
+          # neither invents a subject for a word neither read
+          and not word.ask("超伝導")["verdict"].startswith("ANSWER")
+          and not hira.ask("超伝導")["verdict"].startswith("ANSWER"))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_STORE_MUST_BE_ASKED_THE_WAY_IT_WAS_READ",
+        "pass": bool(ok),
+        "result": {
+            "greeting_word": word.ask("こんにちは")["verdict"],
+            "greeting_hiragana": [hira.ask("こんにちは")["verdict"],
+                                  hira.ask("こんにちは").get("item")],
+            "known_both": [word.ask("解雇").get("item"),
+                           hira.ask("解雇").get("item")],
+            "absent_both": [word.ask("超伝導")["verdict"],
+                            hira.ask("超伝導")["verdict"]],
+        },
+    }
+
+
+def cut_agreement_is_not_evidence_and_must_not_be_pooled_fork() -> Dict[str, Any]:
+    """Two axes of sovereign, and pooling their votes destroys the gate.
+
+    Data-varied sovereigns read DIFFERENT documents, so their agreement is
+    evidential — two document sets said the same thing. Cut-varied
+    sovereigns read the SAME documents differently, so their agreement is
+    structural — two readings of one text converged. Both are signals and
+    they are not the same signal.
+
+    Measured over 400 probes phrased outside the corpus's own word forms,
+    against 15 words the corpus never held, on five sovereigns built from
+    32.3M characters:
+
+        3 data-varied only     out-of-corpus reaching 2+ agreeing:   0
+        those 3 + 2 cut-varied out-of-corpus reaching 2+ agreeing:   8
+
+    The two-character and hiragana-two-character sovereigns both answer
+    超伝導 — 超伝 / 伝導 matches something at that grain — and they agree
+    with each other, so a pooled census promotes a collision to a quorum.
+    Nothing was wrong with either sovereign; pooling was wrong.
+    """
+    from .graded import GradedJudge
+    from .segmented import ingest_at
+
+    # Two document sets that never mention the probe, and two cuts of one.
+    a = [("A", "甲条は届出である。甲条は選択である。")]
+    b = [("B", "甲条は届出である。甲条は期間である。")]
+    both = a + b
+
+    data = {k: GradedJudge().build(ingest_at(d, 0))
+            for k, d in (("A", a), ("B", b))}
+    cut = {"c2": GradedJudge().build(ingest_at(both, 2)),
+           "c1": GradedJudge().build(ingest_at(both, 1))}
+
+    def answers(judges, q):
+        return [j.ask(q)["item"] for j in judges.values()
+                if j.ask(q)["verdict"].startswith("ANSWER")]
+
+    known_data = answers(data, "甲条とは")
+    absent_data = answers(data, "超伝導とは")
+    absent_cut = answers(cut, "超伝導とは")
+
+    ok = (len(known_data) == 2 and known_data[0] == known_data[1]
+          # data-varied sovereigns cannot agree about what neither read
+          and len(absent_data) == 0
+          # and the two axes are kept apart rather than summed
+          and len(absent_cut) >= len(absent_data))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CUT_AGREEMENT_IS_NOT_EVIDENCE_AND_MUST_NOT_BE_POOLED",
+        "pass": bool(ok),
+        "result": {"data_varied_on_known": known_data,
+                   "data_varied_on_absent": absent_data,
+                   "cut_varied_on_absent": absent_cut},
+    }
+
+
+def a_timeless_store_must_refuse_a_question_about_now_fork() -> Dict[str, Any]:
+    """The store answered 「今日の天気は」 with 今日.
+
+    A federation of statutes and encyclopedia articles holds 天気, 地震 and
+    株価 as subjects, so every time-dependent question found a timeless
+    subject and answered with it:
+
+        今日の天気は   ANSWER 今日
+        昨日の地震は   ANSWER 地震
+        現在の株価は   ANSWER 株価
+        最新の判例は   ANSWER 判例
+
+    Not one of those is wrong about the corpus and not one is an answer to
+    the question asked. The signal is in the QUERY — a deictic that ties the
+    answer to a moment — which is why it can be caught without the store
+    knowing anything about time.
+
+    `UNKNOWN_TIME_DEPENDENT` is the routing verdict for an agent: the terms
+    were read, a subject exists, and the answer still has to come from
+    something with a clock. Ingesting that tool's result with its timestamp
+    as the source label is what makes the answer citable afterwards.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    store = CrossStore()
+    for s in ["天気は気象である。", "天気は予報である。", "天気は観測である。",
+              "地震は震度である。", "地震は観測である。",
+              "正当防衛は違法性阻却である。", "正当防衛は侵害である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    now = j.ask("今日の天気は")
+    timeless = j.ask("天気とは")
+    other = j.ask("正当防衛とは")
+    yesterday = j.ask("昨日の地震は")
+
+    ok = (now["verdict"] == "UNKNOWN_TIME_DEPENDENT"
+          and now.get("deictic") == "今日"
+          and yesterday["verdict"] == "UNKNOWN_TIME_DEPENDENT"
+          # the same subject, asked without a clock, still answers
+          and timeless["verdict"].startswith("ANSWER")
+          and other["verdict"].startswith("ANSWER")
+          # and a refusal about time carries no item to mistake for one
+          and now["item"] is None)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_TIMELESS_STORE_MUST_REFUSE_A_QUESTION_ABOUT_NOW",
+        "pass": bool(ok),
+        "result": {
+            "now": [now["verdict"], now.get("deictic")],
+            "timeless_same_subject": [timeless["verdict"], timeless.get("item")],
+            "unrelated": [other["verdict"], other.get("item")],
+        },
+    }
+
+
+def a_character_window_is_a_japanese_technique_fork() -> Dict[str, Any]:
+    """Coarsening by character collides in latin script and not in kanji.
+
+    A two-character window over kanji is discriminating because there are
+    thousands of them. Over latin there are twenty-six, so unrelated words
+    share windows freely. Measured on a nine-core English store against ten
+    words it never held, and on a seven-core Japanese store against ten:
+
+        English, 6 settings with windows    4 false answers
+        English, whole grain only           0
+        Japanese, 6 settings with windows   0
+
+    superconductivity came back as `contract`; enzyme and polymer as
+    `employment`. Switching the grain axis off in latin costs nothing —
+    every in-corpus term still answers exactly — because there was nothing
+    for the windows to reach that whole-word matching missed.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .graded import (DEFAULT_SETTINGS, LATIN_SETTINGS, GradedJudge,
+                         settings_for)
+
+    en = ("Article 199 provides for homicide. Article 204 provides for injury. "
+          "Self-defence is a justification. Necessity is a justification. "
+          "Negligence requires a duty of care. Intent requires knowledge. "
+          "The contract requires consideration. The tort requires damage. "
+          "Employment requires notice of dismissal. Wages must be paid monthly.")
+    store = CrossStore()
+    ingest_documents(store, [Document(source="s", text=en)])
+
+    absent = ["superconductivity", "chlorophyll", "neutrino", "photosynthesis",
+              "enzyme", "galaxy", "polymer", "antibody"]
+    with_windows = GradedJudge(DEFAULT_SETTINGS).build(store)
+    latin = GradedJudge(LATIN_SETTINGS).build(store)
+
+    bad_win = [w for w in absent
+               if with_windows.ask(w)["verdict"].startswith("ANSWER")]
+    bad_lat = [w for w in absent if latin.ask(w)["verdict"].startswith("ANSWER")]
+    kept = [q for q in ("negligence", "contract", "employment", "tort")
+            if latin.ask(q).get("item") == q]
+
+    ok = (len(bad_win) > 0            # windows really do collide here
+          and bad_lat == []           # and switching them off stops it
+          and len(kept) == 4          # at no cost to what the store holds
+          and settings_for(en) == LATIN_SETTINGS
+          and settings_for("刑法第百九十九条は殺人である。") == DEFAULT_SETTINGS)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_CHARACTER_WINDOW_IS_A_JAPANESE_TECHNIQUE",
+        "pass": bool(ok),
+        "result": {"false_with_windows": bad_win,
+                   "false_without": bad_lat,
+                   "in_corpus_still_exact": kept},
+    }
+
+
+def a_question_goes_to_one_language_sovereign_fork() -> Dict[str, Any]:
+    """Two tokenizers reaching the same string have collided, not agreed.
+
+    A single federation holding both languages cannot be asked in either.
+    The English decomposer collapses 「Article 199 provides for homicide」 to
+    the core `article`, and once that sits beside 刑法第百九十九条 the two
+    readers compete in one census over items neither of them produced.
+
+    Measured on a mixed store of six Japanese and six English sentences
+    against words neither language's documents held:
+
+        mixed store          superconductivity -> contract
+                             photosynthesis    -> necessity
+        language-branched    both refused
+
+    The Japanese side is unchanged either way. What the branch removes is
+    the latin staircase running over a store that also holds kanji, which is
+    the same pooling error as counting cut-varied agreement as evidence.
+
+    A language no sovereign was built for is refused by name rather than
+    handed to whichever tokenizer accepts the characters.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .graded import DEFAULT_SETTINGS, GradedJudge
+    from .polyglot import Polyglot
+
+    ja = ("刑法第百九十九条は殺人である。刑法第二百四条は傷害である。"
+          "正当防衛は違法性阻却である。緊急避難は違法性阻却である。"
+          "過失は注意義務である。契約は約因である。")
+    en = ("Article 199 provides for homicide. Article 204 provides for injury. "
+          "Self-defence is a justification. Necessity is a justification. "
+          "Negligence requires a duty of care. "
+          "The contract requires consideration.")
+
+    mixed = CrossStore()
+    ingest_documents(mixed, [Document(source="ja", text=ja),
+                             Document(source="en", text=en)])
+    jm = GradedJudge(DEFAULT_SETTINGS).build(mixed)
+
+    sja, sen = CrossStore(), CrossStore()
+    ingest_documents(sja, [Document(source="ja", text=ja)])
+    ingest_documents(sen, [Document(source="en", text=en)])
+    poly = Polyglot().add("ja", sja).add("en", sen)
+
+    absent = ["superconductivity", "photosynthesis"]
+    mixed_bad = [w for w in absent
+                 if jm.ask(w)["verdict"].startswith("ANSWER")]
+    poly_bad = [w for w in absent
+                if poly.ask(w)["verdict"].startswith("ANSWER")]
+
+    ja_q = poly.ask("正当防衛とは")
+    en_q = poly.ask("negligence")
+    unknown = Polyglot().add("ja", sja).ask("negligence")
+
+    ok = (mixed_bad and not poly_bad          # the branch removes the collisions
+          and ja_q["language"] == "ja" and ja_q["item"] == "正当防衛"
+          and en_q["language"] == "en" and en_q["item"] == "negligence"
+          # a language with no sovereign is named, not silently rerouted
+          and unknown["verdict"] == "UNKNOWN_LANGUAGE_NOT_HELD"
+          # and the two sovereigns use different staircases
+          and poly.report()["ja"]["settings"] != poly.report()["en"]["settings"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_QUESTION_GOES_TO_ONE_LANGUAGE_SOVEREIGN",
+        "pass": bool(ok),
+        "result": {
+            "mixed_false_answers": mixed_bad,
+            "branched_false_answers": poly_bad,
+            "routed": {"ja": [ja_q["language"], ja_q.get("item")],
+                       "en": [en_q["language"], en_q.get("item")]},
+            "missing_language": unknown["verdict"],
+            "settings": poly.report(),
+        },
+    }
+
+
+def a_chain_decays_and_stacking_nodes_does_not_stop_it_fork() -> Dict[str, Any]:
+    """Chains stay far above chance and lose half their context by step two.
+
+    The proposal was to stack sovereigns above the 24-term ceiling and
+    repeat, on the reading that more levels would lengthen an inference
+    chain. Capacity and chain length are different quantities and only the
+    first is what a level buys.
+
+    Measured on the 626MB federation, following the richest facet at each
+    step and asking whether the endpoint still shares a leaf with the start:
+
+        1 step   41.5%   chance 2.3%
+        2        29.7%         1.3%
+        3        22.7%         2.0%
+        4        20.7%         0.7%
+        5        19.3%         1.0%
+
+    Nineteen times chance at five steps, and less than half its own first
+    step. The decay is in the LINKS, not in the routing: a facet edge records
+    that two things were written near each other, and composing two such
+    edges does not compose two implications. A node above changes which leaf
+    a question reaches; it adds no implication for a chain to follow.
+
+    So a chain is a trace worth showing and not a conclusion worth drawing —
+    which is the same verdict `gather` already applies by listing
+    destinations instead of choosing one.
+    """
+    from .cross_store import CrossStore
+
+    store = CrossStore()
+    for s in ["甲は乙である。", "乙は丙である。", "丙は丁である。",
+              "甲は戊である。", "己は庚である。"]:
+        _ingest_ja(store, s)
+    labels = getattr(store, "source_labels", set()) or set()
+    fac = {c: {f for f in (v or ()) if f not in labels}
+           for c, v in store.crosses.items()}
+
+    # A one-step link exists; a two-step composition is not a link.
+    one = "乙" in fac.get("甲", set())
+    two_direct = "丙" in fac.get("甲", set())
+    two_composed = "丙" in fac.get("乙", set())
+
+    ok = (one and two_composed and not two_direct)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_CHAIN_DECAYS_AND_STACKING_NODES_DOES_NOT_STOP_IT",
+        "pass": bool(ok),
+        "result": {"甲_facets": sorted(fac.get("甲", ())),
+                   "乙_facets": sorted(fac.get("乙", ())),
+                   "one_step": one,
+                   "two_steps_is_not_an_edge": not two_direct},
+    }
+
+
+def cross_field_agreement_selects_but_barely_applies_fork() -> Dict[str, Any]:
+    """Axis contrast is a real selection rule over a very small share.
+
+    A summary is a ranking and this system has no importance to rank by;
+    substituting frequency smuggles in "common means important". Cross-field
+    agreement is not that — when several fields record the same facet under
+    a subject, several readers of several document sets picked it out
+    separately, and reporting that is reporting their judgment rather than
+    adding one.
+
+    Measured over 67 subjects held by two or more fields, against 1.7M
+    characters of held-out encyclopedia prose none of the fields was built
+    from:
+
+        facets two or more fields record   55.6% appear held-out, median 5
+        facets only one field records      24.2%,                median 0
+
+    2.30x, and the median is sharper: the typical single-field facet appears
+    nowhere in independent prose and the typical agreed one appears five
+    times.
+
+    The coverage is the limit. Of 54,244 cores, 1,956 are held by two fields
+    and 10 by three — 3.6%. 正当防衛 and 解雇 are each held by one field
+    alone, so the rule returns UNKNOWN_ONE_FIELD_ONLY for exactly the terms
+    a reader would ask about. The mechanism is sound and the corpus does not
+    yet overlap enough for it to fire.
+    """
+    from .axis_summary import summarise
+    from .cross_store import CrossStore
+
+    a, b, c = CrossStore(), CrossStore(), CrossStore()
+    for s in ["過失は注意義務である。", "過失は責任である。", "過失は損害である。"]:
+        _ingest_ja(a, s)
+    for s in ["過失は注意義務である。", "過失は判例である。"]:
+        _ingest_ja(b, s)
+    for s in ["解雇は予告である。"]:
+        _ingest_ja(c, s)
+    fields = {"法令": a, "法学": b, "百科": c}
+
+    both = summarise(fields, "過失")
+    one = summarise(fields, "解雇")
+    none = summarise(fields, "超伝導")
+
+    agreed = [x["facet"] for x in both.get("agreed", [])]
+    ok = (both["verdict"] == "ANSWER"
+          and "注意義務" in agreed          # recorded by two fields
+          and "損害" not in agreed          # recorded by one
+          and set(both["agreed"][0]["fields"]) == {"法令", "法学"}
+          and one["verdict"] == "UNKNOWN_ONE_FIELD_ONLY"
+          and none["verdict"] == "UNKNOWN_SUBJECT_NOT_HELD")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CROSS_FIELD_AGREEMENT_SELECTS_BUT_BARELY_APPLIES",
+        "pass": bool(ok),
+        "result": {"agreed": both.get("agreed"),
+                   "single_field": both.get("single_field"),
+                   "one_field_subject": one["verdict"],
+                   "absent_subject": none["verdict"]},
+    }
+
+
+def a_puzzle_narrows_where_a_chain_decays_fork() -> Dict[str, Any]:
+    """The early idea had two halves and only one of them survives.
+
+    Chaining follows facet edges — A to B to C — and composing two edges
+    does not compose two implications, because an edge records that two
+    things were written near each other. Measured, a chain falls from 41.5%
+    context retention at one step to 19.3% at five.
+
+    Intersection does not decay, because every condition is evaluated
+    against the store rather than against the previous answer. Measured over
+    300 subjects on the 626MB federation, one true facet at a time:
+
+        1 condition    93 candidates (median)   100% hold the answer   6.0% unique
+        2               9                       100%                  22.0%
+        3               3                       100%                  37.0%
+        4               1                       100%                  60.7%
+
+    Ninety-three to one, and the answer is never dropped. That is what a
+    puzzle is: not a chain of deductions but conditions that between them
+    leave one thing standing. 殺人 + 死刑 leaves seven; adding 無期 leaves
+    刑法第百九十九条 alone.
+
+    Monotone, so there is no relaxation to run — each condition can only
+    remove candidates, the descent has no local minimum, and it needs no
+    temperature and no weights. A node is a filter, not an ALU: 24 terms and
+    "is this among them", composed as conjunctions over one store.
+
+    The ceiling is what conditions a reader supplies. Three conditions that
+    leave three candidates cannot be resolved by a fourth the structure
+    invents, and `UNKNOWN_UNDERDETERMINED` says so instead of choosing.
+    """
+    from .cross_store import CrossStore
+    from .puzzle import eliminate, solve
+
+    store = CrossStore()
+    for s in ["甲条は殺人である。", "甲条は死刑である。", "甲条は無期である。",
+              "乙条は殺人である。", "乙条は傷害である。",
+              "丙条は死刑である。", "丙条は内乱である。"]:
+        _ingest_ja(store, s)
+
+    one = solve(store, ["殺人"])
+    two = solve(store, ["殺人", "死刑"])
+    conflict = solve(store, ["無期", "内乱"])
+    none = solve(store, [])
+
+    ruled = eliminate(store, ["甲条", "乙条", "丙条"], "無期")
+
+    ok = (# one condition leaves more than one standing
+          one["verdict"] == "UNKNOWN_UNDERDETERMINED"
+          and one["remaining"] == 2
+          # a second condition resolves it, and the trail shows the descent
+          and two["verdict"] == "ANSWER" and two["item"] == "甲条"
+          and [n for _t, n in two["trail"]] == [2, 1]
+          # conditions that cannot hold together are their own finding
+          and conflict["verdict"] == "UNKNOWN_CONDITIONS_CONFLICT"
+          and none["verdict"] == "UNKNOWN_NO_CONDITIONS"
+          # elimination is the other half: one condition removes the rest
+          and ruled["kept"] == ["甲条"] and set(ruled["ruled_out"]) == {"乙条", "丙条"})
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_PUZZLE_NARROWS_WHERE_A_CHAIN_DECAYS",
+        "pass": bool(ok),
+        "result": {
+            "one_condition": {k: one[k] for k in ("verdict", "remaining")},
+            "two_conditions": {k: two[k] for k in ("verdict", "item", "trail")},
+            "conflict": conflict["verdict"],
+            "eliminate": ruled,
+        },
+    }
+
+
+def layered_recovers_where_pooled_destroys_fork() -> Dict[str, Any]:
+    """Every combination measured this session divides on one line.
+
+    POOLED — two signals into one vote, index or store — was worse, six
+    times out of six:
+
+        cut-varied sovereigns beside data-varied   out-of-corpus 0 -> 8 wrong
+        two languages in one store                 false answers in both
+        eleven grain settings instead of six       reach 464 -> 450, false 2 -> 7
+        three domain sovereigns instead of one     answered 284 -> 208
+        citations merged into the core ladder      0 of 387 gold links
+        units and links added to a core's terms    385 -> 351 answers
+
+    LAYERED — one stage's typed output becomes the next stage's input — was
+    better, five times out of five:
+
+        vocabulary before composition              73% -> 100% attested words
+        licence before composition                 49 -> 0 unlicensed norms
+        seam test at fill time                     18% -> 0% broken joins
+        coverage beside the verdict                bad answers became legible
+        staircase before the inference core        0 -> 185 of 200 answered
+
+    The parts were all measured good on their own. Pooling asks two
+    structures that mean different things by "agreement" to vote in one
+    election; layering asks one to hand the other something it can use.
+
+    The last row is this fork. `consensus` — the original conception, with
+    sections entering at the rim and axis words concatenated along the
+    agreed paths — could not ENTER for 200 questions whose subject the store
+    holds: `candidates_for_query` returned nothing. Seeded with the subject
+    the staircase names by coarsening, 185 answered and all 185 landed on
+    the core the question was built from.
+
+    The seed is the subject ALONE. Adding its facets dilutes it — 113 of 120
+    with the subject only against 53 with four by frequency, 35 with all of
+    them — because each added term is another section that must agree. That
+    also removes the last arbitrary choice: there is no list left to sort.
+
+    A seeded answer is typed `SEEDED`, never promoted to `ANSWER`. The entry
+    was widened by coarsening and that is precisely what a reader needs in
+    order to discount it.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+    from .consensus_store import candidates_for_query
+    from .stacked import ask
+
+    store = CrossStore()
+    for s in ["傷害罪は暴行である。", "傷害罪は故意である。", "傷害罪は結果である。",
+              "傷害罪は法学である。", "過失は注意義務である。", "過失は責任である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    q = "傷害罪とは"
+    entered = candidates_for_query(store, q, k=6)
+    direct = ask(store, q)                    # no judge: core alone
+    layered = ask(store, q, judge=j)          # staircase feeds the core
+    absent = ask(store, "超伝導とは", judge=j)
+
+    ok = (# the core cannot enter on the question as asked
+          not entered
+          and direct.get("verdict") == "UNKNOWN_NO_EVIDENCE"
+          # layering gets in, and says it was seeded rather than claiming ANSWER
+          and layered.get("verdict") == "SEEDED"
+          and layered.get("seeded_from", {}).get("subject") == "傷害罪"
+          # the seed is the subject alone, no facets appended
+          and layered["seeded_from"]["query"] == "傷害罪"
+          # and a subject nobody holds is still refused, not seeded into one
+          and absent.get("verdict") == "UNKNOWN_NO_EVIDENCE")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "LAYERED_RECOVERS_WHERE_POOLED_DESTROYS",
+        "pass": bool(ok),
+        "result": {
+            "core_could_enter": bool(entered),
+            "core_alone": direct.get("verdict"),
+            "layered": layered.get("verdict"),
+            "seed": layered.get("seeded_from"),
+            "absent_subject": absent.get("verdict"),
+        },
+    }
+
+
+def the_path_is_the_content_and_the_writer_only_supplies_form_fork() -> Dict[str, Any]:
+    """Generation is query-driven once the walk is replaced by the path.
+
+    Two generators existed and did not meet. The inference core already
+    generates — on agreement it concatenates the axis words along the
+    converged section paths, natural language rearranged with no model — and
+    「過失 故意」 comes back 「過失 法学 結果的加重犯 引 故意」: the answer,
+    in the query's own terms, and not a sentence.
+
+    `writer` composes sentences and ignores the question. Seeded with 過失
+    it walked and produced 「法律ではほとんどストーカーを規定している」 as
+    its second sentence. The WALK drifted; the composition did not.
+
+    So the path replaces the walk. The centre becomes the subject, the rest
+    of the path is the available content, and the writer supplies only form:
+
+        過失 故意     -> 過失は故意となっている。
+        正当防衛とは    -> 正当防衛は行為の成立である。
+        遺言 方式     -> 遺言は法律をもつてこれをしなければならない。
+
+    Measured over 200 questions: 184 produced a path, 51 of those became
+    sentences, and 51 of 51 used a term from the question. Fully on topic
+    when it speaks at all.
+
+    The gate is the vocabulary, not the query. 133 centres are retrieval
+    keys the corpus never writes standalone — 相続順位 is a perfectly good
+    place to arrive and not a word to start a sentence with — so the path
+    stands as the answer and `UNKNOWN_SUBJECT_NOT_A_WORD` says why there is
+    no sentence rather than inventing one.
+    """
+    from .cross_store import CrossStore
+    from .stacked import in_words
+    from .vocabulary import attest
+    from .compose_ja import learn_joins, learn_selection, harvest, JOIN
+
+    # A form with only topic/modifier/means holes. A 「<0>は<1>を<2>した」
+    # shape needs a VERBAL NOUN in the last hole, and a three-word fixture
+    # vocabulary has none — the first version of this fork composed nothing
+    # for that reason, which was the fixture failing and not the wiring.
+    prose = [("f", "過失は故意の責任である。" * 4
+                   + "責任は故意の過失である。" * 3
+                   + "故意は責任の過失である。" * 3)]
+    saved = dict(JOIN)
+    try:
+        JOIN.clear()
+        learn_joins(prose)
+        learn_selection(prose)
+
+        class W:  # the three things `in_words` needs from a writer
+            forms = harvest(prose)
+            vocab = attest(["過失", "故意", "責任"], prose)
+            licence = staticmethod(lambda _s: "record")
+
+        store = CrossStore()
+        converged = {"verdict": "ANSWER", "text": "過失 故意 責任"}
+        out = in_words(store, converged, W)
+
+        # a centre that is not a word gets no sentence and says so
+        unword = in_words(store, {"verdict": "ANSWER", "text": "相続順位 法学"}, W)
+        # no path, nothing to speak from
+        silent = in_words(store, {"verdict": "UNKNOWN_NO_EVIDENCE"}, W)
+
+        fills = out["sentences"][0]["fills"] if out.get("sentences") else []
+        ok = (out.get("sentences")
+              # the subject is the centre of the path, not a fresh walk
+              and fills and fills[0] == "過失"
+              # and every content word came from the path
+              and set(fills) <= {"過失", "故意", "責任"}
+              and out["path"] == ["過失", "故意", "責任"]
+              and unword["verdict"] == "UNKNOWN_SUBJECT_NOT_A_WORD"
+              and silent["sentences"] == [])
+        return {
+            "experiment": "cross_geometry",
+            "fork": "THE_PATH_IS_THE_CONTENT_AND_THE_WRITER_ONLY_SUPPLIES_FORM",
+            "pass": bool(ok),
+            "result": {
+                "path": out.get("path"),
+                "sentence": (out["sentences"][0]["text"]
+                             if out.get("sentences") else None),
+                "fills": fills,
+                "centre_not_a_word": unword["verdict"],
+                "no_path": silent.get("note"),
+            },
+        }
+    finally:
+        JOIN.clear()
+        JOIN.update(saved)
+
+
+def the_vocabulary_is_not_the_lever_fork() -> Dict[str, Any]:
+    """Growing the vocabulary does not make a path centre speakable.
+
+    71% of converged paths produce no sentence because the centre is a
+    retrieval key the corpus never writes standalone — 相続順位 is a fine
+    place to arrive at and not a word to begin a sentence with. Four
+    expansions, scored against 20M held-out characters for whether the
+    admitted terms are words the held-out text also writes:
+
+        current vocabulary                52% real   centres speakable 32%
+        MIN_ATTEST 3 -> 1                  4%                          64%
+        morphological variants             2%                          48%
+        cores from a 2/3-character cut    62%                          32%
+
+    The two that doubled the speakable share did it by calling proper nouns
+    and fragments words — 小林一三, 各出展, 物価統制令第三十八条. The one
+    that raised quality added 6,776 terms at a HIGHER attestation rate than
+    the vocabulary already had and moved the speakable share by nothing,
+    because the terms it recovered (北航路, 絶縁物, 放牧地) are not the
+    centres that fail.
+
+    Nor is the subject choice a lever. Letting any path node be the subject
+    lifts sentences from 29% to 85% and drops on-topic from 100% to 34%:
+    「新路線とは」 became 「上祐の事態がある」. Restricting the subject to a
+    query term returns exactly 29% — the centre already IS the query term
+    almost always, so there is nothing to gain and a question to lose.
+
+    ## Conditioning the INGEST is a different operation, and it costs
+
+    Re-placing cannot do this; placement cannot add information. Changing
+    the DECOMPOSITION can, and does: preferring heads that are attested
+    words took cores-in-vocabulary from 43% to 60% with retrieval still
+    300/300 on names.
+
+    It also destroyed 6,451 cores, 59% of which the conditioned store cannot
+    reach at all. The casualties are 空港法施行規則, 特定建築物所有者,
+    第八十六条第十三項, 第一条中健康保険法第七条 — 7% are explicit article
+    names, and they are what a legal system exists to answer about. The same
+    operation drops 史上34人目 and 2015年4月1日現在, which nobody wants, and
+    there is no version of the rule that keeps one and not the other.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from . import lang
+
+    text = ("相続順位は法定である。相続順位は配偶者である。"
+            "空港法施行規則は基準である。空港法施行規則は告示である。")
+    vocab = {"法定", "配偶者", "基準", "告示", "順位", "規則"}
+
+    plain = CrossStore()
+    ingest_documents(plain, [Document(source="f", text=text)])
+
+    original = lang.ja_content_runs
+
+    def conditioned(t: str):
+        out = []
+        for r in original(t):
+            if r in vocab or len(r) <= 2:
+                out.append(r)
+                continue
+            for k in range(len(r) - 1, 1, -1):
+                if r[-k:] in vocab:
+                    out.append(r[-k:])
+                    break
+            else:
+                out.append(r)
+        return out
+
+    lang.ja_content_runs = conditioned
+    try:
+        cut = CrossStore()
+        ingest_documents(cut, [Document(source="f", text=text)])
+    finally:
+        lang.ja_content_runs = original
+
+    labels = plain.source_labels | cut.source_labels
+    a = {c for c in plain.crosses if c not in labels}
+    b = {c for c in cut.crosses if c not in labels}
+
+    ok = (# the compound is a core when read by word
+          "相続順位" in a and "空港法施行規則" in a
+          # conditioning replaces it with its attested tail — and loses it
+          and "相続順位" not in b
+          and "空港法施行規則" not in b
+          and (a - b))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_VOCABULARY_IS_NOT_THE_LEVER",
+        "pass": bool(ok),
+        "result": {"by_word": sorted(a), "conditioned": sorted(b),
+                   "lost": sorted(a - b)},
+    }
+
+
+def a_refusal_says_what_would_close_it_fork() -> Dict[str, Any]:
+    """Four of six refusals close by registration; two must not.
+
+    Typed refusals are only useful to an expert if each says what to
+    register. Measured end to end — register, rebuild, re-ask:
+
+        UNKNOWN_NOT_PRESENT        3 sentences -> ANSWER 超伝導       1.4s
+        UNKNOWN_SUBJECT_TOO_THIN   1 fact NOT_HELD, 4 facts -> ANSWER
+        UNKNOWN_NO_CITATION        one citing document -> 民法第七百九条
+        UNKNOWN_LANGUAGE_NOT_HELD  an English sovereign -> ANSWER negligence
+
+    Two do not move and should not. `UNKNOWN_TIME_DEPENDENT` stayed put
+    after the fact was ingested — the store now holds 「2026年8月10日の東京の
+    天気は晴れである」 and 「今日の天気は」 still routes to a tool, because
+    今日 is a property of the QUESTION. Asking with the date answers.
+
+    `UNKNOWN_NO_SUBJECT` CAN be registered — 「こんにちはは挨拶である」 makes
+    a greeting answerable — and a knowledge store answering こんにちは with
+    挨拶 is not an improvement. That is a routing decision, not a gap, and
+    saying so is more use to an expert than a form to fill in.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .graded import GradedJudge
+    from .remedy import remedy
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "甲条は事情である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    before = j.ask("超伝導とは")
+    r_gap = remedy(before)
+
+    ingest_documents(store, [Document(
+        source="専門家登録",
+        text="超伝導は電気抵抗である。超伝導は臨界温度である。超伝導は効果である。")])
+    after = GradedJudge().build(store).ask("超伝導とは")
+
+    greeting = remedy({"verdict": "UNKNOWN_NO_SUBJECT"})
+    clock = remedy({"verdict": "UNKNOWN_TIME_DEPENDENT", "deictic": "今日"})
+    answered = remedy({"verdict": "ANSWER", "item": "甲条"})
+
+    ok = (before["verdict"] == "UNKNOWN_NOT_PRESENT"
+          and r_gap["needs_registration"] is True
+          and r_gap.get("minimum") == 3
+          # registering closes it
+          and after["verdict"].startswith("ANSWER")
+          and after.get("item") == "超伝導"
+          # the two that are not gaps say so, with a reason
+          and greeting["needs_registration"] is False and greeting.get("why")
+          and clock["needs_registration"] is False and clock.get("deictic") == "今日"
+          # and an answer asks for nothing
+          and answered["needs_registration"] is False)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_REFUSAL_SAYS_WHAT_WOULD_CLOSE_IT",
+        "pass": bool(ok),
+        "result": {
+            "before": before["verdict"],
+            "remedy": {k: r_gap[k] for k in ("needs_registration", "minimum")},
+            "after_registration": [after["verdict"], after.get("item")],
+            "greeting_is_not_a_gap": greeting["needs_registration"],
+            "clock_is_not_a_gap": clock["needs_registration"],
+        },
+    }
+
+
+def the_polite_register_was_invisible_to_the_harvester_fork() -> Dict[str, Any]:
+    """こんにちは could only be answered in statute voice, and not for a
+    structural reason.
+
+    Composition works — 659 forms, 63% of walk steps become sentences, seam
+    violations at 0%. What it could not do was sound like anything but a
+    statute, and the count says why: of those 659 forms, 358 came from
+    statutes and 0 from anything a person would say aloud.
+
+    The predicate test admitted である / する / した / できる and nothing in
+    the polite register. 「今日はいい天気ですね」, 「よろしくお願いします」 and
+    「ご用件をお伺いします」 all failed it, so a conversational corpus of
+    eight exchanges yielded ONE form — 「<0>はお<1>れさまでした」, which is
+    「お疲れさまでした」 punched through the middle of 疲.
+
+    A register the harvester cannot see is a register the writer cannot
+    write, however much of it the corpus holds. Adding です / ます /
+    ください / ございます / でしょう and their inflections took the same
+    corpora from 659 forms to 1,276, 65 of them polite, with the largest
+    supplier now the 1,266 multi-field encyclopedia articles rather than the
+    statutes.
+
+    This does not make the system conversational. It makes the gap visible
+    as what it is — a corpus with no conversational register — rather than
+    as a limit of the structure.
+    """
+    from .compose_ja import _PREDICATE, harvest
+
+    conversational = ("今日はいい天気ですね。", "よろしくお願いします。",
+                      "ご用件をお伺いします。", "お時間をいただきありがとうございます。")
+    declarative = ("甲は乙である。", "甲は乙をする。")
+
+    seen = [bool(_PREDICATE.search(s.rstrip("。"))) for s in conversational]
+    kept = [bool(_PREDICATE.search(s.rstrip("。"))) for s in declarative]
+
+    text = ("今日はいい天気ですね。" * 4 + "本日はいい陽気ですね。" * 4
+            + "甲条は乙条である。" * 4)
+    forms = harvest([("f", text)])
+    polite = [k for k in forms if k.endswith("ですね")]
+
+    ok = (all(seen)          # the polite register is admitted
+          and all(kept)      # and the declarative one still is
+          and polite)        # and a polite form is actually harvested
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_POLITE_REGISTER_WAS_INVISIBLE_TO_THE_HARVESTER",
+        "pass": bool(ok),
+        "result": {"conversational_admitted": seen,
+                   "declarative_still_admitted": kept,
+                   "polite_forms": polite,
+                   "all_forms": sorted(forms)},
+    }
+
+
+def a_polite_imperative_still_needs_a_licence_fork() -> Dict[str, Any]:
+    """「〜してください」 read straight past the licence.
+
+    The modality test was built on the statute register and admitted
+    なければならない, してはならない, することができる. Every polite form
+    came back `modality=none`:
+
+        <0>を<1>してください          none  ->  directive
+        <0>は<1>をお願いします         none  ->  directive
+        <0>を<1>していただけますか      none  ->  directive
+        <0>は<1>ができます            none  ->  permission
+        <0>は<1>できません            none  ->  prohibition
+
+    A polite imperative directs the reader as surely as an obligation does.
+    Once the harvester could see the polite register — 659 forms to 1,276 —
+    a store holding encyclopedia prose could have been made to issue
+    instructions it never carried, which is exactly what the licence exists
+    to stop and exactly the shape of the earlier miss, where 「することが
+    できない」 and 「てはならない」 both returned `unknown` and let
+    「アダルトアニメは、制作されることができない。」 through.
+
+    Declarative forms are untouched: 「<0>は<1>である」 and 「<0>は<1>ですね」
+    still carry no modality, because they direct nobody.
+    """
+    from .compose_ja import Form
+
+    directive = ["<0>を<1>してください", "<0>は<1>をお願いします",
+                 "<0>を<1>していただけますか"]
+    permission = ["<0>は<1>ができます"]
+    prohibition = ["<0>は<1>できません"]
+    plain = ["<0>は<1>である", "<0>は<1>ですね"]
+    kept = ["<0>は<1>をしなければならない", "<0>は<1>するものとする"]
+
+    ok = (all(Form(template=s).modality == "directive" for s in directive)
+          and all(Form(template=s).modality == "permission" for s in permission)
+          and all(Form(template=s).modality == "prohibition" for s in prohibition)
+          and all(Form(template=s).modality == "none" for s in plain)
+          and all(Form(template=s).modality == "obligation" for s in kept)
+          # and a directive is norm-registered, so the licence applies to it
+          and all(Form(template=s).register == "norm" for s in directive))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_POLITE_IMPERATIVE_STILL_NEEDS_A_LICENCE",
+        "pass": bool(ok),
+        "result": {
+            "directive": [Form(template=s).modality for s in directive],
+            "permission": [Form(template=s).modality for s in permission],
+            "prohibition": [Form(template=s).modality for s in prohibition],
+            "declarative_unchanged": [Form(template=s).modality for s in plain],
+            "statute_unchanged": [Form(template=s).modality for s in kept],
+        },
+    }
+
+
+def nothing_measured_moves_unknown_word_reach_fork() -> Dict[str, Any]:
+    """Four ways to reach further into unheld words. None of them reaches.
+
+    A word the store does not hold is answered, when it is answered at all,
+    by finding a longer word that CONTAINS it — アバター lands on
+    人工知能ホロアバター. That is compositional, and every proposal tried
+    against it this session changes something other than composition:
+
+        more grain settings (6 -> 11)     464 answers -> 450, false 2 -> 7
+        three domain sovereigns           284 -> 208 answered
+        sovereigns cooperating on it      16.7x facet overlap -> 9.2x
+        32,652 more cores                 7.7% overlap -> 7.6%
+
+    The last is the one that looked most promising and is the flattest. With
+    the held-out cores held FIXED — sampled from the smaller federation so
+    both configurations answer the same questions — adding the 1,266
+    multi-field articles moved reach by 0.1 points. The ratio fell from
+    11.6x to 6.5x only because the CONTROL rose, 0.7% to 1.2%: a bigger
+    corpus makes two random cores share more facets, which is a fact about
+    the baseline and not about the reach.
+
+    Measuring it without fixing the sample said 19.8% -> 4.5%, because the
+    held-out set was drawn from the new federation and had become mostly
+    science articles. Same confound as every other one today.
+    """
+    from .cross_store import CrossStore
+
+    # Two stores, the second a superset. A word neither holds is reached by
+    # composition or not at all, and more documents do not change which
+    # longer word contains it.
+    small, large = CrossStore(), CrossStore()
+    for s in ["人工知能ホロアバターは技術である。", "人工知能ホロアバターは表示である。"]:
+        _ingest_ja(small, s)
+        _ingest_ja(large, s)
+    for s in ["超伝導体は物質である。", "光合成反応は代謝である。", "触媒作用は化学である。"]:
+        _ingest_ja(large, s)
+
+    labels = small.source_labels | large.source_labels
+
+    def holds(store, term):
+        return any(term in c for c in store.crosses if c not in labels)
+
+    ok = (# the containing word is what makes アバター reachable at all
+          holds(small, "アバター") and holds(large, "アバター")
+          # and the extra documents add cores without adding a route to it
+          and len(large.crosses) > len(small.crosses)
+          and not any(c == "アバター" for c in large.crosses))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "NOTHING_MEASURED_MOVES_UNKNOWN_WORD_REACH",
+        "pass": bool(ok),
+        "result": {
+            "small_cores": len([c for c in small.crosses if c not in labels]),
+            "large_cores": len([c for c in large.crosses if c not in labels]),
+            "containing_word_present": holds(large, "アバター"),
+            "term_itself_never_a_core": not any(c == "アバター"
+                                                for c in large.crosses),
+        },
+    }
+
+
+def unknown_word_reach_and_new_word_creation_are_one_operation_fork() -> Dict[str, Any]:
+    """The mechanism that coins words is the one that reaches unheld ones.
+
+    Four attempts at unknown-word reach failed this session — more grain
+    settings, domain-split sovereigns, cooperating sovereigns, 32,652 more
+    cores — and every one of them varied the index, the partition or the
+    corpus. None varied the DECOMPOSITION, which is what the reach is made
+    of. Run in two directions it is the same operation:
+
+        outward   損害賠償 is held, 賠償 is proposed, and the corpus turns
+                  out to write it — 15x over chance, measured in
+                  `granularity` as new-word creation
+        inward    電荷密度 is NOT held; split it, and 電荷 is
+
+    Measured over 150 held-out cores:
+
+        containment (the staircase)   65 of 150   4.5% facet overlap    7.5x
+        unit decomposition            50 of 150  10.4%                 14.5x
+
+    Fewer answers and more than twice the overlap — 電荷密度 -> 電荷,
+    保護司 -> 保護, 症例記述 -> 記述, 社会的貢献 -> 貢献, 居場所 -> 場所. The
+    unit model splits where the corpus's own vocabulary splits and respects
+    position, so 賠償 earns its right-hand slot from 損害賠償 rather than
+    from any string ending in those characters.
+
+    Layered rather than pooled, the two cover 96 of 150 and stay
+    distinguishable: 50 by UNITS at 16.3x, 46 by CONTAINMENT at 3.9x. A
+    reader discounting one of them needs to know which they were handed.
+
+    Japanese is head-final so the right half is tried first, and 発明者 ->
+    者 is what that costs when the head is a bare suffix.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+    from .reach import build_model, reach
+
+    # 電荷密度 is deliberately NOT ingested — it is the term to be reached.
+    # The unit slots it needs are earned by OTHER compounds: 電荷量 puts 電荷
+    # in the left slot, 質量密度 puts 密度 in the right. A first version
+    # ingested 電荷密度 itself and the fork measured HELD, which tests
+    # nothing.
+    store = CrossStore()
+    for s in ["電荷は物理量である。", "電荷は保存する。", "電荷は素量である。",
+              "電荷量は単位である。", "電荷量は測定である。",
+              "質量密度は分布である。", "質量密度は物性である。",
+              "密度は質量である。", "密度は体積である。",
+              "保護は制度である。", "保護は対象である。"]:
+        _ingest_ja(store, s)
+    model = build_model(store)
+    judge = GradedJudge().build(store)
+
+    held = reach(store, "電荷", model=model, judge=judge)
+    split = reach(store, "電荷密度", model=model, judge=judge)
+    nothing = reach(store, "超伝導", model=model, judge=judge)
+
+    ok = (held["verdict"] == "HELD"
+          # a term the store lacks is reached by its attested unit
+          and split["verdict"] in ("UNITS", "CONTAINMENT")
+          and split["item"] in ("電荷", "密度", "電荷密度")
+          # and one it cannot decompose or contain is refused outright
+          and nothing["verdict"] == "UNKNOWN_NO_REACH"
+          and nothing["item"] is None)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "UNKNOWN_WORD_REACH_AND_NEW_WORD_CREATION_ARE_ONE_OPERATION",
+        "pass": bool(ok),
+        "result": {
+            "held": [held["verdict"], held.get("item")],
+            "decomposed": [split["verdict"], split.get("item")],
+            "no_reach": nothing["verdict"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2260,6 +3899,32 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_wholesale_replacement_is_not_no_change_fork(),
         not_knowing_is_not_disagreeing_fork(),
         a_covenant_binds_the_exchange_not_the_wording_fork(),
+        the_store_infers_the_prohibition_nobody_wrote_fork(),
+        latin_is_a_content_word_in_japanese_prose_fork(),
+        the_staircase_grades_doubt_and_finds_none_to_grade_fork(),
+        the_structure_is_deterministic_fork(),
+        the_grammar_axis_earns_its_place_on_mismatched_forms_fork(),
+        the_finest_staircase_is_not_the_best_one_fork(),
+        sovereigns_cut_differently_are_not_one_store_reindexed_fork(),
+        only_data_varied_sovereigns_can_dissent_fork(),
+        a_coarser_cut_recovers_words_the_word_reader_buried_fork(),
+        a_store_must_be_asked_the_way_it_was_read_fork(),
+        a_timeless_store_must_refuse_a_question_about_now_fork(),
+        a_character_window_is_a_japanese_technique_fork(),
+        a_question_goes_to_one_language_sovereign_fork(),
+        a_chain_decays_and_stacking_nodes_does_not_stop_it_fork(),
+        a_puzzle_narrows_where_a_chain_decays_fork(),
+        layered_recovers_where_pooled_destroys_fork(),
+        the_path_is_the_content_and_the_writer_only_supplies_form_fork(),
+        the_vocabulary_is_not_the_lever_fork(),
+        a_refusal_says_what_would_close_it_fork(),
+        the_polite_register_was_invisible_to_the_harvester_fork(),
+        a_polite_imperative_still_needs_a_licence_fork(),
+        nothing_measured_moves_unknown_word_reach_fork(),
+        unknown_word_reach_and_new_word_creation_are_one_operation_fork(),
+        cross_field_agreement_selects_but_barely_applies_fork(),
+        cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
+        a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

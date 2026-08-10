@@ -159,8 +159,19 @@ _NOT_PROSE = re.compile(r"[=\{\}\[\]\\<>|#*A-Za-z0-9]|displaystyle")
 
 #: A sentence ends on a predicate. Without this the harvest is dominated by
 #: headings and list fragments, which have no verb to carry a claim.
+#: The polite register was absent entirely, so no conversational form could
+#: be harvested at any corpus size. 「今日はいい天気ですね」, 「よろしくお願い
+#: します」 and 「ご用件をお伺いします」 all failed the predicate test, and a
+#: conversational corpus of 8 exchanges yielded ONE form — 「<0>はお<1>れさま
+#: でした」, which is 「お疲れさまでした」 cut through the middle of 疲.
+#:
+#: That is why 「こんにちは」 could only be answered in statute voice: of 659
+#: forms, 358 came from statutes and 0 from anything anyone would say aloud.
+#: Not a limit of the structure; a register the harvester could not see.
 _PREDICATE = re.compile(
-    r"(である|でない|する|しない|した|ある|ない|いる|られる|れる|になる|となる|できる)$")
+    r"(である|でない|する|しない|した|ある|ない|いる|られる|れる|になる|となる|できる"
+    r"|です|でした|ではない|ません|ました|ます|ください|ございます|でしょう"
+    r"|ですね|ですか|ますか|ましょう)$")
 
 #: What the character after a hole says the hole must hold.
 #:
@@ -353,12 +364,24 @@ SELECTION_MIN = 5
 _MODALITY: List[Tuple[str, Any]] = [
     ("prohibition", re.compile(
         r"できない|得ない|てはならない|てはいけない|限りでない"
-        r"|ことを禁ずる|ずるものでない")),
+        r"|ことを禁ずる|ずるものでない"
+        # polite: the register the harvester could not see until just now
+        r"|できません|ないでください|しないでください")),
     ("obligation", re.compile(
         r"なければならない|するものとする|を要する|べきである|べきもの"
-        r"|しなければいけない|に処する|ねばならない")),
+        r"|しなければいけない|に処する|ねばならない"
+        r"|なければなりません|ものとします")),
+    # A polite imperative directs the reader as surely as 「しなければならない」
+    # does, and read straight past the licence: 「<0>を<1>してください」 came
+    # back modality=none, so a store holding encyclopedia prose could be made
+    # to issue instructions it never carried. 「〜ができます」 states a
+    # capability for the same reason 「することができる」 states a permission.
+    ("directive", re.compile(
+        r"てください|下さい|お願いします|お願いいたします"
+        r"|いただけますか|いただけませんか|てほしい|ましょう|なさい")),
     ("permission", re.compile(
-        r"できる|して差し支えない|することを妨げない|してもよい|て差し支えない")),
+        r"できる|して差し支えない|することを妨げない|してもよい|て差し支えない"
+        r"|できます|しても構いません|て構いません")),
 ]
 
 

@@ -368,7 +368,25 @@ def serve(store_path: str) -> int:
         the forbidden term used, and the exact sentence to re-inject. It is
         a PROPOSAL: the user may have changed the rule one turn ago and this
         cannot see intent, only text."""
-        return json.dumps(_register.check(reply, asked=asked), ensure_ascii=False)
+        return json.dumps(_register.check(reply, asked=asked, store=store),
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def fading_covenants(window: int = 5) -> str:
+        """Which rules have STARTED being broken — the only ones worth
+        re-injecting.
+
+        Re-sending every rule every turn is what a system prompt already
+        does, and long sessions drift anyway: a rule the model has seen a
+        hundred times has stopped carrying information. A rule kept for
+        twenty turns and broken twice just now has not.
+
+        Each covenant is compared against ITS OWN history, never against the
+        others. A hard rule that was always half-kept is not degrading; one
+        broken from the very first check was never understood and needs
+        rewriting rather than repeating — it is reported as stable, which is
+        the honest reading, not a pass."""
+        return json.dumps(_register.fading(window=window), ensure_ascii=False)
 
     @mcp.tool()
     def check_context_drift(reply: str) -> str:
@@ -386,6 +404,35 @@ def serve(store_path: str) -> int:
         the store's facets produced 「プロジェクト: 使い」; the ingest keeps
         what a fact is about, not how it was put."""
         return json.dumps(_collapse(_conversation, reply), ensure_ascii=False)
+
+    @mcp.tool()
+    def how_to_resolve(verdict: str, subject: str = "") -> str:
+        """What an expert should register so a refusal becomes an answer.
+
+        Every refusal here is typed and each type has a different repair.
+        UNKNOWN_SUBJECT_TOO_THIN wants three more sentences;
+        UNKNOWN_LANGUAGE_NOT_HELD wants a sovereign built from documents in
+        that language. Without this the refusal says what happened and
+        leaves the repair to be guessed.
+
+        Measured end to end — register, rebuild, re-ask: NOT_PRESENT closed
+        with three sentences in 1.4s on 54,244 cores; TOO_THIN was still
+        NOT_HELD at one fact and answerable at four; NO_CITATION closed with
+        one citing document; LANGUAGE_NOT_HELD closed by adding a sovereign.
+
+        Three verdicts report `needs_registration: false` and say why.
+        UNKNOWN_TIME_DEPENDENT does not move when the fact is added — 今日 is
+        a property of the question and the store has no clock, so whoever
+        knows the date resolves it first. UNKNOWN_NO_SUBJECT can be
+        registered and should not be: a knowledge store answering こんにちは
+        with 挨拶 is not an improvement. UNKNOWN_SUBJECT_NOT_A_WORD means the
+        path is already the answer."""
+        from .remedy import remedy
+
+        r = {"verdict": verdict}
+        if subject:
+            r["subject"] = subject
+        return json.dumps(remedy(r), ensure_ascii=False)
 
     @mcp.tool()
     def attest_claim(subject: str, text: str) -> str:

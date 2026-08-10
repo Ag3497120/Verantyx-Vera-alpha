@@ -94,17 +94,39 @@ class Covenant:
             return True
         return any(t in text or (asked and t in asked) for t in self.topic)
 
-    def check(self, text: str, asked: str = "") -> Optional[Dict[str, Any]]:
+    def check(self, text: str, asked: str = "",
+              store: Any = None, infer_top: int = 6) -> Optional[Dict[str, Any]]:
+        """``store`` lets the covenant infer prohibitions it never listed.
+
+        Registered by hand, a rule catches only the substitution somebody
+        anticipated. Given a store, the siblings of each required term are
+        the alternatives the geometry already knows about — measured over
+        four legal alternative sets, 11 of 14 terms recovered another member
+        of their own set, most at rank one.
+
+        Inferred hits are reported SEPARATELY from registered ones. A
+        registered prohibition is what the user said; an inferred one is
+        what the corpus suggests they meant, and a reader deciding whether
+        to re-inject needs to know which is which.
+        """
         if not self.in_scope(text, asked):
             return None
-        used = [f for f in self.forbids if f in text]
-        missing = [r for r in self.requires if r not in text]
+        used = [f for f in self.forbids if loosely_in(f, text)]
+        missing = [r for r in self.requires if not loosely_in(r, text)]
+        inferred: List[Dict[str, Any]] = []
+        if store is not None and missing:
+            for r in missing:
+                for w, s in siblings(store, r, limit=infer_top):
+                    if loosely_in(w, text):
+                        inferred.append({"instead_of": r, "used": w,
+                                         "sibling_score": s})
         if not used and not missing:
             return None
         return {
             "covenant": self.name,
             "forbidden_used": used,
             "required_missing": missing,
+            "substituted": inferred,
             "said_at_turn": self.said_at_turn,
             "said_by": self.said_by,
             # What to paste back, verbatim, rather than a paraphrase of it.
@@ -120,17 +142,83 @@ class Covenant:
 
 @dataclass
 class Register:
-    """The covenants in force, and the turns they came from."""
+    """The covenants in force, the turns they came from, and their history.
+
+    ## Which harness, and when
+
+    Re-injecting every rule every turn is what a system prompt already does,
+    and it is why long sessions drift anyway: the model has seen the rule so
+    often it has stopped carrying information. What carries information is a
+    rule that has JUST started being broken.
+
+    So each covenant keeps its own record of checks and breaks, and `fading`
+    reports the ones whose recent behaviour differs from their history — a
+    rule kept for twenty turns and broken twice in the last three is the one
+    worth spending context on. A rule never broken needs no reminder, and a
+    rule broken from the beginning was probably never understood and needs
+    rewriting rather than repeating.
+    """
 
     covenants: List[Covenant] = field(default_factory=list)
+    #: covenant name -> the check results, oldest first, True = kept
+    history: Dict[str, List[bool]] = field(default_factory=dict)
 
     def add(self, c: Covenant) -> Covenant:
         self.covenants.append(c)
+        self.history.setdefault(c.name, [])
         return c
 
-    def check(self, text: str, asked: str = "") -> Dict[str, Any]:
-        """``asked`` is the turn that prompted this reply, if there was one."""
-        hits = [h for h in (c.check(text, asked) for c in self.covenants) if h]
+    def fading(self, window: int = 5, min_history: int = 4) -> Dict[str, Any]:
+        """Covenants whose recent compliance is worse than their own past.
+
+        Compared against ITS OWN history, not against the other rules. A
+        rule that is hard to keep and always half-kept is not degrading; a
+        rule kept perfectly for twenty turns and broken twice just now is,
+        and only the second one is news.
+        """
+        rows: List[Dict[str, Any]] = []
+        for c in self.covenants:
+            h = self.history.get(c.name) or []
+            if len(h) < min_history:
+                continue
+            recent, past = h[-window:], h[:-window]
+            if not past:
+                continue
+            r_keep = sum(recent) / len(recent)
+            p_keep = sum(past) / len(past)
+            rows.append({
+                "covenant": c.name, "checks": len(h),
+                "kept_before": round(p_keep, 3), "kept_recently": round(r_keep, 3),
+                "delta": round(r_keep - p_keep, 3),
+                "quote": c.quote,
+            })
+        rows.sort(key=lambda r: r["delta"])
+        fade = [r for r in rows if r["delta"] < 0]
+        return {
+            "verdict": "FADING" if fade else "HELD",
+            "window": window,
+            "fading": fade,
+            "stable": [r for r in rows if r["delta"] >= 0],
+            "advise": ([f["quote"] for f in fade[:2]] if fade else []),
+            "note": "re-inject the fading ones only; a rule repeated every "
+                    "turn stops carrying information, which is how a long "
+                    "session drifts with the system prompt still in place",
+        }
+
+    def check(self, text: str, asked: str = "", store: Any = None) -> Dict[str, Any]:
+        """``asked`` is the turn that prompted this reply, if there was one.
+
+        ``store`` turns on sibling inference — see `Covenant.check`.
+        """
+        hits = []
+        for c in self.covenants:
+            h = c.check(text, asked, store=store)
+            # Only in-scope checks are recorded. Counting a turn that was
+            # never about the rule as a "keep" makes every rule look healthy.
+            if c.in_scope(text, asked):
+                self.history.setdefault(c.name, []).append(h is None)
+            if h:
+                hits.append(h)
         return {
             # BROKEN is a finding about the REPLY, never about the user. The
             # user may have changed their mind one turn ago and this layer
@@ -158,6 +246,126 @@ class Register:
             for d in json.loads(p.read_text(encoding="utf-8")):
                 r.covenants.append(Covenant(**d))
         return r
+
+
+def siblings(store: Any, term: str, *, limit: int = 24,
+             min_shared: int = 2, max_fanout: int = 60,
+             max_common: float = 0.02) -> List[Tuple[str, float]]:
+    """Terms that occupy the same slot as ``term``, by shared parents.
+
+    Structural, not similar. Two terms are siblings here when the same cores
+    hold both — 拘禁刑 and 罰金 are both facets of the articles that set a
+    penalty, 過失 and 故意 of the ones that turn on intent. That is a fact
+    about the store's geometry: no embedding, no nearest neighbour, no
+    notion of meaning.
+
+    It is what lets a covenant infer its own prohibitions. Registered by
+    hand, 「TypeScriptを使う」 catches JavaScript only because somebody
+    listed JavaScript, and the substitution nobody anticipated goes through.
+
+    ## Raw co-occurrence returns hubs, and hubs are not siblings
+
+    Unweighted, 拘禁刑 came back beside 法学, 百科, 日本, 規定 — the domain
+    labels and the words every article uses. Two corrections, both the same
+    idea `hierarchy.distinctive_terms` already applies:
+
+      max_fanout   a parent holding hundreds of facets witnesses nothing;
+                   a sentence that names a choice is small
+      max_common   a term that is a facet of more than this share of all
+                   cores is furniture, whatever it co-occurs with
+
+    Scored by 1/fanout summed over shared parents, so agreement between two
+    narrow articles outweighs agreement between two indexes.
+    """
+    labels = getattr(store, "source_labels", set()) or set()
+    common = _too_common(store, max_common)
+    # The store lowercases latin and a covenant is registered the way the
+    # user wrote it, so 「TypeScript」 found no parents at all under
+    # 実装言語 -> typescript. Everything downstream then worked perfectly on
+    # an empty list.
+    low = term.lower()
+    parents = [(c, len(cr or ())) for c, cr in store.crosses.items()
+               if c not in labels
+               and (term in (cr or ()) or low in {f.lower() for f in (cr or ())})]
+    parents = [(c, n) for c, n in parents if 0 < n <= max_fanout]
+    if not parents:
+        return []
+    need = min(min_shared, len(parents))
+    from collections import Counter
+    score: Counter = Counter()
+    seen: Counter = Counter()
+    for c, n in parents:
+        for f in (store.crosses.get(c) or ()):
+            if f == term or f.lower() == low or f in labels or f in common:
+                continue
+            score[f] += 1.0 / n
+            seen[f] += 1
+    out = [(w, round(s, 4)) for w, s in score.most_common(limit * 3)
+           if seen[w] >= need]
+    return out[:limit]
+
+
+_COMMON_CACHE: Dict[Tuple[int, float], Set[str]] = {}
+
+
+#: Below this many cores, a SHARE threshold means nothing: on four cores a
+#: facet in one of them is already 25%, so every candidate is furniture and
+#: the sibling list comes back empty. Measured the hard way — the fixture
+#: fork returned no siblings at all while the 54,244-core federation
+#: returned 罰金 first.
+_MIN_CORES_FOR_SHARE = 200
+
+
+def _too_common(store: Any, share: float) -> Set[str]:
+    """Facets of more than ``share`` of all cores. Furniture, not evidence."""
+    key = (id(store), share)
+    if key in _COMMON_CACHE:
+        return _COMMON_CACHE[key]
+    if len(store.crosses) < _MIN_CORES_FOR_SHARE:
+        _COMMON_CACHE[key] = set()
+        return _COMMON_CACHE[key]
+    from collections import Counter
+    labels = getattr(store, "source_labels", set()) or set()
+    tally: Counter = Counter()
+    for cross in store.crosses.values():
+        for f in cross or ():
+            if f not in labels:
+                tally[f] += 1
+    n = max(len(store.crosses), 1)
+    _COMMON_CACHE[key] = {w for w, c in tally.items() if c / n > share}
+    return _COMMON_CACHE[key]
+
+
+def infer_forbidden(store: Any, required: Sequence[str], *,
+                    limit: int = 8) -> Dict[str, List[str]]:
+    """For each required term, the siblings that would substitute for it."""
+    return {r: [w for w, _s in siblings(store, r)[:limit]] for r in required}
+
+
+def loosely_in(term: str, text: str) -> bool:
+    """Is the term present, allowing the word-forms the corpus writes?
+
+    Exact substring misses 傷害罪 in a reply that wrote 傷害, which is the
+    same one-character gap that made 「殺人罪の刑は」 unanswerable until the
+    judgment was quantized. `ja_morph.variants` is the machinery already
+    measured for it — 98.7% of 500 morphological variants reached the
+    original core.
+
+    Latin is compared case-insensitively because the store lowercases it and
+    a reply does not. Without this the inference found javascript as a
+    sibling of typescript and then failed to see 「JavaScript」 in the reply
+    it was checking — the whole chain worked except the last comparison.
+    """
+    if term in text:
+        return True
+    if any(c.isascii() and c.isalpha() for c in term):
+        if term.lower() in text.lower():
+            return True
+    try:
+        from .ja_morph import variants
+    except Exception:
+        return False
+    return any(v and v in text for v in variants(term, add=True, split=False))
 
 
 #: Below this share of a reply's terms linked to what the conversation said

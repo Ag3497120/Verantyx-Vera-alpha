@@ -32,6 +32,12 @@ _RE_KANA = re.compile(r"[ぁ-んァ-ヶー]")
 _RE_HAN = re.compile(r"[㐀-䶿一-鿿]")
 
 
+#: A latin WORD, for the language vote. `_RE_LATIN` stays character-based
+#: because the `latin` verdict below still needs to know whether there is any
+#: latin at all.
+_RE_LATIN_WORD = re.compile(r"[A-Za-zＡ-Ｚａ-ｚ][A-Za-z0-9Ａ-Ｚａ-ｚ０-９.+#_-]*")
+
+
 def detect(text: str) -> str:
     """Script heuristic: "ja" | "zh" | "en" | "latin".
 
@@ -48,7 +54,14 @@ def detect(text: str) -> str:
     """
     t = text or ""
     n_ja = len(_RE_JA.findall(t))
-    n_lat = len(_RE_LATIN.findall(t))
+    # Latin is counted in WORDS, Japanese in characters, because that is the
+    # fair comparison: 実装言語 is four characters and one word, TypeScript is
+    # ten characters and one word. Counting latin per character called
+    # 「実装言語はTypeScriptを用いる。」 English — nine Japanese characters
+    # against ten latin ones — and routed a Japanese sentence to the English
+    # decomposer, which cored it under `typescript` and attached no facets.
+    # One long tool name was enough to change the language of a sentence.
+    n_lat = len(_RE_LATIN_WORD.findall(t))
     if n_ja > n_lat:
         han = len(_RE_HAN.findall(t))
         if han >= 6 and not _RE_KANA.search(t):
@@ -113,8 +126,21 @@ def detect(text: str) -> str:
 # filed as claims about the same subject. That was the only detection the
 # four-revision corpus produced, and it was false. ー (U+30FC) is a letter
 # and stays: 「データ」「ラーメン」 need it.
+#: Latin is a content run in Japanese prose, and leaving it out silently
+#: removed a whole domain. 「実装言語はTypeScriptを用いる」 came back as
+#: ['実装言語', '用い'] — the term the sentence is about was invisible — and
+#: 「認証はAPIキーを用いる」 as ['認証', 'キー'], because only the katakana
+#: tail matched. Every downstream layer inherited it: the store never linked
+#: 実装言語 to TypeScript, so sibling inference, covenant checking and
+#: attestation all worked on Japanese law and on nothing with a latin name.
+#:
+#: The latin branch is FIRST so a mixed token stays whole: APIキー matches
+#: from the A, where the katakana branch would have taken キー alone. The
+#: trailing class carries version and package punctuation — C++, .NET, JWT,
+#: node-fetch — because a rule about a tool names the tool exactly.
 _JA_RUN = re.compile(
-    r"[ァ-ヺヽヾヿー]+"
+    r"[A-Za-zＡ-Ｚａ-ｚ][A-Za-z0-9Ａ-Ｚａ-ｚ０-９.+#_-]*[ァ-ヺヽヾヿー]*"
+    r"|[ァ-ヺヽヾヿー]+"
     r"|(?:(?![又若及並](?:は|しく|び))[㐀-䶿一-鿿0-9０-９])+[ァ-ヺヽヾヿー]*"
     r"(?:[いな]|[れめきちりつけ](?=[はがをにでとのへもや、。！？\s]|$))?"
 )
@@ -200,10 +226,21 @@ def _bracketed_label(text: str, start: int, end: int) -> bool:
     return text[start - 1] + text[end] in _JA_BRACKETS
 
 
+#: The provenance suffix `document_ingest` appends. Its own words are not
+#: content, and once latin became a content run they started arriving as
+#: facets — every ingested Japanese sentence gained `by` and `reported`, plus
+#: whatever latin the filename held. Excluded by SPAN rather than by a word
+#: list, so a source called `policy.docx` does not contribute `docx` either.
+_JA_ATTRIBUTION = re.compile(r"\((?:reported|said) by [^)]*\)")
+
+
 def ja_content_runs(text: str) -> List[str]:
     text = text or ""
+    skip = [(m.start(), m.end()) for m in _JA_ATTRIBUTION.finditer(text)]
     out: List[str] = []
     for m in _JA_RUN.finditer(text):
+        if any(a <= m.start() < b for a, b in skip):
+            continue
         r = m.group(0)
         if (r in _JA_STOP or _ALL_DIGITS.match(r) or _JA_DATE.match(r)
                 or _bracketed_label(text, m.start(), m.end())

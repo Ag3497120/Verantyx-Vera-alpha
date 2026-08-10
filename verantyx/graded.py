@@ -88,6 +88,115 @@ DEFAULT_SETTINGS: Tuple[Tuple[str, Dict[str, Any]], ...] = (
 )
 
 
+#: The three axes that were each measured to carry signal, and the
+#: staircases built from them. Selectable rather than fixed, because the
+#: finest staircase is not the best one — measured over 500 probes phrased
+#: OUTSIDE the corpus's own word forms, plus 20 out-of-corpus words and 150
+#: held-out cores:
+#:
+#:     staircase   build   reach   out-of-corpus   100% bands   unknown-word
+#:                                 false answers                quality
+#:     lean (6)     1.1s    464         2               1          16.7x
+#:     wide (12)    2.5s    460         3               4           6.5x
+#:     full (48)   52.2s    450         7              13            --
+#:
+#: Only ONE of four columns improves with more steps. Finer banding is real
+#: — 48 steps expresses degrees of doubt 6 cannot — and it is paid for in
+#: reach, in out-of-corpus precision, and in a 47x build. A caller who needs
+#: graded confidence over a corpus it trusts takes `wide`; one answering
+#: open questions where a wrong answer costs more than a refusal takes
+#: `lean`.
+#:
+#: The axes themselves:
+#:   grain      whole / 3 / 2      1 rung 19.3% -> 3 rungs 67.7% on leaves
+#:   knowledge  facets per core    all-agree 98.1% against 14.0% alone
+#:   grammar    raw/nosuffix/…     290 -> 359 answers on mismatched forms
+GRAIN_AXIS: Tuple[Tuple[str, int], ...] = (("whole", 0), ("g3", 3), ("g2", 2))
+GRAMMAR_AXIS: Tuple[str, ...] = ("raw", "nosuffix", "heads", "both")
+DEPTH_AXIS: Tuple[Optional[int], ...] = (1, 4, 16, None)
+
+
+def staircase(
+    grains: Sequence[Tuple[str, int]] = GRAIN_AXIS,
+    grammars: Sequence[str] = GRAMMAR_AXIS,
+    depths: Sequence[Optional[int]] = (1,),
+) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+    """One setting per combination — the staircase, at the width asked for."""
+    import itertools
+
+    return tuple(
+        ("%s.%s.d%s" % (gn, gr, dp if dp else "all"),
+         {"rungs": ((gn, gs),), "grammar": gr, "depth": dp})
+        for (gn, gs), gr, dp in itertools.product(grains, grammars, depths))
+
+
+#: 12 steps: every grain against every grammar, cores keyed by name. Four
+#: bands that were right every time, at 2.5s.
+WIDE_SETTINGS = staircase()
+
+#: 48 steps: knowledge depth as well. Thirteen bands, and the only
+#: configuration that can say "9 of 12 agreed" — at 52s, seven wrong answers
+#: about words the corpus never held, and unknown-word reach that lands
+#: further from the mark.
+FULL_SETTINGS = staircase(depths=DEPTH_AXIS)
+
+
+#: Grain-free settings, for scripts where a character window collides.
+#:
+#: A two-character window over kanji is discriminating because there are
+#: thousands of them; over latin there are twenty-six, so words share
+#: windows freely. Measured on a nine-core English store against ten words
+#: it never held:
+#:
+#:     English, 6 settings with windows   4 false answers
+#:     English, whole grain only          0
+#:     Japanese, 6 settings with windows  0
+#:
+#: superconductivity came back as `contract`, enzyme and polymer as
+#: `employment`. The grain axis is a Japanese technique, not a general one,
+#: and switching it off is not a loss in latin script — there was nothing
+#: for it to reach.
+LATIN_SETTINGS: Tuple[Tuple[str, Dict[str, Any]], ...] = (
+    ("whole", {"rungs": (("whole", 0),), "grammar": "raw", "depth": 1}),
+    ("mentions", {"rungs": (("whole", 0),), "grammar": "raw"}),
+)
+
+
+def settings_for(text: str) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+    """The staircase this script can carry.
+
+    Latin gets no character windows; anything else gets the measured six.
+    """
+    from .lang import detect
+
+    return LATIN_SETTINGS if detect(text) in ("en", "latin") else DEFAULT_SETTINGS
+
+
+#: Words that make an answer depend on WHEN it was asked. A store has no
+#: clock, so a question carrying one of these cannot be answered from it —
+#: and the failure is silent rather than absent: 「今日の天気は」 came back
+#: ANSWER 今日, 「昨日の地震は」 ANSWER 地震, 「現在の株価は」 ANSWER 株価.
+#: The corpus holds articles about weather and earthquakes, so every
+#: time-dependent question found a timeless subject and answered with it.
+#:
+#: The signal is in the QUERY, not the store, which is why it can be caught
+#: at all. `UNKNOWN_TIME_DEPENDENT` is the routing verdict for a tool: the
+#: terms were read, a subject exists, and the answer still has to come from
+#: something with a clock.
+_TIME_DEICTIC = ("今日", "本日", "昨日", "明日", "今", "現在", "最新", "直近",
+                 "今週", "今月", "今年", "最近", "リアルタイム", "いま",
+                 "today", "now", "current", "latest", "yesterday", "tomorrow")
+
+
+def time_dependent(query: str, terms: Sequence[str]) -> Optional[str]:
+    """The deictic that makes this question about a moment, if any."""
+    q = (query or "").lower()
+    for w in _TIME_DEICTIC:
+        if w in q or w in terms:
+            return w
+    return None
+
+
 def cores_as_items(store: Any, *, depth: Optional[int] = None) -> Dict[str, List[str]]:
     """core -> the terms that identify it: itself plus its facets.
 
@@ -108,11 +217,29 @@ def cores_as_items(store: Any, *, depth: Optional[int] = None) -> Dict[str, List
 class GradedJudge:
     """One ladder per setting, over the cores of a store."""
 
-    def __init__(self, settings: Sequence[Tuple[str, Dict[str, Any]]] = DEFAULT_SETTINGS):
+    def __init__(self, settings: Sequence[Tuple[str, Dict[str, Any]]] = DEFAULT_SETTINGS,
+                 *, read: Optional[Any] = None):
+        #: How a QUERY is cut. It must match how the store was ingested: a
+        #: federation built with hiragana as content still answered
+        #: 「こんにちは」 with UNKNOWN_NO_SUBJECT, because the question went
+        #: through the ordinary reader, which drops hiragana and produced no
+        #: term to look up. The store held the greeting and the query could
+        #: not spell it.
+        self.read = read
         self.settings = list(settings)
         self.ladders: Dict[str, Ladder] = {}
+        #: Every term the store holds, for the coverage report.
+        self.held: set = set()
+        #: Terms the store holds AS A CORE — a subject it can be asked
+        #: about, as against one it merely mentions.
+        self.cores: set = set()
 
     def build(self, store: Any) -> "GradedJudge":
+        labels = getattr(store, "source_labels", set()) or set()
+        self.cores = {c for c in store.crosses if c not in labels}
+        self.held = set(self.cores)
+        for cross in store.crosses.values():
+            self.held |= {f for f in cross if f not in labels}
         cache: Dict[Optional[int], Dict[str, List[str]]] = {}
         for name, cfg in self.settings:
             depth = cfg.get("depth")
@@ -127,19 +254,56 @@ class GradedJudge:
         """Every setting's reading, and the count. Never a promotion."""
         from .lang import ja_content_runs
 
-        terms = ja_content_runs(query)
+        terms = (self.read or ja_content_runs)(query)
         if not terms:
-            return {"verdict": "UNKNOWN_UNPARSED", "query": query}
+            # Two different failures wore one name. 「こんにちは」 parses
+            # perfectly and contains no content word — hiragana is grammar in
+            # Japanese, so a greeting yields nothing to be asked about, and
+            # no amount of extra grain helps because there is nothing to cut.
+            # Calling that UNPARSED says the reader wrote something unreadable.
+            #
+            # It is the handoff signal a generation layer needs: this store
+            # has no subject here and never will, so pass it on rather than
+            # waiting for a verdict that cannot come.
+            readable = bool((query or "").strip())
+            return {
+                "verdict": "UNKNOWN_NO_SUBJECT" if readable else "UNKNOWN_UNPARSED",
+                "query": query, "terms": [],
+                "note": "read without difficulty and holds no content word; "
+                        "a knowledge store has nothing to say about it",
+            }
+
+        deictic = time_dependent(query, terms)
+        if deictic is not None:
+            return {
+                "verdict": "UNKNOWN_TIME_DEPENDENT",
+                "item": None, "terms": terms, "deictic": deictic,
+                "note": "the answer depends on when this is asked and the "
+                        "store has no clock; route to a source that does, "
+                        "then ingest its result to make it citable",
+            }
 
         readings: Dict[str, Optional[str]] = {}
         for name, _cfg in self.settings:
             r = rung_ask(self.ladders[name], terms)
             readings[name] = r["item"] if r["verdict"] == "ANSWER" else None
 
+        # Which of the question's own terms the store holds at all. Concord
+        # counts settings that agree on an item; it does not say the question
+        # was addressed, and free-form questions are exactly where the two
+        # come apart. 「パワハラを受けたらどうすればいいですか」 answered 受
+        # at three settings of six — a verb stem, agreed on, about nothing
+        # the reader asked. パワハラ is simply not in the store, and only
+        # coverage says so.
+        covered = [t for t in terms if t in self.held]
+        missing = [t for t in terms if t not in self.held]
+
         spoke = [v for v in readings.values() if v]
         if not spoke:
             return {"verdict": "UNKNOWN_NOT_PRESENT", "item": None,
                     "terms": terms, "agreeing": 0, "of": len(self.settings),
+                    "covered": covered, "missing": missing,
+                    "coverage": round(len(covered) / max(len(terms), 1), 3),
                     "readings": readings}
         tally = Counter(spoke)
         top = max(tally.values())
@@ -147,7 +311,10 @@ class GradedJudge:
         if len(leaders) > 1:
             return {"verdict": "AMBIGUOUS", "item": None, "terms": terms,
                     "agreeing": top, "of": len(self.settings),
-                    "leaders": leaders[:4], "readings": readings}
+                    "leaders": leaders[:4], "covered": covered,
+                    "missing": missing,
+                    "coverage": round(len(covered) / max(len(terms), 1), 3),
+                    "readings": readings}
         item = leaders[0]
         strict = readings.get("whole")
         return {
@@ -156,6 +323,8 @@ class GradedJudge:
             "verdict": "ANSWER" if strict == item else "ANSWER_BY_COARSENING",
             "item": item, "terms": terms,
             "agreeing": top, "of": len(self.settings),
+            "covered": covered, "missing": missing,
+            "coverage": round(len(covered) / max(len(terms), 1), 3),
             "spoke": len(spoke),
             "concord": round(top / len(spoke), 3),
             "readings": readings,

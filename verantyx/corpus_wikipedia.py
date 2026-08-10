@@ -31,14 +31,23 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+#: The wiki to read. Parameterised because a federation that mixes
+#: languages in one store cannot be asked in either: the English decomposer
+#: collapsed 「Article 199」 to `article`, and a Japanese question then
+#: competed with English cores for the same census. One language, one
+#: sovereign — see `multilingual.LanguageRouter`.
 API = "https://ja.wikipedia.org/w/api.php"
+
+
+def api_for(wiki: str = "ja") -> str:
+    return "https://%s.wikipedia.org/w/api.php" % wiki
 DELAY_SECONDS = 0.5
 TIMEOUT = 60
 USER_AGENT = ("verantyx-vera corpus_wikipedia "
               "(+https://github.com/Ag3497120/Verantyx)")
 
 
-def url_for(title: str, *, intro: bool) -> str:
+def url_for(title: str, *, intro: bool, wiki: str = "ja") -> str:
     """The API call that produced this file, rebuilt from its name."""
     q = {
         "action": "query", "prop": "extracts", "explaintext": "1",
@@ -46,11 +55,11 @@ def url_for(title: str, *, intro: bool) -> str:
     }
     if intro:
         q["exintro"] = "1"
-    return API + "?" + urllib.parse.urlencode(q)
+    return api_for(wiki) + "?" + urllib.parse.urlencode(q)
 
 
-def extract(title: str, *, intro: bool) -> Optional[str]:
-    req = urllib.request.Request(url_for(title, intro=intro),
+def extract(title: str, *, intro: bool, wiki: str = "ja") -> Optional[str]:
+    req = urllib.request.Request(url_for(title, intro=intro, wiki=wiki),
                                  headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         data = json.loads(r.read().decode("utf-8"))
@@ -128,7 +137,8 @@ def add_urls(manifest_path: Path, *, intro: bool) -> Dict[str, Any]:
             "reproducible": m["reproducible"]}
 
 
-def category_members(category: str, *, limit: int = 500) -> List[str]:
+def category_members(category: str, *, limit: int = 500,
+                     wiki: str = "ja") -> List[str]:
     """Article titles in one category, paged. Subcategories excluded."""
     titles: List[str] = []
     cont: Optional[str] = None
@@ -138,8 +148,9 @@ def category_members(category: str, *, limit: int = 500) -> List[str]:
              "cmlimit": str(min(500, limit - len(titles)))}
         if cont:
             q["cmcontinue"] = cont
-        req = urllib.request.Request(API + "?" + urllib.parse.urlencode(q),
-                                     headers={"User-Agent": USER_AGENT})
+        req = urllib.request.Request(
+            api_for(wiki) + "?" + urllib.parse.urlencode(q),
+            headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             d = json.loads(r.read().decode("utf-8"))
         titles += [m["title"] for m in
@@ -158,6 +169,7 @@ def fetch_categories(
     *,
     label: str = "",
     per_category: int = 500,
+    wiki: str = "ja",
 ) -> Dict[str, Any]:
     """Fetch every article in the named categories and record a manifest.
 
@@ -180,7 +192,7 @@ def fetch_categories(
     seen: set = set()
 
     for cat in categories:
-        titles = category_members(cat, limit=per_category)
+        titles = category_members(cat, limit=per_category, wiki=wiki)
         per_cat[cat] = len(titles)
         for title in titles:
             if title in seen:
@@ -188,7 +200,7 @@ def fetch_categories(
             seen.add(title)
             time.sleep(DELAY_SECONDS)
             try:
-                text = extract(title, intro=False)
+                text = extract(title, intro=False, wiki=wiki)
             except Exception:
                 continue
             if not text:
@@ -197,14 +209,15 @@ def fetch_categories(
             name = title.replace("/", "／") + ".txt"
             blob = text.encode("utf-8")
             (out / name).write_bytes(blob)
-            files.append({"name": name, "url": url_for(title, intro=False),
+            files.append({"name": name,
+                          "url": url_for(title, intro=False, wiki=wiki),
                           "sha256": hashlib.sha256(blob).hexdigest(),
                           "bytes": len(blob)})
 
     manifest = {
         "label": label or "ja.wikipedia カテゴリ収集",
         "recorded": time.strftime("%Y-%m-%d"),
-        "selection_rule": {"categories": categories,
+        "selection_rule": {"wiki": wiki, "categories": categories,
                            "per_category_limit": per_category,
                            "subcategories": False},
         "files": files,
@@ -232,6 +245,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="fetch every article in these categories instead")
     ap.add_argument("--label", default="")
     ap.add_argument("--per-category", type=int, default=500)
+    ap.add_argument("--wiki", default="ja", help="wiki subdomain, e.g. en")
     a = ap.parse_args(argv)
 
     if a.categories:
@@ -240,7 +254,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         print(json.dumps(
             fetch_categories(a.categories, Path(a.out), Path(a.manifest),
-                             label=a.label, per_category=a.per_category),
+                             label=a.label, per_category=a.per_category,
+                             wiki=a.wiki),
             ensure_ascii=False, indent=2))
         return 0
 

@@ -181,17 +181,31 @@ def ask(ladder: Ladder, query_terms: Sequence[str]) -> Dict[str, Any]:
 #: reference (未遂, 準) is absent, because 殺人 and 殺人未遂 are different
 #: things and merging them would be a fabrication with a grammar excuse.
 #:
-#: MEASURED AND NEUTRAL HERE. Over 500 multi-term probes on 1,098 leaves,
-#: every grammar answered at 100% and the recut ones answered LESS often —
-#: raw 431, nosuffix 428, heads 421, both 417. The axis costs coverage and
-#: adds no signal, because probes drawn from the corpus already use the
-#: corpus's own word forms and there is no mismatch to repair.
+#: NEUTRAL ON PROBES THAT USE THE CORPUS'S OWN WORD FORMS, AND NOT
+#: OTHERWISE. Over 500 multi-term probes on 1,098 leaves every grammar
+#: answered at 100% and the recut ones answered LESS often — raw 431,
+#: nosuffix 428, heads 421, both 417 — because a probe drawn from the corpus
+#: already spells things the way the corpus does and there is no mismatch to
+#: repair. That is a fact about the probe, not about the axis, and reading
+#: it as "the grammar axis belongs to retrieval, not to the ladder" was
+#: reading it too widely.
 #:
-#: Where it does work is the retrieval fallback in `gather`, on questions
-#: phrased from OUTSIDE: there it took recall from 26.7% to 73.3%. So the
-#: grammar axis belongs to retrieval, not to the confidence ladder, and it
-#: is kept here selectable rather than default so that placement is a
-#: measurement rather than an assumption.
+#: Measured again on 400 probes whose form DIFFERS from the stored one —
+#: 傷害罪 asked of a corpus that wrote 傷害 — against the same three grain
+#: settings with and without the three grammars:
+#:
+#:     corpus's own forms   400/400 answered  ->  400/400   (no change)
+#:     mismatched forms     290/400 answered  ->  359/400
+#:
+#: 69 more answers at 100% precision either way. Coverage 72.5% to 89.8%,
+#: nothing lost. It also carries the retrieval fallback in `gather` on
+#: questions phrased from outside, where it took recall from 26.7% to 73.3%
+#: — the same effect, arrived at from the other side.
+#:
+#: So the axis earns its place wherever the asker's spelling is not the
+#: corpus's, which is every real question and no probe built by sampling
+#: the corpus. It stays selectable rather than default because which
+#: grammars a corpus needs is a measurement.
 GRAMMARS: Tuple[str, ...] = ("raw", "nosuffix", "heads", "both")
 
 
