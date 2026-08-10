@@ -12,7 +12,7 @@
    "q": "正当防衛とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 35.9,
+   "ms": 36.2,
    "core": "正当防衛",
    "path": [
     "正当防衛",
@@ -27,13 +27,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "殺人罪の刑は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 35.3,
+   "ms": 35.1,
    "core": "殺人罪",
    "path": [
     "殺人罪",
@@ -45,13 +46,14 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "契約の成立要件は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.7,
+   "ms": 32.0,
    "core": "契約",
    "path": [
     "契約",
@@ -66,13 +68,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "時効とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.5,
+   "ms": 31.9,
    "core": "時効",
    "path": [
     "時効",
@@ -87,13 +90,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "過失相殺とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 41.0,
+   "ms": 31.9,
    "core": "民法第七百二十二条",
    "path": [
     "民法第七百二十二条",
@@ -105,13 +109,14 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "所有権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 48.6,
+   "ms": 32.8,
    "core": "所有権",
    "path": [
     "所有権",
@@ -126,13 +131,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "民法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 33.6,
+   "ms": 32.9,
    "core": "民法",
    "path": [
     "民法",
@@ -147,13 +153,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "相続とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.5,
+   "ms": 32.4,
    "core": "相続",
    "path": [
     "相続",
@@ -168,13 +175,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "抵当権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.9,
+   "ms": 32.6,
    "core": "抵当権",
    "path": [
     "抵当権",
@@ -189,25 +197,27 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "不法行為とは",
    "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 30.2,
+   "ms": 30.5,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject, in the register the corpus is judged in",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null
   },
   {
    "q": "詐欺罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.2,
+   "ms": 32.5,
    "core": "詐欺罪",
    "path": [
     "詐欺罪",
@@ -222,13 +232,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "窃盗罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.6,
+   "ms": 32.4,
    "core": "窃盗罪",
    "path": [
     "窃盗罪",
@@ -242,13 +253,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "名誉毀損とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.4,
+   "ms": 32.0,
    "core": "名誉毀損罪",
    "path": [
     "名誉毀損罪",
@@ -263,13 +275,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "労働基準法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 33.7,
+   "ms": 34.2,
    "core": "労働基準法",
    "path": [
     "労働基準法",
@@ -284,13 +297,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "著作権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.9,
+   "ms": 32.7,
    "core": "著作権",
    "path": [
     "著作権",
@@ -305,13 +319,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "超伝導とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.2,
+   "ms": 32.3,
    "core": "超伝導",
    "path": [
     "超伝導",
@@ -326,13 +341,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "光合成とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.9,
+   "ms": 32.4,
    "core": "光合成",
    "path": [
     "光合成",
@@ -347,13 +363,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "量子力学とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.4,
+   "ms": 32.8,
    "core": "量子力学",
    "path": [
     "量子力学",
@@ -368,13 +385,14 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "民主主義とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.5,
+   "ms": 33.2,
    "core": "民主主義",
    "path": [
     "民主主義",
@@ -389,19 +407,21 @@
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary"
   },
   {
    "q": "インフレとは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 30.8,
+   "ms": 32.4,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null
   },
   {
    "q": "negligence",
@@ -419,13 +439,14 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "consideration",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.6,
+   "ms": 0.5,
    "core": "consideration",
    "path": [
     "consideration",
@@ -437,13 +458,14 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "jurisdiction",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.6,
+   "ms": 0.5,
    "core": "jurisdiction",
    "path": [
     "jurisdiction",
@@ -455,7 +477,8 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "estoppel",
@@ -473,7 +496,8 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "tort",
@@ -491,25 +515,27 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "due process",
    "verdict": "UNKNOWN_INSUFFICIENT_EVIDENCE",
    "lang": "en",
-   "ms": 2.1,
+   "ms": 2.3,
    "core": null,
    "path": [],
    "sentences": [],
    "register": null,
    "closes": null,
-   "why": null
+   "why": null,
+   "order": "ranked"
   },
   {
    "q": "habeas corpus",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.4,
+   "ms": 0.5,
    "core": "habeas",
    "path": [
     "habeas",
@@ -518,7 +544,8 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": null
   },
   {
    "q": "今日の天気は",
@@ -530,7 +557,8 @@
    "sentences": [],
    "register": "nothing here — resolve the deictic first",
    "closes": false,
-   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable"
+   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable",
+   "order": null
   },
   {
    "q": "明日の株価は",
@@ -542,34 +570,50 @@
    "sentences": [],
    "register": "nothing here — resolve the deictic first",
    "closes": false,
-   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable"
+   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable",
+   "order": null
   },
   {
    "q": "こんにちは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 30.5,
+   "ms": 30.4,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null
   },
   {
    "q": "ありがとう",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 30.2,
+   "ms": 30.6,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null
   },
   {
    "q": "ヴォルフガング粒子とは",
+   "verdict": "UNKNOWN_NOT_PRESENT",
+   "lang": "ja",
+   "ms": 31.2,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "sentences about the subject, in the register the corpus is judged in",
+   "closes": true,
+   "why": null,
+   "order": null
+  },
+  {
+   "q": "ズミルノフ環礁の面積は",
    "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
    "ms": 30.9,
@@ -578,31 +622,21 @@
    "sentences": [],
    "register": "sentences about the subject, in the register the corpus is judged in",
    "closes": true,
-   "why": null
-  },
-  {
-   "q": "ズミルノフ環礁の面積は",
-   "verdict": "UNKNOWN_NOT_PRESENT",
-   "lang": "ja",
-   "ms": 30.2,
-   "core": null,
-   "path": [],
-   "sentences": [],
-   "register": "sentences about the subject, in the register the corpus is judged in",
-   "closes": true,
-   "why": null
+   "why": null,
+   "order": null
   },
   {
    "q": "Wie geht es dir",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "en",
-   "ms": 10.0,
+   "ms": 10.1,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null
   }
  ]
 }

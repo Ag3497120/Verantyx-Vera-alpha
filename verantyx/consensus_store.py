@@ -274,6 +274,21 @@ def consensus_over_store(
         out["text"] = " ".join(
             display_sym(t) for t in out["text"].split()
         )
+        # Does the evidence rank the facets this path shows, or is the order
+        # an artifact of a tie-break? Measured on this store, 84% of answered
+        # cores carry all-tied facet counts, so the sequence a reader sees is
+        # lexicographic accident — 時効 leading with 18民主化運動等 because
+        # digits sort first. Nothing here reorders anything; the answer just
+        # stops CLAIMING an order it does not have, and a renderer can show
+        # an unordered set instead of an arrow chain. Reads counts at answer
+        # time, so a merge that starts summing cross-leaf attestation will
+        # flip cores to "ranked" with no change here.
+        ck = out.get("core_key")
+        cross = store.crosses.get(ck) or {} if ck else {}
+        shown = [t for t in out["text"].split() if t in cross]
+        counts = {cross[t] for t in shown}
+        if len(shown) >= 2:
+            out["order_evidence"] = "ranked" if len(counts) > 1 else "arbitrary"
     _apply_sense_selection(store, out, query)
     _apply_coverage_gate(out, query)
     # Polarity gate — inert by construction on stores that never ingested
