@@ -3243,6 +3243,89 @@ def a_puzzle_narrows_where_a_chain_decays_fork() -> Dict[str, Any]:
     }
 
 
+def layered_recovers_where_pooled_destroys_fork() -> Dict[str, Any]:
+    """Every combination measured this session divides on one line.
+
+    POOLED — two signals into one vote, index or store — was worse, six
+    times out of six:
+
+        cut-varied sovereigns beside data-varied   out-of-corpus 0 -> 8 wrong
+        two languages in one store                 false answers in both
+        eleven grain settings instead of six       reach 464 -> 450, false 2 -> 7
+        three domain sovereigns instead of one     answered 284 -> 208
+        citations merged into the core ladder      0 of 387 gold links
+        units and links added to a core's terms    385 -> 351 answers
+
+    LAYERED — one stage's typed output becomes the next stage's input — was
+    better, five times out of five:
+
+        vocabulary before composition              73% -> 100% attested words
+        licence before composition                 49 -> 0 unlicensed norms
+        seam test at fill time                     18% -> 0% broken joins
+        coverage beside the verdict                bad answers became legible
+        staircase before the inference core        0 -> 185 of 200 answered
+
+    The parts were all measured good on their own. Pooling asks two
+    structures that mean different things by "agreement" to vote in one
+    election; layering asks one to hand the other something it can use.
+
+    The last row is this fork. `consensus` — the original conception, with
+    sections entering at the rim and axis words concatenated along the
+    agreed paths — could not ENTER for 200 questions whose subject the store
+    holds: `candidates_for_query` returned nothing. Seeded with the subject
+    the staircase names by coarsening, 185 answered and all 185 landed on
+    the core the question was built from.
+
+    The seed is the subject ALONE. Adding its facets dilutes it — 113 of 120
+    with the subject only against 53 with four by frequency, 35 with all of
+    them — because each added term is another section that must agree. That
+    also removes the last arbitrary choice: there is no list left to sort.
+
+    A seeded answer is typed `SEEDED`, never promoted to `ANSWER`. The entry
+    was widened by coarsening and that is precisely what a reader needs in
+    order to discount it.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+    from .consensus_store import candidates_for_query
+    from .stacked import ask
+
+    store = CrossStore()
+    for s in ["傷害罪は暴行である。", "傷害罪は故意である。", "傷害罪は結果である。",
+              "傷害罪は法学である。", "過失は注意義務である。", "過失は責任である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    q = "傷害罪とは"
+    entered = candidates_for_query(store, q, k=6)
+    direct = ask(store, q)                    # no judge: core alone
+    layered = ask(store, q, judge=j)          # staircase feeds the core
+    absent = ask(store, "超伝導とは", judge=j)
+
+    ok = (# the core cannot enter on the question as asked
+          not entered
+          and direct.get("verdict") == "UNKNOWN_NO_EVIDENCE"
+          # layering gets in, and says it was seeded rather than claiming ANSWER
+          and layered.get("verdict") == "SEEDED"
+          and layered.get("seeded_from", {}).get("subject") == "傷害罪"
+          # the seed is the subject alone, no facets appended
+          and layered["seeded_from"]["query"] == "傷害罪"
+          # and a subject nobody holds is still refused, not seeded into one
+          and absent.get("verdict") == "UNKNOWN_NO_EVIDENCE")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "LAYERED_RECOVERS_WHERE_POOLED_DESTROYS",
+        "pass": bool(ok),
+        "result": {
+            "core_could_enter": bool(entered),
+            "core_alone": direct.get("verdict"),
+            "layered": layered.get("verdict"),
+            "seed": layered.get("seeded_from"),
+            "absent_subject": absent.get("verdict"),
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3337,6 +3420,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_question_goes_to_one_language_sovereign_fork(),
         a_chain_decays_and_stacking_nodes_does_not_stop_it_fork(),
         a_puzzle_narrows_where_a_chain_decays_fork(),
+        layered_recovers_where_pooled_destroys_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
