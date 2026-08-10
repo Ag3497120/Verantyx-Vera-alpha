@@ -421,6 +421,18 @@ def _save_sqlite(store: "CrossStore", path: Path) -> None:
                 "cap_stats": json.dumps(store.cap_stats, ensure_ascii=False),
                 "track_provenance": "1" if store.track_provenance else "0",
                 "source_meta": json.dumps(store.source_meta, ensure_ascii=False),
+                # These three were silently dropped by the first version of
+                # this backend, while the comment above promised round-trip
+                # equality. Found when a store baked by `placement --write`
+                # came back with zero placed cores: the bake ran, the gate
+                # accepted, the save discarded the result. source_labels
+                # matters just as much — face-filling skips citation labels,
+                # and a store that forgets its labels spends faces on them.
+                "source_labels": json.dumps(sorted(store.source_labels),
+                                            ensure_ascii=False),
+                "placement": json.dumps(store.placement, ensure_ascii=False),
+                "placement_meta": json.dumps(store.placement_meta,
+                                             ensure_ascii=False),
             }
             con.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
     finally:
@@ -454,5 +466,9 @@ def _load_sqlite(cls, path: Path) -> "CrossStore":
         provenance=provenance,
     )
     st.source_meta = json.loads(meta.get("source_meta", "{}"))
+    st.source_labels = set(json.loads(meta.get("source_labels", "[]")))
+    st.placement = {k: list(v) for k, v in
+                    json.loads(meta.get("placement", "{}")).items()}
+    st.placement_meta = json.loads(meta.get("placement_meta", "{}"))
     st.proper_lexicon = proper_lexicon_from_stats(st.cap_stats)
     return st
