@@ -3172,6 +3172,77 @@ def cross_field_agreement_selects_but_barely_applies_fork() -> Dict[str, Any]:
     }
 
 
+def a_puzzle_narrows_where_a_chain_decays_fork() -> Dict[str, Any]:
+    """The early idea had two halves and only one of them survives.
+
+    Chaining follows facet edges — A to B to C — and composing two edges
+    does not compose two implications, because an edge records that two
+    things were written near each other. Measured, a chain falls from 41.5%
+    context retention at one step to 19.3% at five.
+
+    Intersection does not decay, because every condition is evaluated
+    against the store rather than against the previous answer. Measured over
+    300 subjects on the 626MB federation, one true facet at a time:
+
+        1 condition    93 candidates (median)   100% hold the answer   6.0% unique
+        2               9                       100%                  22.0%
+        3               3                       100%                  37.0%
+        4               1                       100%                  60.7%
+
+    Ninety-three to one, and the answer is never dropped. That is what a
+    puzzle is: not a chain of deductions but conditions that between them
+    leave one thing standing. 殺人 + 死刑 leaves seven; adding 無期 leaves
+    刑法第百九十九条 alone.
+
+    Monotone, so there is no relaxation to run — each condition can only
+    remove candidates, the descent has no local minimum, and it needs no
+    temperature and no weights. A node is a filter, not an ALU: 24 terms and
+    "is this among them", composed as conjunctions over one store.
+
+    The ceiling is what conditions a reader supplies. Three conditions that
+    leave three candidates cannot be resolved by a fourth the structure
+    invents, and `UNKNOWN_UNDERDETERMINED` says so instead of choosing.
+    """
+    from .cross_store import CrossStore
+    from .puzzle import eliminate, solve
+
+    store = CrossStore()
+    for s in ["甲条は殺人である。", "甲条は死刑である。", "甲条は無期である。",
+              "乙条は殺人である。", "乙条は傷害である。",
+              "丙条は死刑である。", "丙条は内乱である。"]:
+        _ingest_ja(store, s)
+
+    one = solve(store, ["殺人"])
+    two = solve(store, ["殺人", "死刑"])
+    conflict = solve(store, ["無期", "内乱"])
+    none = solve(store, [])
+
+    ruled = eliminate(store, ["甲条", "乙条", "丙条"], "無期")
+
+    ok = (# one condition leaves more than one standing
+          one["verdict"] == "UNKNOWN_UNDERDETERMINED"
+          and one["remaining"] == 2
+          # a second condition resolves it, and the trail shows the descent
+          and two["verdict"] == "ANSWER" and two["item"] == "甲条"
+          and [n for _t, n in two["trail"]] == [2, 1]
+          # conditions that cannot hold together are their own finding
+          and conflict["verdict"] == "UNKNOWN_CONDITIONS_CONFLICT"
+          and none["verdict"] == "UNKNOWN_NO_CONDITIONS"
+          # elimination is the other half: one condition removes the rest
+          and ruled["kept"] == ["甲条"] and set(ruled["ruled_out"]) == {"乙条", "丙条"})
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_PUZZLE_NARROWS_WHERE_A_CHAIN_DECAYS",
+        "pass": bool(ok),
+        "result": {
+            "one_condition": {k: one[k] for k in ("verdict", "remaining")},
+            "two_conditions": {k: two[k] for k in ("verdict", "item", "trail")},
+            "conflict": conflict["verdict"],
+            "eliminate": ruled,
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3265,6 +3336,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_character_window_is_a_japanese_technique_fork(),
         a_question_goes_to_one_language_sovereign_fork(),
         a_chain_decays_and_stacking_nodes_does_not_stop_it_fork(),
+        a_puzzle_narrows_where_a_chain_decays_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
