@@ -238,18 +238,14 @@ def export_web(root: Path, out: Path, *, cap: int = CROSS_CAPACITY) -> Dict[str,
 def load(path: Path) -> Dict[str, Any]:
     """Reconstruct one CrossStore per language. No code is executed.
 
-    Reproduces `vera.load` exactly, including the parts of it that are
-    arguably wrong, because this function changes the CONTAINER and must not
-    change the answers. Two behaviours are inherited on purpose:
-
-    * merging is `dict.update`, so a facet held by two leaves keeps the LAST
-      leaf's count rather than the sum. Duplicate attestation is discarded.
-    * `core_count` is not merged across a federation at all, so the Japanese
-      sovereign runs with an empty one.
-
-    Both are worth revisiting; neither may be revisited here, or the file
-    published as "the model" would answer differently from the model whose
-    numbers the card reports.
+    Mirrors `vera.load` exactly — the file published as "the model" must
+    answer as the model whose numbers the card reports, and `--verify`
+    checks that on every export. Both now SUM across leaves: a (core, facet)
+    pair two leaves attest keeps the sum, because cross-leaf corroboration
+    is the one evidential signal a flat corpus has, and the previous
+    `dict.update` overwrote it away and made the merge depend on leaf
+    order. `core_count` sums the same way, so `mass()` works on the
+    Japanese sovereign too.
     """
     from .cross_store import CrossStore
 
@@ -257,43 +253,27 @@ def load(path: Path) -> Dict[str, Any]:
     leaves = list(con.execute(
         "SELECT id, lang, merged FROM leaves ORDER BY id"))
     lang_of = {i: l for i, l, _m in leaves}
-    merged = {l: bool(m) for _i, l, m in leaves}
     stores: Dict[str, Any] = {l: CrossStore() for l in set(lang_of.values())}
 
     for leaf, label in con.execute("SELECT leaf, label FROM labels"):
         stores[lang_of[leaf]].source_labels.add(label)
 
-    # One leaf at a time, in id order, so `update` overwrites in the same
-    # sequence the pickle merge did.
-    for leaf, lang, _m in leaves:
-        dst = stores[lang].crosses
-        # Cores FIRST, and every one of them, including the ones holding no
-        # facets. Rebuilding `crosses` from the facets table alone dropped
-        # 1,828 of the English sovereign's 15,268 cores — and a facet-less
-        # core is not a nothing: it is the difference between
-        # UNKNOWN_NOT_PRESENT (the term is held, nothing supports an answer)
-        # and UNKNOWN_NO_EVIDENCE (the census found no such term). Losing it
-        # silently downgrades the more precise refusal into the vaguer one.
-        for (core,) in con.execute(
-                "SELECT core FROM cores WHERE leaf=?", (leaf,)):
-            dst.setdefault(core, {})
-        cross: Dict[str, Dict[str, int]] = {}
-        for core, facet, n in con.execute(
-                "SELECT core, facet, count FROM facets WHERE leaf=?", (leaf,)):
-            cross.setdefault(core, {})[facet] = n
-        for c, cr in cross.items():
-            dst.setdefault(c, {}).update(cr)
-
-    for leaf, lang, m in leaves:
-        if m:                       # merged federations carry neither
-            continue
-        st = stores[lang]
-        for core, n in con.execute(
-                "SELECT core, count FROM cores WHERE leaf=?", (leaf,)):
-            st.core_count[core] = n
-        for w, cap, low in con.execute(
-                "SELECT word, cap, low FROM caps WHERE leaf=?", (leaf,)):
-            st.cap_stats[w] = [cap, low]
+    # Every core, including the ones holding no facets. Rebuilding `crosses`
+    # from the facets table alone dropped 1,828 of the English sovereign's
+    # 15,268 cores — and a facet-less core is not a nothing: it is the
+    # difference between UNKNOWN_NOT_PRESENT (the term is held, nothing
+    # supports an answer) and UNKNOWN_NO_EVIDENCE (no such term at all).
+    for leaf, core, n in con.execute("SELECT leaf, core, count FROM cores"):
+        st = stores[lang_of[leaf]]
+        st.crosses.setdefault(core, {})
+        st.core_count[core] = st.core_count.get(core, 0) + n
+    for leaf, core, facet, n in con.execute(
+            "SELECT leaf, core, facet, count FROM facets"):
+        cr = stores[lang_of[leaf]].crosses.setdefault(core, {})
+        cr[facet] = cr.get(facet, 0) + n
+    for leaf, w, cap, low in con.execute(
+            "SELECT leaf, word, cap, low FROM caps"):
+        stores[lang_of[leaf]].cap_stats[w] = [cap, low]
     con.close()
     return stores
 

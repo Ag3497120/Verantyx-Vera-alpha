@@ -129,8 +129,26 @@ def load(root: Any = None) -> Vera:
     for d in doms:
         for s in doms[d].values():
             ja.source_labels |= getattr(s, "source_labels", set())
+            # SUM across leaves, never overwrite. This line was
+            # `.update(cr)`, which kept the LAST leaf's count for any
+            # (core, facet) two leaves both attest — so cross-leaf
+            # corroboration, the one evidential signal a flat corpus has,
+            # was discarded at the door, and the merge result depended on
+            # leaf iteration order. Measured on the answered-core bank:
+            # summing decides the leading facet on 6/11 cores against 3/11,
+            # and 91% of facet counts are 1 in a single leaf, so within-leaf
+            # frequency alone cannot rank anything.
             for c, cr in s.crosses.items():
-                ja.crosses.setdefault(c, {}).update(cr)
+                dst = ja.crosses.setdefault(c, {})
+                for f, n in cr.items():
+                    dst[f] = dst.get(f, 0) + n
+            # core_count was never merged at all, which left the Japanese
+            # sovereign with an empty mass table while the English one had a
+            # real one — `mass()` returned 0 for every Japanese core, and
+            # `placement.derive_queries` found zero eligible cores because
+            # of it.
+            for c, n in getattr(s, "core_count", {}).items():
+                ja.core_count[c] = ja.core_count.get(c, 0) + n
     v.add("ja", ja)
 
     en_path = root / "build" / "english.pkl"
