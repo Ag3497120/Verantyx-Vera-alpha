@@ -1,0 +1,626 @@
+{
+ "meta": {
+  "artifact": "kofdai/vera-alpha :: vera.db",
+  "sha256": "d1e988e282ccace8",
+  "mb": 140.0,
+  "computed_at": "2026-08-10",
+  "ja_cores": 86992,
+  "en_cores": 15268
+ },
+ "rows": [
+  {
+   "q": "正当防衛とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 35.2,
+   "core": "正当防衛",
+   "path": [
+    "正当防衛",
+    "成立",
+    "行為",
+    "防衛",
+    "他人"
+   ],
+   "sentences": [
+    "正当防衛は、行為と成立である。",
+    "正当防衛はしばしば行為の成立とみなされる。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "殺人罪の刑は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 34.8,
+   "core": "殺人罪",
+   "path": [
+    "殺人罪",
+    "一定",
+    "人",
+    "他人",
+    "例"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "契約の成立要件は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.8,
+   "core": "犯罪成立要件",
+   "path": [
+    "犯罪成立要件",
+    "38条1項",
+    "事前収賄罪",
+    "例",
+    "充足"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "時効とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.5,
+   "core": "時効",
+   "path": [
+    "時効",
+    "18民主化運動等",
+    "光州事件",
+    "制定",
+    "前職大統領2人全斗煥"
+   ],
+   "sentences": [
+    "時効としては、制定のものがある。",
+    "時効とは制定がある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "過失相殺とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 32.4,
+   "core": "民法第七百二十二条",
+   "path": [
+    "民法第七百二十二条",
+    "不法行為",
+    "中間利息",
+    "控除",
+    "損害賠償"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "所有権とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.8,
+   "core": "所有権",
+   "path": [
+    "所有権",
+    "登記",
+    "景観",
+    "897条1項",
+    "empyreal"
+   ],
+   "sentences": [
+    "所有権のみにみられる登記として、景観（にんにくせんてん）がある。",
+    "所有権のみの登記も景観します。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "民法とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 32.2,
+   "core": "民法",
+   "path": [
+    "民法",
+    "日本",
+    "定",
+    "6親等内",
+    "ローマ"
+   ],
+   "sentences": [
+    "民法にはローマをする。",
+    "民法には、ローマのものがある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "相続とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.8,
+   "core": "相続",
+   "path": [
+    "相続",
+    "放棄",
+    "承認",
+    "被相続人",
+    "効果"
+   ],
+   "sentences": [
+    "相続において承認とする。",
+    "相続によっては、承認に効果われることもある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "抵当権とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 32.1,
+   "core": "抵当権",
+   "path": [
+    "抵当権",
+    "登記",
+    "処分",
+    "変更",
+    "民法376条"
+   ],
+   "sentences": [
+    "抵当権かに変更しいようですね。",
+    "抵当権から変更にかけて登記がある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "不法行為とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.9,
+   "core": "不法",
+   "path": [
+    "不法",
+    "cb",
+    "キャリア",
+    "スカイ",
+    "トラック"
+   ],
+   "sentences": [
+    "不法にはトラックさない。",
+    "不法にはトラックでキャリアかかっている。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "詐欺罪とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.8,
+   "core": "詐欺罪",
+   "path": [
+    "詐欺罪",
+    "使用",
+    "制限",
+    "名称等",
+    "業務妨害罪"
+   ],
+   "sentences": [
+    "詐欺罪は、使用や制限となる。",
+    "詐欺罪は、使用を制限さない。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "窃盗罪とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.7,
+   "core": "窃盗罪",
+   "path": [
+    "窃盗罪",
+    "不法領得",
+    "参照",
+    "意思"
+   ],
+   "sentences": [
+    "窃盗罪（参照や、意思をあげている。",
+    "窃盗罪（ほうどういんてん）と参照とが意思にある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "名誉毀損とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.5,
+   "core": "名誉毀損罪",
+   "path": [
+    "名誉毀損罪",
+    "230条",
+    "免責規定",
+    "加重",
+    "新設"
+   ],
+   "sentences": [
+    "名誉毀損罪も新設まれている。",
+    "名誉毀損罪も「新設」の加重はある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "労働基準法とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 33.0,
+   "core": "労働基準法",
+   "path": [
+    "労働基準法",
+    "保護",
+    "労働条件",
+    "原則",
+    "契約自由"
+   ],
+   "sentences": [
+    "労働基準法にかかわらず保護となる原則である。",
+    "労働基準法にきみまち保護がある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "著作権とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.8,
+   "core": "著作権",
+   "path": [
+    "著作権",
+    "公開",
+    "パブリックドメイン",
+    "dvdソフト",
+    "インターネット"
+   ],
+   "sentences": [
+    "著作権は、インターネットが公開になっている。",
+    "著作権は、インターネットではありません。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "超伝導とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.5,
+   "core": "超伝導",
+   "path": [
+    "超伝導",
+    "発見",
+    "オンネス",
+    "カメルリング",
+    "ジュール"
+   ],
+   "sentences": [
+    "超伝導は発見におけるジュールではありません。",
+    "超伝導は発見にならない。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "光合成とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.4,
+   "core": "光合成",
+   "path": [
+    "光合成",
+    "上",
+    "休眠",
+    "例",
+    "光形態形成"
+   ],
+   "sentences": [
+    "光合成は、休眠（がいしょくほう）である。",
+    "光合成は、休眠（がっきょうほう）である。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "量子力学とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.6,
+   "core": "量子力学",
+   "path": [
+    "量子力学",
+    "得",
+    "ハイゼンベルク",
+    "分野",
+    "理論"
+   ],
+   "sentences": [
+    "量子力学についても分野が理論となる。",
+    "量子力学についても、分野である。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "民主主義とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 31.5,
+   "core": "民主主義",
+   "path": [
+    "民主主義",
+    "アプリケーション",
+    "ヒーロー",
+    "リベラル",
+    "人"
+   ],
+   "sentences": [
+    "民主主義のものにアプリケーションられる。",
+    "民主主義のようなアプリケーションがヒーローである。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "インフレとは",
+   "verdict": "UNKNOWN_NO_EVIDENCE",
+   "lang": "ja",
+   "ms": 29.9,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "sentences about the subject — the census found nothing to count",
+   "closes": true,
+   "why": null
+  },
+  {
+   "q": "negligence",
+   "verdict": "ANSWER",
+   "lang": "en",
+   "ms": 0.6,
+   "core": "negligence",
+   "path": [
+    "negligence",
+    "comparative",
+    "contributory",
+    "criminal",
+    "act"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "consideration",
+   "verdict": "ANSWER",
+   "lang": "en",
+   "ms": 0.5,
+   "core": "consideration",
+   "path": [
+    "consideration",
+    "law",
+    "cannot",
+    "contract",
+    "english"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "jurisdiction",
+   "verdict": "ANSWER",
+   "lang": "en",
+   "ms": 0.5,
+   "core": "jurisdiction",
+   "path": [
+    "jurisdiction",
+    "universal",
+    "depending",
+    "extraterritorial",
+    "law"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "estoppel",
+   "verdict": "ANSWER",
+   "lang": "en",
+   "ms": 0.5,
+   "core": "estoppel",
+   "path": [
+    "estoppel",
+    "promissory",
+    "equitable",
+    "proprietary",
+    "law"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "tort",
+   "verdict": "ANSWER",
+   "lang": "en",
+   "ms": 0.5,
+   "core": "tort",
+   "path": [
+    "tort",
+    "law",
+    "liability",
+    "civil",
+    "criminal"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "due process",
+   "verdict": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+   "lang": "en",
+   "ms": 2.1,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": null,
+   "closes": null,
+   "why": null
+  },
+  {
+   "q": "habeas corpus",
+   "verdict": "ANSWER",
+   "lang": "en",
+   "ms": 0.4,
+   "core": "habeas",
+   "path": [
+    "habeas",
+    "corpus"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "今日の天気は",
+   "verdict": "UNKNOWN_TIME_DEPENDENT",
+   "lang": "ja",
+   "ms": 0.0,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "nothing here — resolve the deictic first",
+   "closes": false,
+   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable"
+  },
+  {
+   "q": "明日の株価は",
+   "verdict": "UNKNOWN_TIME_DEPENDENT",
+   "lang": "ja",
+   "ms": 0.0,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "nothing here — resolve the deictic first",
+   "closes": false,
+   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable"
+  },
+  {
+   "q": "こんにちは",
+   "verdict": "UNKNOWN_NO_EVIDENCE",
+   "lang": "ja",
+   "ms": 29.6,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "sentences about the subject — the census found nothing to count",
+   "closes": true,
+   "why": null
+  },
+  {
+   "q": "ありがとう",
+   "verdict": "UNKNOWN_NO_EVIDENCE",
+   "lang": "ja",
+   "ms": 29.3,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "sentences about the subject — the census found nothing to count",
+   "closes": true,
+   "why": null
+  },
+  {
+   "q": "ヴォルフガング粒子とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 34.5,
+   "core": "ヴォルフガング",
+   "path": [
+    "ヴォルフガング",
+    "c60",
+    "donald",
+    "fostiropoulos",
+    "huffman"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "ズミルノフ環礁の面積は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 34.7,
+   "core": "面積",
+   "path": [
+    "面積",
+    "俊敏性",
+    "2番目",
+    "2項道路",
+    "3辺"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null
+  },
+  {
+   "q": "Wie geht es dir",
+   "verdict": "UNKNOWN_NO_EVIDENCE",
+   "lang": "en",
+   "ms": 9.7,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "sentences about the subject — the census found nothing to count",
+   "closes": true,
+   "why": null
+  }
+ ]
+}

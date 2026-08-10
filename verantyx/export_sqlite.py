@@ -159,6 +159,82 @@ def export(root: Path, out: Path) -> Dict[str, Any]:
             "seconds": round(time.time() - t0, 1)}
 
 
+#: A cross has six arms times four faces. `export_web` keeps this many facets
+#: per core and no more, which is not a size compromise but the capacity the
+#: geometry already imposes — a 25th facet has nowhere to sit.
+CROSS_CAPACITY = 24
+
+
+def export_web(root: Path, out: Path, *, cap: int = CROSS_CAPACITY) -> Dict[str, Any]:
+    """The structure trimmed to what a browser can carry, cut where it is safe.
+
+    Two cuts were measured against the full file on a 34-question bank:
+
+        top 6,000 cores, 24 facets   16.2 MB   verdicts 85%   SUBJECT 65%
+        every core, 24 facets        84.9 MB   verdicts 97%   SUBJECT 100%
+
+    The first is the obvious cut and it is the wrong one. Dropping cores does
+    not make the engine refuse more, it makes it seed onto whatever core
+    survived: 窃盗罪とは came back about 殺人罪, and 「Wie geht es dir」 — which
+    the full store correctly refuses — became a confident ANSWER. Trimming
+    the index turns correct refusals into wrong answers, which is the exact
+    opposite of what this system is for.
+
+    Cutting FACETS instead never moves the subject. Every core the full file
+    holds is still held, so a question about an unheld thing is still refused
+    for the same reason; only the evidence behind an answer is shallower. The
+    one bank difference is a refusal becoming a different refusal.
+
+    Leaves are merged per language here — the browser cannot route by statute
+    division anyway, and `load` merges them on the way in regardless.
+    """
+    out = Path(out)
+    if out.exists():
+        out.unlink()
+    stores = load(root / "build" / "vera.db") if (root / "build" / "vera.db").exists() \
+        else None
+    if stores is None:
+        raise SystemExit("build/vera.db first: python3 -m verantyx.export_sqlite")
+
+    con = sqlite3.connect(str(out))
+    con.executescript(SCHEMA)
+    n_f = 0
+    with con:
+        for i, (lang, s) in enumerate(sorted(stores.items())):
+            con.execute("INSERT INTO leaves VALUES (?,?,?,?,?)",
+                        (i, lang, lang, f"{lang}-merged", 0))
+            con.executemany(
+                "INSERT INTO cores VALUES (?,?,?)",
+                ((i, c, int(s.core_count.get(c, 0))) for c in s.crosses))
+            rows = [(i, c, f, int(n))
+                    for c, cross in s.crosses.items()
+                    for f, n in sorted(cross.items(),
+                                       key=lambda kv: -kv[1])[:cap]]
+            con.executemany("INSERT INTO facets VALUES (?,?,?,?)", rows)
+            n_f += len(rows)
+            con.executemany("INSERT INTO labels VALUES (?,?)",
+                            ((i, l) for l in sorted(s.source_labels)))
+            con.executemany(
+                "INSERT INTO caps VALUES (?,?,?,?)",
+                ((i, w, int(v[0]), int(v[1]))
+                 for w, v in (getattr(s, "cap_stats", {}) or {}).items()
+                 if isinstance(v, (list, tuple)) and len(v) >= 2))
+    con.executescript(INDEXES)
+    with con:
+        con.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)", [
+            ("format", "vera-federation-1"),
+            ("subset", f"every core; facets capped at {cap}, the cross capacity"),
+            ("cores", str(sum(len(s.crosses) for s in stores.values()))),
+            ("facets", str(n_f)),
+        ])
+    con.execute("VACUUM")
+    con.close()
+    import gzip as _gz
+    return {"path": str(out), "mb": round(out.stat().st_size / 1048576, 1),
+            "gzip_mb": round(len(_gz.compress(out.read_bytes(), 9)) / 1048576, 1),
+            "facets": n_f, "cap": cap}
+
+
 def load(path: Path) -> Dict[str, Any]:
     """Reconstruct one CrossStore per language. No code is executed.
 
@@ -286,6 +362,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--root", default=str(Path.home() / "Projects" / "vera-corpus"))
     ap.add_argument("--out")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--web", metavar="OUT",
+                    help="also write the browser-sized structure")
     a = ap.parse_args(argv)
     root = Path(a.root)
     out = Path(a.out) if a.out else root / "build" / "vera.db"
@@ -293,6 +371,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     rep: Dict[str, Any] = {"verdict": "ANSWER"}
     if not a.verify or not out.exists():
         rep["export"] = export(root, out)
+    if a.web:
+        rep["web"] = export_web(root, Path(a.web))
     if a.verify:
         t = time.time()
         rep["load_seconds"] = None

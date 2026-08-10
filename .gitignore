@@ -27,3 +27,6 @@ corpora/*/
 # manifests in corpora/ by build_ja + build_en + export_sqlite.
 hf/model/vera.db
 hf/model/writer.json
+hf/space_static/vera_web.db
+hf/space_static/writer.json
+hf/space_static/verantyx.zip
