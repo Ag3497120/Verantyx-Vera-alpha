@@ -1959,6 +1959,58 @@ def a_template_cut_inside_a_word_is_caught_at_the_seam_fork() -> Dict[str, Any]:
         JOIN.update(saved)
 
 
+def presence_in_the_corpus_is_not_support_fork() -> Dict[str, Any]:
+    """A verification layer must check the SUBJECT's link, not the vocabulary.
+
+    Put an LLM in the generation layer and Vera underneath as verification
+    and citation, and everything rests on the check actually catching an
+    unsupported sentence. A first version asked whether the corpus held each
+    term anywhere. Measured against a local 4B model over 14 subjects it
+    ranked FREE generation ABOVE grounded — 95.7% term presence to 85.5% —
+    because a fluent answer about Japanese law is built from 法律, 制定,
+    原則, 国民 and a federation of 54,244 legal cores holds all of them. In
+    a large corpus presence is nearly free and a checker built on it passes
+    everything, which is worse than no checker: it staples a citation to a
+    fluent invention.
+
+    The subject's own cross is not free. Asked about 第37条 the model wrote
+    「国家の権限を保障し…」 — fluent, plausible, sharing nothing with what
+    the store records there. Same 14 subjects, scored that way: grounded
+    64.1%, free 6.4%; at a 30% threshold 0 of 14 grounded flagged and 14 of
+    14 free flagged.
+    """
+    from .attest_llm import check_all
+    from .cross_store import CrossStore
+
+    store = CrossStore()
+    for s in ["第三十七条は補償である。", "第三十七条は費用である。",
+              "第三十七条は請求である。", "法律は制定である。",
+              "法律は国家である。", "国家は権限である。"]:
+        _ingest_ja(store, s)
+
+    # Both sentences use only words this store holds. Only one of them says
+    # what the store says about the subject.
+    grounded = check_all(store, "第三十七条", "第三十七条は補償の費用を請求する。")
+    invented = check_all(store, "第三十七条", "第三十七条は国家の権限を制定する。")
+
+    ok = (grounded["verdict"] == "ANSWER"
+          and invented["verdict"] == "UNSUPPORTED_BY_CORPUS"
+          and grounded["support"] > invented["support"]
+          # every word of the rejected sentence IS in the corpus
+          and all(w in store.crosses or any(w in (c or ()) for c in store.crosses.values())
+                  for w in ("国家", "権限", "制定")))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "PRESENCE_IN_THE_CORPUS_IS_NOT_SUPPORT",
+        "pass": bool(ok),
+        "result": {
+            "grounded": {k: grounded[k] for k in ("verdict", "support")},
+            "invented": {k: invented[k] for k in ("verdict", "support")},
+            "invented_unlinked": invented["reports"][0]["unlinked"],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2034,6 +2086,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         coarsening_adds_a_reading_and_never_overturns_one_fork(),
         a_citation_is_listed_not_chosen_fork(),
         a_template_cut_inside_a_word_is_caught_at_the_seam_fork(),
+        presence_in_the_corpus_is_not_support_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
