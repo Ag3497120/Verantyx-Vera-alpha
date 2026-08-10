@@ -2980,6 +2980,83 @@ def a_character_window_is_a_japanese_technique_fork() -> Dict[str, Any]:
     }
 
 
+def a_question_goes_to_one_language_sovereign_fork() -> Dict[str, Any]:
+    """Two tokenizers reaching the same string have collided, not agreed.
+
+    A single federation holding both languages cannot be asked in either.
+    The English decomposer collapses 「Article 199 provides for homicide」 to
+    the core `article`, and once that sits beside 刑法第百九十九条 the two
+    readers compete in one census over items neither of them produced.
+
+    Measured on a mixed store of six Japanese and six English sentences
+    against words neither language's documents held:
+
+        mixed store          superconductivity -> contract
+                             photosynthesis    -> necessity
+        language-branched    both refused
+
+    The Japanese side is unchanged either way. What the branch removes is
+    the latin staircase running over a store that also holds kanji, which is
+    the same pooling error as counting cut-varied agreement as evidence.
+
+    A language no sovereign was built for is refused by name rather than
+    handed to whichever tokenizer accepts the characters.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .graded import DEFAULT_SETTINGS, GradedJudge
+    from .polyglot import Polyglot
+
+    ja = ("刑法第百九十九条は殺人である。刑法第二百四条は傷害である。"
+          "正当防衛は違法性阻却である。緊急避難は違法性阻却である。"
+          "過失は注意義務である。契約は約因である。")
+    en = ("Article 199 provides for homicide. Article 204 provides for injury. "
+          "Self-defence is a justification. Necessity is a justification. "
+          "Negligence requires a duty of care. "
+          "The contract requires consideration.")
+
+    mixed = CrossStore()
+    ingest_documents(mixed, [Document(source="ja", text=ja),
+                             Document(source="en", text=en)])
+    jm = GradedJudge(DEFAULT_SETTINGS).build(mixed)
+
+    sja, sen = CrossStore(), CrossStore()
+    ingest_documents(sja, [Document(source="ja", text=ja)])
+    ingest_documents(sen, [Document(source="en", text=en)])
+    poly = Polyglot().add("ja", sja).add("en", sen)
+
+    absent = ["superconductivity", "photosynthesis"]
+    mixed_bad = [w for w in absent
+                 if jm.ask(w)["verdict"].startswith("ANSWER")]
+    poly_bad = [w for w in absent
+                if poly.ask(w)["verdict"].startswith("ANSWER")]
+
+    ja_q = poly.ask("正当防衛とは")
+    en_q = poly.ask("negligence")
+    unknown = Polyglot().add("ja", sja).ask("negligence")
+
+    ok = (mixed_bad and not poly_bad          # the branch removes the collisions
+          and ja_q["language"] == "ja" and ja_q["item"] == "正当防衛"
+          and en_q["language"] == "en" and en_q["item"] == "negligence"
+          # a language with no sovereign is named, not silently rerouted
+          and unknown["verdict"] == "UNKNOWN_LANGUAGE_NOT_HELD"
+          # and the two sovereigns use different staircases
+          and poly.report()["ja"]["settings"] != poly.report()["en"]["settings"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_QUESTION_GOES_TO_ONE_LANGUAGE_SOVEREIGN",
+        "pass": bool(ok),
+        "result": {
+            "mixed_false_answers": mixed_bad,
+            "branched_false_answers": poly_bad,
+            "routed": {"ja": [ja_q["language"], ja_q.get("item")],
+                       "en": [en_q["language"], en_q.get("item")]},
+            "missing_language": unknown["verdict"],
+            "settings": poly.report(),
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3071,6 +3148,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_store_must_be_asked_the_way_it_was_read_fork(),
         a_timeless_store_must_refuse_a_question_about_now_fork(),
         a_character_window_is_a_japanese_technique_fork(),
+        a_question_goes_to_one_language_sovereign_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
