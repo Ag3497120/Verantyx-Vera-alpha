@@ -37,7 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .compose_ja import Form, compose, harvest, learn_selection
+from .compose_ja import (Form, compose, harvest, learn_joins,
+                         learn_selection)
 from .trace import Trace, walk
 from .vocabulary import Vocabulary, from_stores, statute_text
 
@@ -94,6 +95,7 @@ class Writer:
             w.norm_corpora.add("statute")
         w.vocab = from_stores(stores, corpora)
         sel = learn_selection(corpora)
+        joins_ = learn_joins(corpora)
         w.forms = harvest(corpora)
         w.built = {
             "corpora": {label: len(text) for label, text in corpora},
@@ -103,6 +105,7 @@ class Writer:
                               if f.register == "norm"),
             "norm_corpora": sorted(w.norm_corpora),
             "selection": sel,
+            "joins": joins_,
         }
         return w
 
@@ -170,7 +173,7 @@ class Writer:
         the same mistake one level up: the corpus manifests were fixed so a
         corpus can be rebuilt, and this is so it does not have to be.
         """
-        from .compose_ja import dump_selection
+        from .compose_ja import JOIN, dump_selection
 
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -182,6 +185,7 @@ class Writer:
                        "count": f.count, "example": f.example,
                        "source": f.source} for f in self.forms.values()],
             "selection": dump_selection(),
+            "joins": dict(JOIN),
             "built": self.built,
         }, ensure_ascii=False), encoding="utf-8")
         return {"path": str(path), "bytes": path.stat().st_size,
@@ -195,7 +199,7 @@ class Writer:
         composes with `selects` answering None everywhere — every fill
         "unknown but not refused", which is silently a different system.
         """
-        from .compose_ja import load_selection
+        from .compose_ja import JOIN, load_selection
 
         d = json.loads(Path(path).read_text(encoding="utf-8"))
         w = cls()
@@ -211,6 +215,8 @@ class Writer:
             w.forms[form.template] = form
         w.built = d.get("built") or {}
         w.built["selection_restored"] = load_selection(d.get("selection") or {})
+        JOIN.clear(); JOIN.update(d.get("joins") or {})
+        w.built["joins_restored"] = len(JOIN)
         return w
 
     def report(self) -> Dict[str, Any]:

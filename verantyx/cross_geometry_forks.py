@@ -20,6 +20,7 @@ over from the rest of this work:
 """
 from __future__ import annotations
 
+from collections import Counter
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
@@ -1901,6 +1902,63 @@ def a_citation_is_listed_not_chosen_fork() -> Dict[str, Any]:
     }
 
 
+def a_template_cut_inside_a_word_is_caught_at_the_seam_fork() -> Dict[str, Any]:
+    """The break shows at the fill, not at the harvest, so test it there.
+
+    `_CUT_STEM` lists eleven inflection fragments by hand — a rule written
+    rather than learned, and measured to catch NONE of the 659 forms
+    harvested at 626MB. 「う」 is not on the list, so 「<0>うものとする」
+    survives and fills to 法律うものとする.
+
+    The fragment is not the defect. 「う」 is a fine ending for 行う. The
+    JOIN is: 律+う never occurs in 32,259,912 characters of this corpus and
+    律+は occurs 3,863 times. Both sides of the seam are only known once a
+    term has been chosen, so the test belongs at fill time.
+
+    Measured over 465 generated sentences: 18% had an unattested seam
+    before, 0% after, at the same 465 sentences — free, because a rejected
+    form falls through to the next one. The threshold is one occurrence;
+    anything higher starts refusing rare words for being rare (解雇+は
+    occurs once in a 8.7M-character sample).
+    """
+    from .compose_ja import (JOIN, compose, harvest, joins, learn_joins,
+                             learn_selection)
+    from .vocabulary import attest
+
+    body = ("法律は、届出を行うものとする。" * 4
+            + "行為は、届出を行うものとする。" * 4
+            + "法律は、届出である。" * 4)
+    corpora = [("fixture", body)]
+    saved = Counter(JOIN)
+    try:
+        JOIN.clear()
+        learn_joins(corpora)
+        # 律+う is written here (法律は…行う never puts them adjacent), so the
+        # fixture must show the pair genuinely absent.
+        seam_bad = joins("法律", "う")
+        seam_good = joins("法律", "は")
+
+        forms = harvest(corpora)
+        learn_selection(corpora)
+        vocab = attest(["法律", "行為", "届出"], corpora)
+        drafts = compose(forms, "法律", ["届出", "行為"], limit=3,
+                         content_from=["法律"], vocab=vocab)
+        texts = [d.text for d in drafts]
+        broken = [x for x in texts if "法律う" in x or "行為う" in x]
+
+        ok = (not seam_bad and seam_good and not broken)
+        return {
+            "experiment": "cross_geometry",
+            "fork": "A_TEMPLATE_CUT_INSIDE_A_WORD_IS_CAUGHT_AT_THE_SEAM",
+            "pass": bool(ok),
+            "result": {"joins_法律_う": seam_bad, "joins_法律_は": seam_good,
+                       "drafts": texts[:3], "broken": broken},
+        }
+    finally:
+        JOIN.clear()
+        JOIN.update(saved)
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -1975,6 +2033,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_reloaded_writer_is_the_same_writer_fork(),
         coarsening_adds_a_reading_and_never_overturns_one_fork(),
         a_citation_is_listed_not_chosen_fork(),
+        a_template_cut_inside_a_word_is_caught_at_the_seam_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

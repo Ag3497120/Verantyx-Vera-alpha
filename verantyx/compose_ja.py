@@ -200,6 +200,41 @@ _CUT_STEM = re.compile(
     r"<\d>(えば|っこい|わない|ばれて|じて|らない|けない|しく|くて|きた|った)")
 
 
+#: Character pairs the corpus writes. The last resort against a template
+#: that was cut inside a word.
+#:
+#: `_CUT_STEM` below lists eleven inflection fragments by hand, which is a
+#: rule written rather than learned and — measured — catches none of the 659
+#: forms harvested at 626MB. 「う」 is not on it, so 「<0>うものとする」
+#: survives and fills to 法律うものとする. The fragment is not the problem:
+#: 「う」 is a fine ending for 行う. The JOIN is. 律+う never occurs in
+#: 32,259,912 characters and 律+は occurs 3,863 times.
+#:
+#: So the test is on the seam, at fill time, where both sides are known.
+#: Measured over 465 generated sentences it rejects 84 (18%) — 使用る,
+#: 財産られている, 活動っている — and passes 解雿+は, which occurs once.
+#: A threshold above 1 starts refusing rare words for being rare.
+JOIN: Counter = Counter()
+
+#: A hole and the kana that immediately follow it.
+_HOLE_TAIL = re.compile(r"<(\d)>([ぁ-ん]{1,6})")
+
+
+def learn_joins(texts: Iterable[Tuple[str, str]]) -> Dict[str, int]:
+    for _src, body in texts:
+        b = body or ""
+        for i in range(len(b) - 1):
+            JOIN[b[i:i + 2]] += 1
+    return {"pairs": len(JOIN)}
+
+
+def joins(left: str, right: str) -> bool:
+    """Does the corpus ever write these two characters adjacent?"""
+    if not left or not right:
+        return True
+    return JOIN.get(left[-1] + right[0], 0) >= 1
+
+
 #: (particle, predicate) -> the nouns the corpus actually put in that slot.
 #: The wall after grammar: co-occurrence in a store is not selectional fit,
 #: and nothing in a cross says that アドバンテージ is a poor object for
@@ -576,6 +611,18 @@ def compose(
             used.add(cand[0])
         if not ok:
             continue
+        # The seam test, after the fills are known. A template cut inside a
+        # word only shows itself here: 「<0>うものとする」 is fine until 法律
+        # lands in it and 律+う is a pair the corpus never writes.
+        seam_ok = True
+        for m in _HOLE_TAIL.finditer(tpl):
+            h = int(m.group(1))
+            if h < len(picks) and not joins(picks[h], m.group(2)):
+                seam_ok = False
+                break
+        if not seam_ok:
+            continue
+
         text = tpl
         for i, p in enumerate(picks):
             text = text.replace(f"<{i}>", p)
