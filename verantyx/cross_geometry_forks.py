@@ -3631,6 +3631,60 @@ def the_polite_register_was_invisible_to_the_harvester_fork() -> Dict[str, Any]:
     }
 
 
+def a_polite_imperative_still_needs_a_licence_fork() -> Dict[str, Any]:
+    """「〜してください」 read straight past the licence.
+
+    The modality test was built on the statute register and admitted
+    なければならない, してはならない, することができる. Every polite form
+    came back `modality=none`:
+
+        <0>を<1>してください          none  ->  directive
+        <0>は<1>をお願いします         none  ->  directive
+        <0>を<1>していただけますか      none  ->  directive
+        <0>は<1>ができます            none  ->  permission
+        <0>は<1>できません            none  ->  prohibition
+
+    A polite imperative directs the reader as surely as an obligation does.
+    Once the harvester could see the polite register — 659 forms to 1,276 —
+    a store holding encyclopedia prose could have been made to issue
+    instructions it never carried, which is exactly what the licence exists
+    to stop and exactly the shape of the earlier miss, where 「することが
+    できない」 and 「てはならない」 both returned `unknown` and let
+    「アダルトアニメは、制作されることができない。」 through.
+
+    Declarative forms are untouched: 「<0>は<1>である」 and 「<0>は<1>ですね」
+    still carry no modality, because they direct nobody.
+    """
+    from .compose_ja import Form
+
+    directive = ["<0>を<1>してください", "<0>は<1>をお願いします",
+                 "<0>を<1>していただけますか"]
+    permission = ["<0>は<1>ができます"]
+    prohibition = ["<0>は<1>できません"]
+    plain = ["<0>は<1>である", "<0>は<1>ですね"]
+    kept = ["<0>は<1>をしなければならない", "<0>は<1>するものとする"]
+
+    ok = (all(Form(template=s).modality == "directive" for s in directive)
+          and all(Form(template=s).modality == "permission" for s in permission)
+          and all(Form(template=s).modality == "prohibition" for s in prohibition)
+          and all(Form(template=s).modality == "none" for s in plain)
+          and all(Form(template=s).modality == "obligation" for s in kept)
+          # and a directive is norm-registered, so the licence applies to it
+          and all(Form(template=s).register == "norm" for s in directive))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_POLITE_IMPERATIVE_STILL_NEEDS_A_LICENCE",
+        "pass": bool(ok),
+        "result": {
+            "directive": [Form(template=s).modality for s in directive],
+            "permission": [Form(template=s).modality for s in permission],
+            "prohibition": [Form(template=s).modality for s in prohibition],
+            "declarative_unchanged": [Form(template=s).modality for s in plain],
+            "statute_unchanged": [Form(template=s).modality for s in kept],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3730,6 +3784,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         the_vocabulary_is_not_the_lever_fork(),
         a_refusal_says_what_would_close_it_fork(),
         the_polite_register_was_invisible_to_the_harvester_fork(),
+        a_polite_imperative_still_needs_a_licence_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),

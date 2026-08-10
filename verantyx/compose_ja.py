@@ -364,12 +364,24 @@ SELECTION_MIN = 5
 _MODALITY: List[Tuple[str, Any]] = [
     ("prohibition", re.compile(
         r"できない|得ない|てはならない|てはいけない|限りでない"
-        r"|ことを禁ずる|ずるものでない")),
+        r"|ことを禁ずる|ずるものでない"
+        # polite: the register the harvester could not see until just now
+        r"|できません|ないでください|しないでください")),
     ("obligation", re.compile(
         r"なければならない|するものとする|を要する|べきである|べきもの"
-        r"|しなければいけない|に処する|ねばならない")),
+        r"|しなければいけない|に処する|ねばならない"
+        r"|なければなりません|ものとします")),
+    # A polite imperative directs the reader as surely as 「しなければならない」
+    # does, and read straight past the licence: 「<0>を<1>してください」 came
+    # back modality=none, so a store holding encyclopedia prose could be made
+    # to issue instructions it never carried. 「〜ができます」 states a
+    # capability for the same reason 「することができる」 states a permission.
+    ("directive", re.compile(
+        r"てください|下さい|お願いします|お願いいたします"
+        r"|いただけますか|いただけませんか|てほしい|ましょう|なさい")),
     ("permission", re.compile(
-        r"できる|して差し支えない|することを妨げない|してもよい|て差し支えない")),
+        r"できる|して差し支えない|することを妨げない|してもよい|て差し支えない"
+        r"|できます|しても構いません|て構いません")),
 ]
 
 
