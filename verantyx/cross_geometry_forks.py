@@ -3577,6 +3577,60 @@ def a_refusal_says_what_would_close_it_fork() -> Dict[str, Any]:
     }
 
 
+def the_polite_register_was_invisible_to_the_harvester_fork() -> Dict[str, Any]:
+    """こんにちは could only be answered in statute voice, and not for a
+    structural reason.
+
+    Composition works — 659 forms, 63% of walk steps become sentences, seam
+    violations at 0%. What it could not do was sound like anything but a
+    statute, and the count says why: of those 659 forms, 358 came from
+    statutes and 0 from anything a person would say aloud.
+
+    The predicate test admitted である / する / した / できる and nothing in
+    the polite register. 「今日はいい天気ですね」, 「よろしくお願いします」 and
+    「ご用件をお伺いします」 all failed it, so a conversational corpus of
+    eight exchanges yielded ONE form — 「<0>はお<1>れさまでした」, which is
+    「お疲れさまでした」 punched through the middle of 疲.
+
+    A register the harvester cannot see is a register the writer cannot
+    write, however much of it the corpus holds. Adding です / ます /
+    ください / ございます / でしょう and their inflections took the same
+    corpora from 659 forms to 1,276, 65 of them polite, with the largest
+    supplier now the 1,266 multi-field encyclopedia articles rather than the
+    statutes.
+
+    This does not make the system conversational. It makes the gap visible
+    as what it is — a corpus with no conversational register — rather than
+    as a limit of the structure.
+    """
+    from .compose_ja import _PREDICATE, harvest
+
+    conversational = ("今日はいい天気ですね。", "よろしくお願いします。",
+                      "ご用件をお伺いします。", "お時間をいただきありがとうございます。")
+    declarative = ("甲は乙である。", "甲は乙をする。")
+
+    seen = [bool(_PREDICATE.search(s.rstrip("。"))) for s in conversational]
+    kept = [bool(_PREDICATE.search(s.rstrip("。"))) for s in declarative]
+
+    text = ("今日はいい天気ですね。" * 4 + "本日はいい陽気ですね。" * 4
+            + "甲条は乙条である。" * 4)
+    forms = harvest([("f", text)])
+    polite = [k for k in forms if k.endswith("ですね")]
+
+    ok = (all(seen)          # the polite register is admitted
+          and all(kept)      # and the declarative one still is
+          and polite)        # and a polite form is actually harvested
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_POLITE_REGISTER_WAS_INVISIBLE_TO_THE_HARVESTER",
+        "pass": bool(ok),
+        "result": {"conversational_admitted": seen,
+                   "declarative_still_admitted": kept,
+                   "polite_forms": polite,
+                   "all_forms": sorted(forms)},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3675,6 +3729,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         the_path_is_the_content_and_the_writer_only_supplies_form_fork(),
         the_vocabulary_is_not_the_lever_fork(),
         a_refusal_says_what_would_close_it_fork(),
+        the_polite_register_was_invisible_to_the_harvester_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),

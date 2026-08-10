@@ -159,8 +159,19 @@ _NOT_PROSE = re.compile(r"[=\{\}\[\]\\<>|#*A-Za-z0-9]|displaystyle")
 
 #: A sentence ends on a predicate. Without this the harvest is dominated by
 #: headings and list fragments, which have no verb to carry a claim.
+#: The polite register was absent entirely, so no conversational form could
+#: be harvested at any corpus size. 「今日はいい天気ですね」, 「よろしくお願い
+#: します」 and 「ご用件をお伺いします」 all failed the predicate test, and a
+#: conversational corpus of 8 exchanges yielded ONE form — 「<0>はお<1>れさま
+#: でした」, which is 「お疲れさまでした」 cut through the middle of 疲.
+#:
+#: That is why 「こんにちは」 could only be answered in statute voice: of 659
+#: forms, 358 came from statutes and 0 from anything anyone would say aloud.
+#: Not a limit of the structure; a register the harvester could not see.
 _PREDICATE = re.compile(
-    r"(である|でない|する|しない|した|ある|ない|いる|られる|れる|になる|となる|できる)$")
+    r"(である|でない|する|しない|した|ある|ない|いる|られる|れる|になる|となる|できる"
+    r"|です|でした|ではない|ません|ました|ます|ください|ございます|でしょう"
+    r"|ですね|ですか|ますか|ましょう)$")
 
 #: What the character after a hole says the hole must hold.
 #:
