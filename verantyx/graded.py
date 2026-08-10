@@ -111,8 +111,18 @@ class GradedJudge:
     def __init__(self, settings: Sequence[Tuple[str, Dict[str, Any]]] = DEFAULT_SETTINGS):
         self.settings = list(settings)
         self.ladders: Dict[str, Ladder] = {}
+        #: Every term the store holds, for the coverage report.
+        self.held: set = set()
+        #: Terms the store holds AS A CORE — a subject it can be asked
+        #: about, as against one it merely mentions.
+        self.cores: set = set()
 
     def build(self, store: Any) -> "GradedJudge":
+        labels = getattr(store, "source_labels", set()) or set()
+        self.cores = {c for c in store.crosses if c not in labels}
+        self.held = set(self.cores)
+        for cross in store.crosses.values():
+            self.held |= {f for f in cross if f not in labels}
         cache: Dict[Optional[int], Dict[str, List[str]]] = {}
         for name, cfg in self.settings:
             depth = cfg.get("depth")
@@ -136,10 +146,22 @@ class GradedJudge:
             r = rung_ask(self.ladders[name], terms)
             readings[name] = r["item"] if r["verdict"] == "ANSWER" else None
 
+        # Which of the question's own terms the store holds at all. Concord
+        # counts settings that agree on an item; it does not say the question
+        # was addressed, and free-form questions are exactly where the two
+        # come apart. 「パワハラを受けたらどうすればいいですか」 answered 受
+        # at three settings of six — a verb stem, agreed on, about nothing
+        # the reader asked. パワハラ is simply not in the store, and only
+        # coverage says so.
+        covered = [t for t in terms if t in self.held]
+        missing = [t for t in terms if t not in self.held]
+
         spoke = [v for v in readings.values() if v]
         if not spoke:
             return {"verdict": "UNKNOWN_NOT_PRESENT", "item": None,
                     "terms": terms, "agreeing": 0, "of": len(self.settings),
+                    "covered": covered, "missing": missing,
+                    "coverage": round(len(covered) / max(len(terms), 1), 3),
                     "readings": readings}
         tally = Counter(spoke)
         top = max(tally.values())
@@ -147,7 +169,10 @@ class GradedJudge:
         if len(leaders) > 1:
             return {"verdict": "AMBIGUOUS", "item": None, "terms": terms,
                     "agreeing": top, "of": len(self.settings),
-                    "leaders": leaders[:4], "readings": readings}
+                    "leaders": leaders[:4], "covered": covered,
+                    "missing": missing,
+                    "coverage": round(len(covered) / max(len(terms), 1), 3),
+                    "readings": readings}
         item = leaders[0]
         strict = readings.get("whole")
         return {
@@ -156,6 +181,8 @@ class GradedJudge:
             "verdict": "ANSWER" if strict == item else "ANSWER_BY_COARSENING",
             "item": item, "terms": terms,
             "agreeing": top, "of": len(self.settings),
+            "covered": covered, "missing": missing,
+            "coverage": round(len(covered) / max(len(terms), 1), 3),
             "spoke": len(spoke),
             "concord": round(top / len(spoke), 3),
             "readings": readings,

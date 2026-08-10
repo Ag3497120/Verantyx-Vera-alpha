@@ -155,6 +155,8 @@ class FullSovereign:
     tree: Optional[Any] = None
     units: Dict[str, List[str]] = field(default_factory=dict)
     links: Dict[str, List[str]] = field(default_factory=dict)
+    held: Set[str] = field(default_factory=set)
+    cores: Set[str] = field(default_factory=set)
     placement: Dict[str, Any] = field(default_factory=dict)
     stages: List[Stage] = field(default_factory=list)
 
@@ -236,6 +238,17 @@ class FullSovereign:
             for topic, cited in self.links.items():
                 for art in cited:
                     items.setdefault(art, [art]).append(topic)
+        # Every term the store holds, for the coverage report. Concord says
+        # how many settings agreed on an item; it does not say the question
+        # was addressed, and free-form questions are where the two come
+        # apart — 「パワハラを受けたら…」 answered 受 at three settings of
+        # six, a verb stem agreed on, about nothing the reader asked.
+        labels_ = getattr(store, "source_labels", set()) or set()
+        self.cores = {c for c in store.crosses if c not in labels_}
+        self.held = set(self.cores)
+        for cross_ in store.crosses.values():
+            self.held |= {f for f in cross_ if f not in labels_}
+
         self.ladder = Ladder(rungs=self.setting["rungs"],
                              grammar=self.setting.get("grammar", "raw")
                              ).build(items)
@@ -386,8 +399,24 @@ class FullConstellation:
                 item, agree = leaders[0], top
                 verdict = ("ANSWER" if readings.get("whole") == item
                            else "ANSWER_BY_COARSENING")
+        held, cores = set(), set()
+        for m in self.members:
+            held |= getattr(m, "held", set())
+            cores |= getattr(m, "cores", set())
+        # Three states, not two. A term the store holds only as somebody
+        # else's facet is one it can recognise and cannot be asked about, and
+        # that is exactly the case a bare coverage figure hides:
+        # 「パワハラを受けたら…」 scored 100% covered and answered 受,
+        # because パワハラ is a facet and 受 is a core.
+        as_core = [t for t in terms if t in cores]
+        as_facet = [t for t in terms if t not in cores and t in held]
+        missing = [t for t in terms if t not in held]
         out = {"verdict": verdict, "item": item, "terms": terms,
-               "agreeing": agree, "of": len(readings), "readings": readings}
+               "agreeing": agree, "of": len(readings), "readings": readings,
+               "as_core": as_core, "as_facet_only": as_facet, "missing": missing,
+               "coverage": round(len(as_core) / max(len(terms), 1), 3),
+               "note": "coverage counts terms the store can be ASKED about; "
+                       "a facet-only term is recognised and has no subject"}
         if cites.get("by_topic"):
             out["cited_articles"] = cites["articles"]
             out["cited_by_topic"] = cites["by_topic"]
