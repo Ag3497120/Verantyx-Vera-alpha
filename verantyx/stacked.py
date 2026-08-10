@@ -152,12 +152,22 @@ def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
     subject by name and the nearest held thing the staircase reached. That
     is a refusal with a pointer, not an answer about something else.
     """
+    import re as _re
+
     from .lang import ja_content_runs
+
+    # Japanese questions only. `ja_content_runs` returns Latin words too —
+    # 「TypeScriptの型は」 must see TypeScript — so on a PURE-English query
+    # it returns ['what', 'is', 'consideration'] and the leftmost-run rule
+    # would make 'what' the subject of every English question. The gate is
+    # a claim about Japanese topic structure; outside it, it stays silent.
+    if not _re.search(r"[぀-ゟ゠-ヺ㐀-䶿一-鿿]", query):
+        return {"ok": True, "subject": None}
 
     runs = ja_content_runs(query)
     if not runs:
-        # Latin or contentless — the gate has nothing to anchor on and an
-        # anchorless gate would fire on noise. Inert by design.
+        # Contentless — the gate has nothing to anchor on and an anchorless
+        # gate would fire on noise. Inert by design.
         return {"ok": True, "subject": None}
     # The subject is the leftmost content PHRASE, not the leftmost run.
     # `ja_content_runs` splits on script boundaries, so ヴォルフガング粒子 is
@@ -166,6 +176,7 @@ def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
     # straight through the gate it was built for. Adjacent runs (no gap in
     # the query between them) are one phrase; a particle like の ends it.
     subject = runs[0]
+    consumed = 1
     pos = query.find(subject)
     if pos >= 0:
         end = pos + len(subject)
@@ -173,16 +184,25 @@ def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
             if query.startswith(nxt, end):
                 subject += nxt
                 end += len(nxt)
+                consumed += 1
             else:
                 break
+    #: True when the whole question is one phrase plus grammar — no second
+    #: content phrase after a particle. A caller gating the DIRECT path needs
+    #: this: a multi-phrase query (「過失 故意」) legitimately lands on a core
+    #: that is neither phrase, because intersection is the original
+    #: conception working, and gating it would break puzzle inference.
+    single = consumed == len(runs)
     if subject == seed or subject in seed:
-        return {"ok": True, "subject": subject}
+        return {"ok": True, "subject": subject, "single": single}
     cross = store.crosses.get(seed) or {}
     if subject in cross:
-        return {"ok": True, "subject": subject, "via": "facet_of_seed"}
+        return {"ok": True, "subject": subject, "single": single,
+                "via": "facet_of_seed"}
     if subject in store.crosses:
-        return {"ok": True, "subject": subject, "reseed": subject}
-    return {"ok": False, "subject": subject}
+        return {"ok": True, "subject": subject, "single": single,
+                "reseed": subject}
+    return {"ok": False, "subject": subject, "single": single}
 
 
 def ask(
@@ -200,6 +220,27 @@ def ask(
     from .consensus_store import candidates_for_query, consensus_over_store
 
     direct = consensus_over_store(store, query, **kwargs)
+    # The same subject gate, on the direct path — but ONLY for single-phrase
+    # questions. After the staircase gate landed, the residual 4% of invented
+    # compounds still answered were all entering here: ヒュペリオンesa retrieves
+    # the core `esa` by Latin substring and never touches the staircase. A
+    # multi-phrase query is exempt because intersection landing on a core
+    # that is neither phrase (「過失 故意」 → 結果的加重犯) is the original
+    # conception working, not a theft.
+    if str(direct.get("verdict", "")).startswith("ANSWER"):
+        seed0 = str(direct.get("core_key") or direct.get("core") or "")
+        cov0 = subject_check(store, query, seed0)
+        if cov0.get("single") and not cov0["ok"]:
+            return {
+                "verdict": "UNKNOWN_NOT_PRESENT",
+                "core": None,
+                "text": "",
+                "subject": cov0["subject"],
+                "nearest_held": direct.get("core"),
+                "note": ("retrieval reached only a part of the question's "
+                         "subject; answering about the part would answer a "
+                         "different question"),
+            }
     if direct.get("verdict") != "UNKNOWN_NO_EVIDENCE" or judge is None:
         return direct
 
