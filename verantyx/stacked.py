@@ -187,6 +187,11 @@ def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
                 consumed += 1
             else:
                 break
+    #: The content runs AFTER the subject phrase are the asked ASPECT —
+    #: 殺人罪の刑は asks the subject 殺人罪 about the aspect 刑. Entry stays
+    #: subject-alone (adding terms to the seed was measured to dilute it,
+    #: 113/120 -> 53), but the READ can honour them: see `aspect_read`.
+    aspects = [r for r in runs[consumed:] if r and r not in subject]
     #: True when the whole question is one phrase plus grammar — no second
     #: content phrase after a particle. A caller gating the DIRECT path needs
     #: this: a multi-phrase query (「過失 故意」) legitimately lands on a core
@@ -194,15 +199,59 @@ def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
     #: conception working, and gating it would break puzzle inference.
     single = consumed == len(runs)
     if subject == seed or subject in seed:
-        return {"ok": True, "subject": subject, "single": single}
+        return {"ok": True, "subject": subject, "single": single, "aspects": aspects}
     cross = store.crosses.get(seed) or {}
     if subject in cross:
-        return {"ok": True, "subject": subject, "single": single,
+        return {"ok": True, "subject": subject, "single": single, "aspects": aspects,
                 "via": "facet_of_seed"}
     if subject in store.crosses:
-        return {"ok": True, "subject": subject, "single": single,
+        return {"ok": True, "subject": subject, "single": single, "aspects": aspects,
                 "reseed": subject}
-    return {"ok": False, "subject": subject, "single": single}
+    return {"ok": False, "subject": subject, "single": single, "aspects": aspects}
+
+
+def aspect_read(store: Any, out: Dict[str, Any],
+                aspects: Sequence[str]) -> Dict[str, Any]:
+    """Re-read the answered core's faces through the asked aspect.
+
+    Entry and read are different jobs and were conflated: seeding with the
+    subject ALONE is measured right for entry (113/120 against 53 with terms
+    added), but the read then showed the subject's generic top facets and
+    ignored what was asked about it. 殺人罪の刑は entered on 殺人罪 —
+    correctly — and showed 一定 人 例, while crosses[殺人罪] held 法定刑加重
+    the whole time. Measured across ten core×aspect pairs whose aspect the
+    store attests: the aspect reached the shown faces 1 of 10 times.
+
+    So the aspect SELECTS at read time: facets of the answered core that
+    contain an asked aspect run come first, ordered by count then
+    lexicographically — the same tie rule as everywhere else. Facets the
+    core does not hold are never invented (closure is untouched; this only
+    reorders within one cross), and when no held facet matches, the read is
+    left exactly as it was rather than pretending the aspect was addressed.
+
+    The selection is declared: `order_evidence` becomes "aspect", because
+    the sequence is now query-anchored — neither corpus-ranked nor
+    arbitrary, and a reader weighing the answer needs to know which of the
+    three it is.
+    """
+    core_key = out.get("core_key") or out.get("core")
+    if not (core_key and out.get("text") and aspects):
+        return out
+    cross = store.crosses.get(str(core_key)) or {}
+    matched = sorted(
+        (f for f in cross if any(a in f for a in aspects)),
+        key=lambda f: (-cross[f], f))
+    if not matched:
+        return out
+    shown = [t for t in str(out["text"]).split() if t]
+    head, tail = shown[:1], [t for t in shown[1:] if t not in matched]
+    n_facets = max(len(shown) - 1, 1)
+    out = dict(out)
+    out["text"] = " ".join(head + (matched + tail)[:n_facets])
+    out["aspect"] = list(aspects)
+    out["aspect_facets"] = matched[:n_facets]
+    out["order_evidence"] = "aspect"
+    return out
 
 
 def ask(
@@ -230,6 +279,8 @@ def ask(
     if str(direct.get("verdict", "")).startswith("ANSWER"):
         seed0 = str(direct.get("core_key") or direct.get("core") or "")
         cov0 = subject_check(store, query, seed0)
+        if cov0.get("ok") and cov0.get("aspects"):
+            direct = aspect_read(store, direct, cov0["aspects"])
         if cov0.get("single") and not cov0["ok"]:
             return {
                 "verdict": "UNKNOWN_NOT_PRESENT",
@@ -246,10 +297,23 @@ def ask(
 
     g = judge.ask(query)
     if not str(g.get("verdict", "")).startswith("ANSWER"):
-        # The staircase could not name a subject either. The core\'s own
-        # refusal stands — a second reader that also found nothing is not a
-        # reason to widen further.
-        return {**direct, "staircase": g.get("verdict")}
+        # The staircase abstained — often CORRECTLY, because two held cores
+        # tie: 相続の効果は holds both 相続 and 効果, the rungs cannot pick
+        # one, and ties must abstain. But the tie is between subject and
+        # ASPECT, and the question itself says which is which: the leftmost
+        # phrase is the subject. If that subject is a held core, enter
+        # there, exactly as the reseed branch does when the staircase named
+        # the wrong thing. Measured: 相続の効果は, 時効の期間は, 契約の解除は
+        # and 窃盗罪の刑は all went UNKNOWN_NO_EVIDENCE through this branch
+        # while the store held every one of their subjects.
+        cov = subject_check(store, query, "")
+        if not cov.get("reseed"):
+            # No held subject to enter on. The core\'s own refusal stands —
+            # a second reader that also found nothing is not a reason to
+            # widen further.
+            return {**direct, "staircase": g.get("verdict")}
+        g = {"item": cov["reseed"], "verdict": g.get("verdict"),
+             "via": "subject_entry"}
 
     # The subject alone. Adding its facets to the seeded query DILUTES it:
     # measured over 120 questions the core could not enter, where the
@@ -299,5 +363,7 @@ def ask(
         out["note"] = ("the inference core could not enter on the question as "
                        "asked; the staircase named a subject by coarsening "
                        "and the core was re-entered there")
+        if cov.get("aspects"):
+            out = aspect_read(store, out, cov["aspects"])
         return out
     return {**out, "seeded_from": {"subject": seed, "query": seeded_query}}
