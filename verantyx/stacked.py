@@ -55,6 +55,67 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 
+def in_words(
+    store: Any,
+    result: Dict[str, Any],
+    writer: Any,
+    *,
+    limit: int = 2,
+) -> Dict[str, Any]:
+    """Put the answer into sentences, using the PATH as the content.
+
+    The inference core already generates: on agreement it concatenates the
+    axis words along the converged section paths, natural language
+    rearranged with no model anywhere. 「過失 故意」 comes back as
+    「過失 法学 結果的加重犯 引 故意」 — the answer, in the query\'s own
+    terms, and not a sentence.
+
+    `writer` composes sentences and, on its own, ignores the question: given
+    the seed 過失 it walked and produced 「法律ではほとんどストーカーを規定
+    している」 as its second sentence. The walk is what drifted, not the
+    composition.
+
+    So the path replaces the walk. The centre becomes the subject, the rest
+    of the path becomes the available content, and the writer supplies only
+    the FORM:
+
+        過失 故意     -> 過失は故意となっている。
+        正当防衛とは    -> 正当防衛は行為の成立である。
+        遺言 方式     -> 遺言は法律をもつてこれをしなければならない。
+
+    Layered, not pooled: the core decides what the answer is about and the
+    writer decides only how to say it. Every draft still carries its content
+    source and its form source separately, and a sentence built this way is
+    still a draft — it is not the citation, which is the path.
+    """
+    text = result.get("text")
+    if not text:
+        return {"verdict": result.get("verdict"), "sentences": [],
+                "note": "no converged path to speak from"}
+    path = [w for w in text.split() if w]
+    if not path:
+        return {"verdict": result.get("verdict"), "sentences": []}
+    subject, rest = path[0], path[1:]
+    if subject not in writer.vocab:
+        return {"verdict": "UNKNOWN_SUBJECT_NOT_A_WORD", "subject": subject,
+                "path": path,
+                "note": "the centre is a retrieval key and not a word the "
+                        "corpus writes on its own; the path stands as the "
+                        "answer"}
+    from .compose_ja import compose
+
+    drafts = compose(writer.forms, subject, rest, limit=limit,
+                     content_from=[subject], vocab=writer.vocab,
+                     licence=writer.licence(subject))
+    return {
+        "verdict": result.get("verdict"),
+        "path": path,
+        "sentences": [d.as_dict() for d in drafts],
+        "note": "content from the converged path, form from a harvested "
+                "template; neither makes it true",
+    }
+
+
 def ask(
     store: Any,
     query: str,

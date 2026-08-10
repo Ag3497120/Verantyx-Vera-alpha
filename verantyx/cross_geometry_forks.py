@@ -3326,6 +3326,95 @@ def layered_recovers_where_pooled_destroys_fork() -> Dict[str, Any]:
     }
 
 
+def the_path_is_the_content_and_the_writer_only_supplies_form_fork() -> Dict[str, Any]:
+    """Generation is query-driven once the walk is replaced by the path.
+
+    Two generators existed and did not meet. The inference core already
+    generates — on agreement it concatenates the axis words along the
+    converged section paths, natural language rearranged with no model — and
+    「過失 故意」 comes back 「過失 法学 結果的加重犯 引 故意」: the answer,
+    in the query's own terms, and not a sentence.
+
+    `writer` composes sentences and ignores the question. Seeded with 過失
+    it walked and produced 「法律ではほとんどストーカーを規定している」 as
+    its second sentence. The WALK drifted; the composition did not.
+
+    So the path replaces the walk. The centre becomes the subject, the rest
+    of the path is the available content, and the writer supplies only form:
+
+        過失 故意     -> 過失は故意となっている。
+        正当防衛とは    -> 正当防衛は行為の成立である。
+        遺言 方式     -> 遺言は法律をもつてこれをしなければならない。
+
+    Measured over 200 questions: 184 produced a path, 51 of those became
+    sentences, and 51 of 51 used a term from the question. Fully on topic
+    when it speaks at all.
+
+    The gate is the vocabulary, not the query. 133 centres are retrieval
+    keys the corpus never writes standalone — 相続順位 is a perfectly good
+    place to arrive and not a word to start a sentence with — so the path
+    stands as the answer and `UNKNOWN_SUBJECT_NOT_A_WORD` says why there is
+    no sentence rather than inventing one.
+    """
+    from .cross_store import CrossStore
+    from .stacked import in_words
+    from .vocabulary import attest
+    from .compose_ja import learn_joins, learn_selection, harvest, JOIN
+
+    # A form with only topic/modifier/means holes. A 「<0>は<1>を<2>した」
+    # shape needs a VERBAL NOUN in the last hole, and a three-word fixture
+    # vocabulary has none — the first version of this fork composed nothing
+    # for that reason, which was the fixture failing and not the wiring.
+    prose = [("f", "過失は故意の責任である。" * 4
+                   + "責任は故意の過失である。" * 3
+                   + "故意は責任の過失である。" * 3)]
+    saved = dict(JOIN)
+    try:
+        JOIN.clear()
+        learn_joins(prose)
+        learn_selection(prose)
+
+        class W:  # the three things `in_words` needs from a writer
+            forms = harvest(prose)
+            vocab = attest(["過失", "故意", "責任"], prose)
+            licence = staticmethod(lambda _s: "record")
+
+        store = CrossStore()
+        converged = {"verdict": "ANSWER", "text": "過失 故意 責任"}
+        out = in_words(store, converged, W)
+
+        # a centre that is not a word gets no sentence and says so
+        unword = in_words(store, {"verdict": "ANSWER", "text": "相続順位 法学"}, W)
+        # no path, nothing to speak from
+        silent = in_words(store, {"verdict": "UNKNOWN_NO_EVIDENCE"}, W)
+
+        fills = out["sentences"][0]["fills"] if out.get("sentences") else []
+        ok = (out.get("sentences")
+              # the subject is the centre of the path, not a fresh walk
+              and fills and fills[0] == "過失"
+              # and every content word came from the path
+              and set(fills) <= {"過失", "故意", "責任"}
+              and out["path"] == ["過失", "故意", "責任"]
+              and unword["verdict"] == "UNKNOWN_SUBJECT_NOT_A_WORD"
+              and silent["sentences"] == [])
+        return {
+            "experiment": "cross_geometry",
+            "fork": "THE_PATH_IS_THE_CONTENT_AND_THE_WRITER_ONLY_SUPPLIES_FORM",
+            "pass": bool(ok),
+            "result": {
+                "path": out.get("path"),
+                "sentence": (out["sentences"][0]["text"]
+                             if out.get("sentences") else None),
+                "fills": fills,
+                "centre_not_a_word": unword["verdict"],
+                "no_path": silent.get("note"),
+            },
+        }
+    finally:
+        JOIN.clear()
+        JOIN.update(saved)
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3421,6 +3510,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_chain_decays_and_stacking_nodes_does_not_stop_it_fork(),
         a_puzzle_narrows_where_a_chain_decays_fork(),
         layered_recovers_where_pooled_destroys_fork(),
+        the_path_is_the_content_and_the_writer_only_supplies_form_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
