@@ -67,38 +67,60 @@ class Stage:
                 "seconds": round(self.seconds, 2), **self.detail}
 
 
-def learn_units(store: CrossStore, *, sample: int = 4000,
+def learn_units(store: CrossStore, *, sample: int = 8000,
                 min_attest: int = 3) -> Dict[str, List[str]]:
     """Cores the corpus also writes in pieces, and the pieces.
 
-    Nothing is split because it CAN be: 事訴 sits inside 民事訴訟法 thousands
-    of times and never alone, and admitting it would put a fragment where a
-    reader expects a word. A piece counts only where the corpus writes it
-    unflanked, which is the same test `vocabulary` uses and the one that
-    raised `granularity`'s advantage over chance from 4.9x to 15x.
+    `granularity.decompose_units` reads the vocabulary as units in LEFT and
+    RIGHT position, which is the distinction a window scan cannot make:
+    賠償 earns its right-hand slot from 損害賠償 and not from any string
+    ending in those two characters. A first version here scanned every
+    window instead and was not using that module at all — the point of the
+    exercise was to wire what was built, so it is wired.
+
+    A piece is admitted only where the corpus also writes it UNFLANKED.
+    事訴 sits inside 民事訴訟法 thousands of times and never alone, and
+    admitting it puts a fragment where a reader expects a word; that same
+    test raised `granularity`'s advantage over chance from 4.9x to 15x.
     """
+    from .granularity import decompose_units
     from .vocabulary import runs
 
     labels = getattr(store, "source_labels", set()) or set()
+    cores = [c for c in store.crosses if c not in labels]
+    model = decompose_units(cores)
     text = "".join(
-        f"{c}、{'、'.join(sorted(f for f in (cr or ()) if f not in labels))}。"
-        for c, cr in list(store.crosses.items())[:sample])
+        f"{c}、{'、'.join(sorted(f for f in (store.crosses[c] or ()) if f not in labels))}。"
+        for c in cores[:sample])
     seen = runs(text)
+
     units: Dict[str, List[str]] = {}
-    for core in store.crosses:
-        if core in labels or not (3 <= len(core) <= 10):
+    for core in cores:
+        if not (3 <= len(core) <= 10):
             continue
         parts: List[str] = []
-        for size in (2, 3, 4):
-            if len(core) <= size:
-                continue
-            for i in range(0, len(core) - size + 1):
-                piece = core[i:i + size]
-                if seen.get(piece, 0) >= min_attest:
-                    parts.append(piece)
+        for a, b in _SPLITS_FOR(len(core)):
+            left, right = core[:a], core[a:]
+            # Left AND right must both be units the model saw in that
+            # position, and both must stand alone in the corpus. Either
+            # test alone admits fragments.
+            if (left in model.slots.get((a, "L"), ())
+                    and right in model.slots.get((b, "R"), ())
+                    and seen.get(left, 0) >= min_attest
+                    and seen.get(right, 0) >= min_attest):
+                parts += [left, right]
         if parts:
             units[core] = sorted(set(parts))
     return units
+
+
+def _SPLITS_FOR(n: int) -> Tuple[Tuple[int, int], ...]:
+    """Every split of a word this long, from `granularity.SPLITS`."""
+    from .granularity import SPLITS
+
+    if n in SPLITS:
+        return SPLITS[n]
+    return tuple((i, n - i) for i in range(2, n - 1))
 
 
 def learn_links(paths: Iterable[Any]) -> Dict[str, List[str]]:
