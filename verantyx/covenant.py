@@ -279,22 +279,29 @@ def siblings(store: Any, term: str, *, limit: int = 24,
     """
     labels = getattr(store, "source_labels", set()) or set()
     common = _too_common(store, max_common)
+    # The store lowercases latin and a covenant is registered the way the
+    # user wrote it, so 「TypeScript」 found no parents at all under
+    # 実装言語 -> typescript. Everything downstream then worked perfectly on
+    # an empty list.
+    low = term.lower()
     parents = [(c, len(cr or ())) for c, cr in store.crosses.items()
-               if c not in labels and term in (cr or ())]
+               if c not in labels
+               and (term in (cr or ()) or low in {f.lower() for f in (cr or ())})]
     parents = [(c, n) for c, n in parents if 0 < n <= max_fanout]
     if not parents:
         return []
+    need = min(min_shared, len(parents))
     from collections import Counter
     score: Counter = Counter()
     seen: Counter = Counter()
     for c, n in parents:
         for f in (store.crosses.get(c) or ()):
-            if f == term or f in labels or f in common:
+            if f == term or f.lower() == low or f in labels or f in common:
                 continue
             score[f] += 1.0 / n
             seen[f] += 1
     out = [(w, round(s, 4)) for w, s in score.most_common(limit * 3)
-           if seen[w] >= min_shared]
+           if seen[w] >= need]
     return out[:limit]
 
 
@@ -343,9 +350,17 @@ def loosely_in(term: str, text: str) -> bool:
     judgment was quantized. `ja_morph.variants` is the machinery already
     measured for it — 98.7% of 500 morphological variants reached the
     original core.
+
+    Latin is compared case-insensitively because the store lowercases it and
+    a reply does not. Without this the inference found javascript as a
+    sibling of typescript and then failed to see 「JavaScript」 in the reply
+    it was checking — the whole chain worked except the last comparison.
     """
     if term in text:
         return True
+    if any(c.isascii() and c.isalpha() for c in term):
+        if term.lower() in text.lower():
+            return True
     try:
         from .ja_morph import variants
     except Exception:

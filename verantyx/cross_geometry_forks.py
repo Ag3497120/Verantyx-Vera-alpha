@@ -2289,6 +2289,66 @@ def a_rule_that_just_started_breaking_is_the_one_to_resend_fork() -> Dict[str, A
     }
 
 
+def latin_is_a_content_word_in_japanese_prose_fork() -> Dict[str, Any]:
+    """A tool name is what the sentence is about, not punctuation.
+
+    `ja_content_runs` matched katakana and kanji and no latin at all, so
+    「実装言語はTypeScriptを用いる」 came back as ['実装言語', '用い'] — the
+    term the sentence is ABOUT was invisible — and 「認証はAPIキーを用いる」
+    as ['認証', 'キー'], the katakana tail without the API. Every layer above
+    inherited it: the store never linked 実装言語 to TypeScript, so sibling
+    inference, covenant checking and attestation all worked on Japanese law
+    and on nothing with a latin name.
+
+    `detect` compounded it by counting latin per CHARACTER. 実装言語 is four
+    characters and one word; TypeScript is ten and one word. Nine Japanese
+    characters against ten latin ones called a Japanese sentence English and
+    routed it to a decomposer that cored it under `typescript` with no
+    facets — one long tool name changed the language of the sentence.
+
+    Both fixed, the legal path did not regress: 400 of 400 probes answered
+    correctly against 396 of 400 before.
+    """
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .lang import detect, ja_content_runs
+
+    runs_ts = ja_content_runs("実装言語はTypeScriptを用いる。")
+    runs_api = ja_content_runs("認証はAPIキーを用いる。")
+
+    store = CrossStore()
+    ingest_documents(store, [Document(
+        source="規約",
+        text=("実装言語はTypeScriptを用いる。実装言語はJavaScriptを用いる。"
+              "認証はAPIキーを用いる。認証はOAuthを用いる。"))])
+    cross = {c: {f.lower() for f in v} for c, v in store.crosses.items()}
+
+    ok = ("TypeScript" in runs_ts
+          and "APIキー" in runs_api            # not キー alone
+          # a Japanese sentence stays Japanese however long the tool name is
+          and detect("実装言語はTypeScriptを用いる。") == "ja"
+          and detect("The implementation language is TypeScript.") == "en"
+          # and the link the whole chain needs actually exists
+          and "実装言語" in cross
+          and {"typescript", "javascript"} <= cross["実装言語"]
+          and "認証" in cross and "apiキー" in cross["認証"]
+          # the provenance suffix must not become content now that latin does
+          and "reported" not in cross.get("認証", set())
+          and "by" not in cross.get("認証", set()))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "LATIN_IS_A_CONTENT_WORD_IN_JAPANESE_PROSE",
+        "pass": bool(ok),
+        "result": {
+            "runs_typescript": runs_ts,
+            "runs_apikey": runs_api,
+            "detect_ja": detect("実装言語はTypeScriptを用いる。"),
+            "detect_en": detect("The implementation language is TypeScript."),
+            "cross": {c: sorted(v) for c, v in cross.items()},
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2369,6 +2429,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         not_knowing_is_not_disagreeing_fork(),
         a_covenant_binds_the_exchange_not_the_wording_fork(),
         the_store_infers_the_prohibition_nobody_wrote_fork(),
+        latin_is_a_content_word_in_japanese_prose_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
