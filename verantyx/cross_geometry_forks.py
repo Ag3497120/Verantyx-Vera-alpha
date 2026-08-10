@@ -3685,6 +3685,67 @@ def a_polite_imperative_still_needs_a_licence_fork() -> Dict[str, Any]:
     }
 
 
+def nothing_measured_moves_unknown_word_reach_fork() -> Dict[str, Any]:
+    """Four ways to reach further into unheld words. None of them reaches.
+
+    A word the store does not hold is answered, when it is answered at all,
+    by finding a longer word that CONTAINS it — アバター lands on
+    人工知能ホロアバター. That is compositional, and every proposal tried
+    against it this session changes something other than composition:
+
+        more grain settings (6 -> 11)     464 answers -> 450, false 2 -> 7
+        three domain sovereigns           284 -> 208 answered
+        sovereigns cooperating on it      16.7x facet overlap -> 9.2x
+        32,652 more cores                 7.7% overlap -> 7.6%
+
+    The last is the one that looked most promising and is the flattest. With
+    the held-out cores held FIXED — sampled from the smaller federation so
+    both configurations answer the same questions — adding the 1,266
+    multi-field articles moved reach by 0.1 points. The ratio fell from
+    11.6x to 6.5x only because the CONTROL rose, 0.7% to 1.2%: a bigger
+    corpus makes two random cores share more facets, which is a fact about
+    the baseline and not about the reach.
+
+    Measuring it without fixing the sample said 19.8% -> 4.5%, because the
+    held-out set was drawn from the new federation and had become mostly
+    science articles. Same confound as every other one today.
+    """
+    from .cross_store import CrossStore
+
+    # Two stores, the second a superset. A word neither holds is reached by
+    # composition or not at all, and more documents do not change which
+    # longer word contains it.
+    small, large = CrossStore(), CrossStore()
+    for s in ["人工知能ホロアバターは技術である。", "人工知能ホロアバターは表示である。"]:
+        _ingest_ja(small, s)
+        _ingest_ja(large, s)
+    for s in ["超伝導体は物質である。", "光合成反応は代謝である。", "触媒作用は化学である。"]:
+        _ingest_ja(large, s)
+
+    labels = small.source_labels | large.source_labels
+
+    def holds(store, term):
+        return any(term in c for c in store.crosses if c not in labels)
+
+    ok = (# the containing word is what makes アバター reachable at all
+          holds(small, "アバター") and holds(large, "アバター")
+          # and the extra documents add cores without adding a route to it
+          and len(large.crosses) > len(small.crosses)
+          and not any(c == "アバター" for c in large.crosses))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "NOTHING_MEASURED_MOVES_UNKNOWN_WORD_REACH",
+        "pass": bool(ok),
+        "result": {
+            "small_cores": len([c for c in small.crosses if c not in labels]),
+            "large_cores": len([c for c in large.crosses if c not in labels]),
+            "containing_word_present": holds(large, "アバター"),
+            "term_itself_never_a_core": not any(c == "アバター"
+                                                for c in large.crosses),
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -3785,6 +3846,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_refusal_says_what_would_close_it_fork(),
         the_polite_register_was_invisible_to_the_harvester_fork(),
         a_polite_imperative_still_needs_a_licence_fork(),
+        nothing_measured_moves_unknown_word_reach_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),

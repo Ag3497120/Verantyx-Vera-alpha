@@ -85,31 +85,34 @@ def candidates_for_query(
     # head が store に居るなら、非 head の単独語は core 候補にしない —
     # それらは語義選択の指定語 ("sun newspaper" の newspaper)。巨大質量の
     # 汎用 core が head を押し出す事故を防ぐ。
+    # A non-head token is DROPPED when the head is in the store, on the
+    # reading that it is a sense-selector — the "newspaper" in "sun
+    # newspaper" — and that a high-mass generic core would push the head
+    # out. That looked like the reason generation stayed short: 「過失 故意」
+    # retrieves one core, so the shell fills ONE arm of six and the path is
+    # that arm's five slots (tip + four faces), which is why eight generated
+    # sentences were the same two words rearranged.
+    #
+    # Ranking them below the head instead of dropping them was measured and
+    # was WORSE. Over 120 two-term questions:
+    #
+    #     dropped (k=1 equivalent)   73 of 120 ANSWER, 100% the right core
+    #     ranked below the head      33 of 120,         94%
+    #
+    # and the paths did not grow — 76 questions became AMBIGUOUS instead.
+    # A second arm did not add content; it gave the sections something else
+    # to converge on, and they split. The path is short because one subject
+    # has one arm, and more subjects is not more of one subject.
     head_in_store = bool(head and variants(head))
     for tok in ordered:
+        if head_in_store and tok != head:
+            continue
         for rank, v in enumerate(variants(tok)):
             if v in seen:
                 continue
             seen.add(v)
-            if tok == head:
-                pri = 1 + rank
-            elif head_in_store:
-                # A non-head token used to be DROPPED here, on the reading
-                # that it is a sense-selector — the "newspaper" in "sun
-                # newspaper" — and that a high-mass generic core would push
-                # the head out. The mass concern is real and the drop was
-                # too strong: 「過失 故意」 retrieved one core, so the shell
-                # filled ONE arm of six, the path was the five slots of that
-                # arm (tip + four faces), and every extra sentence was the
-                # same two words rearranged.
-                #
-                # Ranked below the head instead of dropped. The head still
-                # sorts first, so it cannot be displaced, and the remaining
-                # arms get something to carry.
-                pri = 6 + rank
-            else:
-                pri = 2 + rank
-            scored.append((pri, -store.mass(v), v))
+            pri = 1 if tok == head else 2
+            scored.append((pri + rank, -store.mass(v), v))
     # facet 重なりで引く — 直接ヒットが1つも無い場合のみの補完。
     # (直接 core があるのに高頻度 core を facet 経由で足すと、質量で
     #  本命を押し出す — tokyo vs film の教訓)

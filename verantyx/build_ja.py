@@ -49,7 +49,8 @@ def prose_corpora(root: Path) -> List[Tuple[str, str]]:
     out: List[Tuple[str, str]] = []
     for label, folder in (("百科", "wikipedia_domains"),
                           ("引用", "wikipedia_cited"),
-                          ("法学", "wikipedia_doctrine")):
+                          ("法学", "wikipedia_doctrine"),
+                          ("多分野", "wikipedia_fields")):
         d = root / folder
         if not d.is_dir():
             continue
@@ -126,8 +127,16 @@ def build_federation(root: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, A
     # rules, and the fusion measurement is only readable when one field is
     # one source — slicing a source across fields makes its prose style
     # arrive as if it were agreement between them.
+    # 多分野 is its own domain for the same reason 法学 is: it was selected
+    # by a different rule (16 named categories against "cites a statute"),
+    # and one field must be one source or the fusion measurement stops being
+    # readable. Aozora dialogue is deliberately absent — fiction asserts
+    # nothing about the world and is read for FORMS only, in `writer`.
+    # English is absent too: mixing languages in one store was measured to
+    # answer superconductivity with contract.
     for folder, domain in (("wikipedia_cited", "百科"),
-                           ("wikipedia_doctrine", "法学")):
+                           ("wikipedia_doctrine", "法学"),
+                           ("wikipedia_fields", "多分野")):
         for p in sorted((root / folder).rglob("*.txt")):
             label = f"{domain}／{p.name}"
             st = CrossStore()
@@ -157,7 +166,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     corpus_at = max(_newest(root / "bulk"), _newest(root / "wikipedia_cited"),
                     _newest(root / "wikipedia_domains"),
-                    _newest(root / "wikipedia_doctrine"))
+                    _newest(root / "wikipedia_doctrine"),
+                    _newest(root / "wikipedia_fields"))
     fresh = (fed_path.exists() and writer_path.exists()
              and fed_path.stat().st_mtime > corpus_at
              and writer_path.stat().st_mtime > corpus_at)
