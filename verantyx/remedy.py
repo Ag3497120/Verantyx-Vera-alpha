@@ -38,6 +38,22 @@ from typing import Any, Dict, List, Optional
 #: `then` is what should happen afterwards; `not_a_gap` marks the refusals
 #: that are correct and should be routed rather than repaired.
 REMEDIES: Dict[str, Dict[str, Any]] = {
+    # The census returning nothing at all, which is a different claim from
+    # NOT_PRESENT: there the term is held and unsupported, here the store has
+    # no purchase on the question whatsoever. It was missing from this table
+    # until the public page surfaced it — こんにちは reaches the inference core
+    # and comes back NO_EVIDENCE, not NO_SUBJECT, so the commonest refusal on
+    # the demo showed a reader an empty box.
+    "UNKNOWN_NO_EVIDENCE": {
+        "register": "sentences about the subject — the census found nothing "
+                    "to count",
+        "how": "remember / propose_ai_facts then accept_ai_fact",
+        "then": "rebuild the judge — measured 1.4s on 86,967 cores",
+        "minimum": 3,
+        "note": "if the question names no content word at all, the honest "
+                "route is a generator rather than a registration; see "
+                "UNKNOWN_NO_SUBJECT",
+    },
     "UNKNOWN_NOT_PRESENT": {
         "register": "sentences about the subject, in the register the "
                     "corpus is judged in",

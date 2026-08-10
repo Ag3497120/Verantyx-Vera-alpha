@@ -231,7 +231,30 @@ def _bracketed_label(text: str, start: int, end: int) -> bool:
 #: facets — every ingested Japanese sentence gained `by` and `reported`, plus
 #: whatever latin the filename held. Excluded by SPAN rather than by a word
 #: list, so a source called `policy.docx` does not contribute `docx` either.
-_JA_ATTRIBUTION = re.compile(r"\((?:reported|said) by [^)]*\)")
+#: The citation suffix `ingest_documents` appends to every sentence. One
+#: definition, because both decomposers have to agree on where the claim
+#: ends — they did not, and only the Japanese one skipped it. The English
+#: path read the label as content, so `en／99-year lease.txt` became the
+#: facets `en` and `txt`: 6,608 of 138,797 facets on the English sovereign,
+#: touching 43.5% of its cores, until `strip_attribution` was applied there
+#: too.
+#: Greedy, and anchored to the end, because the suffix is APPENDED and the
+#: label may itself contain brackets. `[^)]*\)` stopped at the first bracket
+#: of `en／Burden of proof (law).txt`, leaving `.txt)` in the sentence — which
+#: is where 545 of the 566 surviving `txt` facets came from, i.e. every
+#: Wikipedia disambiguation title in the corpus.
+ATTRIBUTION = re.compile(r"\((?:reported|said) by .*\)\s*$")
+_JA_ATTRIBUTION = ATTRIBUTION
+
+
+def strip_attribution(text: str) -> str:
+    """The claim without its citation suffix.
+
+    Structure is read from this; provenance keeps the full string. Splitting
+    the two is what lets a citation be stored without spending an arm's face
+    on it.
+    """
+    return ATTRIBUTION.sub("", text or "").strip()
 
 
 def ja_content_runs(text: str) -> List[str]:

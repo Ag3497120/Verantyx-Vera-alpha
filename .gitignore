@@ -22,3 +22,8 @@ verantyx/dialogue_context.py
 # from what the publisher is actually serving.
 corpora/*/
 !corpora/*.json
+
+# Built artifacts staged for publication — 150MB, and reproducible from the
+# manifests in corpora/ by build_ja + build_en + export_sqlite.
+hf/model/vera.db
+hf/model/writer.json
