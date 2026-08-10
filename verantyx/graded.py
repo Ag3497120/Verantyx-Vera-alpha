@@ -139,7 +139,22 @@ class GradedJudge:
 
         terms = ja_content_runs(query)
         if not terms:
-            return {"verdict": "UNKNOWN_UNPARSED", "query": query}
+            # Two different failures wore one name. 「こんにちは」 parses
+            # perfectly and contains no content word — hiragana is grammar in
+            # Japanese, so a greeting yields nothing to be asked about, and
+            # no amount of extra grain helps because there is nothing to cut.
+            # Calling that UNPARSED says the reader wrote something unreadable.
+            #
+            # It is the handoff signal a generation layer needs: this store
+            # has no subject here and never will, so pass it on rather than
+            # waiting for a verdict that cannot come.
+            readable = bool((query or "").strip())
+            return {
+                "verdict": "UNKNOWN_NO_SUBJECT" if readable else "UNKNOWN_UNPARSED",
+                "query": query, "terms": [],
+                "note": "read without difficulty and holds no content word; "
+                        "a knowledge store has nothing to say about it",
+            }
 
         readings: Dict[str, Optional[str]] = {}
         for name, _cfg in self.settings:

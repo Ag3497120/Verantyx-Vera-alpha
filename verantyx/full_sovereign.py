@@ -375,7 +375,10 @@ class FullConstellation:
 
         terms = ja_content_runs(query)
         if not terms:
-            return {"verdict": "UNKNOWN_UNPARSED", "query": query}
+            # See `graded.GradedJudge.ask`: a greeting is read fine and has
+            # no subject, which is a handoff signal, not a parse failure.
+            return {"verdict": "UNKNOWN_NO_SUBJECT" if (query or "").strip()
+                    else "UNKNOWN_UNPARSED", "query": query, "terms": []}
 
         readings: Dict[str, Optional[str]] = {}
         cites: Dict[str, Any] = {}

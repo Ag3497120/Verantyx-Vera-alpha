@@ -2349,6 +2349,108 @@ def latin_is_a_content_word_in_japanese_prose_fork() -> Dict[str, Any]:
     }
 
 
+def more_grain_does_not_reach_further_fork() -> Dict[str, Any]:
+    """Adding quantization levels was measured, and it costs precision.
+
+    The proposal was more intermediate grains — g1, g4, g5 beside the
+    existing whole/g3/g2 — on the reading that finer steps would reach
+    free-form questions and unknown words. Measured on the 626MB federation
+    against 300 morphological variants, 15 out-of-corpus words and 10
+    free-form questions:
+
+        6 settings    99% reach   0 false answers   5/10 free-form
+        11 settings   99% reach   2 false answers   5/10 free-form
+
+    Nothing gained, precision lost. The failures were never about grain.
+    「こんにちは」 yields no content run at all — hiragana is grammar in
+    Japanese, so there is nothing to cut at any size — and
+    「パワハラを受けたら…」 lost by CENSUS, not by grain: g2 had already
+    reached パワーハラスメント and was outvoted 3-2 by 受.
+
+    Splitting the corpus by domain instead of by setting was worse on every
+    axis: 284 of 300 answered at 100% against 208 at 96%, with 2 false
+    answers against 0. Varying settings helped LEAF routing, where many
+    candidates make diversity break ties; subject identification is mostly
+    exact match, and diversity only adds voters who are wrong.
+
+    This fork pins the four verdicts that separate the real cases, since
+    that separation is what the measurement actually bought.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    store = CrossStore()
+    for s in ["甲条は届出である。", "甲条は選択である。", "甲条は事情である。"]:
+        _ingest_ja(store, s)
+    j = GradedJudge().build(store)
+
+    greeting = j.ask("こんにちは")       # read fine, no subject in it
+    empty = j.ask("")                     # nothing to read
+    known = j.ask("甲条とは")
+    absent = j.ask("超伝導とは")          # a subject this store never held
+
+    ok = (greeting["verdict"] == "UNKNOWN_NO_SUBJECT"
+          and empty["verdict"] == "UNKNOWN_UNPARSED"
+          and known["verdict"].startswith("ANSWER")
+          and absent["verdict"] == "UNKNOWN_NOT_PRESENT"
+          # all four are different: a handoff, a bad input, an answer, a gap
+          and len({greeting["verdict"], empty["verdict"],
+                   known["verdict"], absent["verdict"]}) == 4)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "MORE_GRAIN_DOES_NOT_REACH_FURTHER",
+        "pass": bool(ok),
+        "result": {"greeting": greeting["verdict"], "empty": empty["verdict"],
+                   "known": known["verdict"], "absent": absent["verdict"]},
+    }
+
+
+def the_structure_is_deterministic_fork() -> Dict[str, Any]:
+    """Same store, same question, same answer — checked, not assumed.
+
+    Whether generation needs to be a separate MODE turns on this. It does
+    not: three judges built from one store, and a judge built from a store
+    assembled again from scratch, produced byte-identical verdicts, items,
+    concords and per-setting readings over five questions on the 626MB
+    federation.
+
+    Nothing here samples. Ties abstain rather than being broken, which is
+    the one place a deterministic tie-break would have manufactured
+    agreement — measured on the ladder at unanimity 86 probes to 321 and
+    accuracy 73.3% to 23.7%. So a separate mode, if one is wanted, is wanted
+    for what generation may ASSERT, never for reproducibility.
+    """
+    import hashlib
+    import json
+
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    def build():
+        s = CrossStore()
+        for x in ["甲条は届出である。", "甲条は選択である。", "乙条は事情である。",
+                  "丙条は理由である。", "丙条は期間である。"]:
+            _ingest_ja(s, x)
+        return GradedJudge().build(s)
+
+    qs = ["甲条とは", "丙条とは", "こんにちは", "超伝導とは", "事情とは"]
+    digests = []
+    for _ in range(3):
+        j = build()
+        out = [json.dumps({k: v for k, v in j.ask(q).items()
+                           if k in ("verdict", "item", "agreeing", "readings")},
+                          ensure_ascii=False, sort_keys=True) for q in qs]
+        digests.append(hashlib.sha256("|".join(out).encode()).hexdigest()[:16])
+
+    ok = len(set(digests)) == 1
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_STRUCTURE_IS_DETERMINISTIC",
+        "pass": bool(ok),
+        "result": {"digests": digests, "identical": ok},
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2430,6 +2532,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_covenant_binds_the_exchange_not_the_wording_fork(),
         the_store_infers_the_prohibition_nobody_wrote_fork(),
         latin_is_a_content_word_in_japanese_prose_fork(),
+        more_grain_does_not_reach_further_fork(),
+        the_structure_is_deterministic_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
