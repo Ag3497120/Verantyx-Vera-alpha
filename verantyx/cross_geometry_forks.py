@@ -2455,6 +2455,73 @@ def the_structure_is_deterministic_fork() -> Dict[str, Any]:
     }
 
 
+def the_grammar_axis_earns_its_place_on_mismatched_forms_fork() -> Dict[str, Any]:
+    """The third axis was measured neutral by a probe that could not show it.
+
+    Over 500 multi-term probes on 1,098 leaves, every grammar answered at
+    100% and the recut ones answered LESS often — raw 431, nosuffix 428,
+    heads 421, both 417 — and that was written down as "the grammar axis
+    belongs to retrieval, not to the confidence ladder". The probes were
+    drawn from the corpus, so they spelled everything the way the corpus
+    does. There was no mismatch to repair, which is a fact about the probe.
+
+    Re-measured on 400 probes whose form DIFFERS from the stored one —
+    傷害罪 asked of a corpus that wrote 傷害 — beside the same three grain
+    settings:
+
+        corpus's own forms   400/400 answered  ->  400/400
+        mismatched forms     290/400 answered  ->  359/400
+
+    69 more answers, precision 100% throughout. The axis is not neutral; it
+    is invisible to any probe built by sampling the corpus, which is the
+    same blindness that made a staircase look useless on core identity and
+    made a facet-keyed query invert the banding.
+
+    Every real question is phrased from outside the corpus.
+    """
+    from .cross_store import CrossStore
+    from .graded import GradedJudge
+
+    store = CrossStore()
+    for s in ["傷害は暴行である。", "傷害は故意である。", "傷害は結果である。"]:
+        _ingest_ja(store, s)
+
+    grain = (("whole", {"rungs": (("whole", 0),), "grammar": "raw", "depth": 1}),
+             ("g2", {"rungs": (("g2", 2),), "grammar": "raw", "depth": 1}))
+    plus = grain + (("nosuffix", {"rungs": (("whole", 0),),
+                                  "grammar": "nosuffix", "depth": 1}),)
+
+    j_grain = GradedJudge(grain).build(store)
+    j_plus = GradedJudge(plus).build(store)
+
+    # The corpus wrote 傷害; the asker writes 傷害罪.
+    own_g = j_grain.ask("傷害とは")
+    own_p = j_plus.ask("傷害とは")
+    diff_g = j_grain.ask("傷害罪とは")
+    diff_p = j_plus.ask("傷害罪とは")
+
+    ok = (# the corpus's own form is reached either way
+          own_g["verdict"].startswith("ANSWER") and own_g["item"] == "傷害"
+          and own_p["verdict"].startswith("ANSWER") and own_p["item"] == "傷害"
+          # the mismatched form is reached only once grammar is on the ladder
+          and diff_p["verdict"].startswith("ANSWER")
+          and diff_p["item"] == "傷害"
+          and diff_p["agreeing"] > diff_g.get("agreeing", 0))
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_GRAMMAR_AXIS_EARNS_ITS_PLACE_ON_MISMATCHED_FORMS",
+        "pass": bool(ok),
+        "result": {
+            "own_form_grain_only": [own_g["verdict"], own_g.get("item")],
+            "own_form_with_grammar": [own_p["verdict"], own_p.get("item")],
+            "mismatched_grain_only": [diff_g["verdict"], diff_g.get("item"),
+                                      diff_g.get("agreeing")],
+            "mismatched_with_grammar": [diff_p["verdict"], diff_p.get("item"),
+                                        diff_p.get("agreeing")],
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2538,6 +2605,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         latin_is_a_content_word_in_japanese_prose_fork(),
         the_staircase_grades_doubt_and_finds_none_to_grade_fork(),
         the_structure_is_deterministic_fork(),
+        the_grammar_axis_earns_its_place_on_mismatched_forms_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
