@@ -170,12 +170,81 @@ class _Renamer(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _obfuscated_name(original: str, index: int) -> str:
-    """Deterministic given (original, index) — not reversible without the
-    mapping (that's the point; reversibility comes from the stored map,
-    not from the name itself being derivable)."""
-    h = hashlib.sha256(f"{original}:{index}".encode()).hexdigest()[:8]
-    return f"_v{h}"
+@dataclass(frozen=True)
+class VariantSignature:
+    """One point in a small, fixed space of equivalent naming schemes.
+
+    Not a security boundary (see docs/OBFUSCATE_V2_PLAN.md — this raises
+    the cost of running one static de-obfuscator across many distributed
+    copies; it does not make any single copy harder to read once someone
+    is looking at it). Its real job is watermarking: which point in this
+    space a given obfuscated file uses is a durable, low-bandwidth signal
+    that survives redistribution, usable to narrow down which store
+    produced a leaked copy — see watermark.py.
+    """
+
+    prefix: str
+    hex_len: int
+    upper: bool
+    sep: str
+
+    def name_for(self, original: str, index: int) -> str:
+        h = hashlib.sha256(f"{original}:{index}".encode()).hexdigest()[: self.hex_len]
+        if self.upper:
+            h = h.upper()
+        return f"{self.prefix}{self.sep}{h}"
+
+    def signature_id(self) -> str:
+        return f"{self.prefix}|{self.hex_len}|{int(self.upper)}|{self.sep}"
+
+
+# The default/legacy scheme — unchanged from before variants existed, so
+# every pre-existing obfuscated file and fork keeps working byte-for-byte.
+_DEFAULT_VARIANT = VariantSignature(prefix="_v", hex_len=8, upper=False, sep="")
+
+# Each axis is independently derived from the fingerprint (different HMAC
+# "context" per axis) so the combined space is the product of the axes,
+# not just the size of one list. 8 * 3 * 2 * 2 = 96 points total — modest
+# and deliberately not oversold: with N=96 equally-likely points, a
+# birthday-bound collision between two *unrelated* owners' variants is
+# expected once a registry holds roughly sqrt(96) ≈ 10 owners. A variant
+# match is evidence to narrow a candidate list, never a standalone proof
+# of identity — see watermark.py's `identify_candidates`.
+_PREFIXES = ["_v", "_x", "_q", "_z", "_k", "_n", "_r", "_t"]
+_HEX_LENS = [6, 8, 10]
+_SEPS = ["", "_"]
+
+
+def _axis_index(fingerprint: bytes, axis: str, n: int) -> int:
+    h = hashlib.sha256(fingerprint + b":axis:" + axis.encode()).digest()
+    return int.from_bytes(h[:4], "big") % n
+
+
+def variant_space_size() -> int:
+    return len(_PREFIXES) * len(_HEX_LENS) * 2 * len(_SEPS)
+
+
+def variant_from_fingerprint(fingerprint: bytes) -> VariantSignature:
+    """Deterministically pick a point in the naming-scheme space from a
+    store fingerprint. Only derived integers (indices mod a small N) are
+    computed here — never store or transmit the raw fingerprint itself as
+    a "watermark," since `derive_key()` can turn a fingerprint back into
+    the AES key. A `VariantSignature`/its `signature_id()` is safe to share
+    (a registry, a support ticket, a legal record); the fingerprint is not.
+    """
+    return VariantSignature(
+        prefix=_PREFIXES[_axis_index(fingerprint, "prefix", len(_PREFIXES))],
+        hex_len=_HEX_LENS[_axis_index(fingerprint, "hexlen", len(_HEX_LENS))],
+        upper=bool(_axis_index(fingerprint, "case", 2)),
+        sep=_SEPS[_axis_index(fingerprint, "sep", len(_SEPS))],
+    )
+
+
+def _obfuscated_name(original: str, index: int, variant: VariantSignature = _DEFAULT_VARIANT) -> str:
+    """Deterministic given (original, index, variant) — not reversible
+    without the mapping (that's the point; reversibility comes from the
+    stored map, not from the name itself being derivable)."""
+    return variant.name_for(original, index)
 
 
 @dataclass
@@ -233,18 +302,23 @@ class _CollectSpans(ast.NodeVisitor):
         self.visit(tree)
 
 
-def plan_obfuscation(source: str) -> ObfuscationResult:
+def plan_obfuscation(source: str, variant: VariantSignature = _DEFAULT_VARIANT) -> ObfuscationResult:
     """Rename real identifiers only, via exact AST source positions —
     string literals, comments, and docstrings are never touched, so a
     coincidental name collision inside text can't silently change runtime
-    behavior (e.g. a dict key string matching a renamed variable name)."""
+    behavior (e.g. a dict key string matching a renamed variable name).
+
+    ``variant`` selects which point in the naming-scheme space to use
+    (default: the original scheme, unchanged). Pass one derived by
+    ``variant_from_fingerprint()`` to make this file's naming pattern a
+    watermark tied to the owning store — see watermark.py."""
     tree = ast.parse(source)
     renamer = _Renamer()
     renamer.visit(tree)
 
     mapping: Dict[str, str] = {}
     for i, name in enumerate(renamer.order):
-        mapping[name] = _obfuscated_name(name, i)
+        mapping[name] = _obfuscated_name(name, i, variant)
     reverse = {v: k for k, v in mapping.items()}
 
     lines = source.splitlines(keepends=True)
@@ -301,8 +375,10 @@ def obfuscate_file(
     map_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     source = Path(path).read_text()
-    result = plan_obfuscation(source)
-    key = key_from_store(store)
+    fingerprint = fingerprint_store(store)
+    variant = variant_from_fingerprint(fingerprint)
+    result = plan_obfuscation(source, variant=variant)
+    key = derive_key(fingerprint)
     blob = encrypt_mapping({"reverse": result.reverse, "file": str(path)}, key)
 
     out_path = out_path or Path(path).with_suffix(Path(path).suffix + ".obf")
@@ -314,8 +390,11 @@ def obfuscate_file(
         "n_renamed": result.n_renamed,
         "obfuscated_file": str(out_path),
         "mapping_file": str(map_path),
+        "variant_signature_id": variant.signature_id(),
         "note": "mapping is AES-256-GCM encrypted with a key derived from "
-                "your store's state — back up the recovery key",
+                "your store's state — back up the recovery key. The naming "
+                "scheme used (variant_signature_id) is a watermark, not "
+                "extra secrecy — see docs/WATERMARK.md",
     }
 
 

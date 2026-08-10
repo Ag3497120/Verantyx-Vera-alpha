@@ -20,6 +20,40 @@ every time — and every answer traces back to counted source sentences.
 > do: it does not write fluent prose, it does not chat casually, and it does
 > not invent anything it was never taught. That is the point.
 
+## Where this works, and where it does not
+
+Measured, on real documents, before you spend an afternoon on it.
+
+| corpus | detections | true | precision |
+|---|---|---|---|
+| Japanese government disaster reports (5 corpora, 4 read blind) | 14 | 14 | **100%** |
+| Technical prose — 93 mixed EN/JA project documents | 5 | **0** | **0%** |
+
+The difference is not the subject matter. It is whether the documents make
+**state claims about named entities**.
+
+**It works** where the same *named* thing — a municipality, a facility, a
+route, a service, a contract, an asset — is described by more than one source,
+and its state changes: open/closed, running/stopped, valid/expired,
+in-service/withdrawn. That shape is what the engine detects, and on it, it does
+not guess.
+
+**It does not work** on prose. In technical writing the same abstract noun
+returns in unrelated contexts — 「議論」, 「出力」, 「推論プロセス」 — and
+comparing two of them produces a contradiction that was never there. All five
+findings on that corpus were false, and the honest reading is that a wiki, a
+set of design docs, or meeting notes are the wrong input.
+
+It is also **not** a document organiser: no summarising, no tagging, no
+clustering, no semantic search. It answers one question — *do my sources
+disagree about this thing, and who said what* — and refuses the rest.
+
+The parser also finds bugs in **its own reading**, without an answer key: it
+reads the same documents twice through a transform that cannot change what
+they say, and a claim that appears in only one of the two readings is provably
+spurious. 13 real defects found that way, repaired unattended.
+[docs/METAMORPHIC.md](docs/METAMORPHIC.md).
+
 ## Why
 
 | LLM | Vera |
@@ -40,14 +74,21 @@ Weak by design: creative writing, small talk, free-form generation.
 ## Install
 
 ```bash
-git clone https://github.com/Ag3497120/Verantyx-Vera-alpha.git
-cd Verantyx-Vera-alpha
-pip install -e .            # core (stdlib only)
-pip install -e ".[hf]"      # + HuggingFace corpus pouring
-pip install -e ".[mcp]"     # + MCP server
+pip install verantyx-vera            # core — standard library only
+pip install "verantyx-vera[docs]"    # + PDF, Word, Excel
+pip install "verantyx-vera[mcp]"     # + MCP server
 ```
 
-Python ≥ 3.9. No other core dependencies.
+Python ≥ 3.9. No other core dependencies, no GPU, no network at run time.
+
+Then, for the local app a non-programmer can use:
+
+```bash
+vera field       # opens on 127.0.0.1 — documents never leave the machine
+```
+
+Step-by-step, written for someone who has never opened a terminal:
+<https://verantyx.ai/vera/download/>
 
 ## Quickstart
 
@@ -162,6 +203,48 @@ inside:
 vera setup    # or edit ~/.verantyx.json: "hf_store_repo": "kofdai/Verantyx-Vera-base-store"
 vera ask "what is football"    # auto-fetches the base store on first use
 ```
+
+## The jgen static dictionary (optional)
+
+Vera grows its vocabulary from the documents themselves and a person approves
+each word. To put the likely-real candidates in front of that person first, it
+can consult a **jgen** — a local model file converted with `--parts lexicon`,
+carrying its embedding table and nothing else. It has no layers that generate,
+so it physically cannot write. It is opened once and read a row at a time:
+pure standard library, no inference engine, no network.
+
+Three questions, and the measurement that decided each — on qwen 0.5b
+(152k x 1024) against the engine's own 31-term vocabulary:
+
+| question | verdict | measured |
+|---|---|---|
+| Is this the kind of word that carries a state? | usable | separates the real proposal queue completely — true candidates +0.164 / +0.128 / +0.082, false ones −0.143 / −0.239 |
+| Which known words sit nearest? | usable as search | 冠水 → 断水 (0.52), 停電 → 停止 (0.47) |
+| **Which pole is it — restored, or still out?** | **refused; absent from the API** | **64.5% leave-one-out — a coin flip.** A 4B model scored 54.8% on the same test |
+
+The third row is why the other two are worth stating. Opposite poles live in
+identical contexts — an outage and its restoration share a paragraph — so a
+frozen embedding table holds no information that separates them. No function
+in `jgen_lexicon` returns a pole, and an eval asserts the absence.
+
+The dictionary **orders** the queue and accepts nothing. Acceptance stays with
+a person, and that boundary comes from the number rather than from caution.
+
+```bash
+# build one from a model you already have
+python3 jgen_forge.py pull qwen3.5:4b --parts lexicon
+
+# point Vera at it — entirely optional
+cat > ~/.verantyx-audit/lexicon.json <<'JSON'
+{"jgen": "/path/to/x_lexicon_full.jgen",
+ "tokenizer": "/path/to/x.jgen.tokenizer/tokenizer.json"}
+JSON
+
+vera lexicon 冠水 滞留 孤立        # ask it directly
+```
+
+Without one configured the queue simply arrives unsorted, and nothing else
+changes.
 
 ## Languages
 

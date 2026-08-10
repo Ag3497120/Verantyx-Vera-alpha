@@ -119,16 +119,22 @@ def wire_sub(a: int, b: int) -> Dict[str, Any]:
     return {"verdict": VERDICT_OK, "value": value, "op": "sub", "steps": steps}
 
 
-def wire_mul(a: int, b: int) -> Dict[str, Any]:
-    """乗算 = wire_add の反復 (小さい方を回数に)。予算超えは型付き."""
+def wire_mul(a: int, b: int, max_steps: int = MAX_MUL_STEPS) -> Dict[str, Any]:
+    """乗算 = wire_add の反復 (小さい方を回数に)。予算超えは型付き.
+
+    `max_steps` is a parameter rather than only a constant because the
+    capacity-calibration loop needs to re-run the very queries that exhausted
+    it at a larger value and observe whether the verdict changes — that
+    re-run is the test of the `needs_more_capacity` classification itself.
+    """
     lo, hi = (a, b) if a <= b else (b, a)
-    if lo > MAX_MUL_STEPS:
+    if lo > max_steps:
         return {
             "verdict": "UNKNOWN_BUDGET",
             "value": None,
             "op": "mul",
             "steps": [],
-            "reason": f"repeat>{MAX_MUL_STEPS}",
+            "reason": f"repeat>{max_steps}",
         }
     acc = 0
     n_adds = 0
@@ -166,7 +172,7 @@ def _lex(expr: str) -> Optional[List[str]]:
     return toks
 
 
-def _eval_flat(tokens: List[str]) -> Dict[str, Any]:
+def _eval_flat(tokens: List[str], mul_steps: int = MAX_MUL_STEPS) -> Dict[str, Any]:
     """括弧なし列を評価: * を先に、+/- を左から (全演算 wire)."""
     if not tokens or len(tokens) % 2 == 0:
         return {"verdict": "UNKNOWN_UNPARSED", "value": None}
@@ -182,7 +188,7 @@ def _eval_flat(tokens: List[str]) -> Dict[str, Any]:
     i = 0
     while i < len(ops):
         if ops[i] == "*":
-            r = wire_mul(vals[i], vals[i + 1])
+            r = wire_mul(vals[i], vals[i + 1], max_steps=mul_steps)
             if r["verdict"] != VERDICT_OK:
                 return r
             vals[i:i + 2] = [r["value"]]
@@ -199,7 +205,7 @@ def _eval_flat(tokens: List[str]) -> Dict[str, Any]:
     return {"verdict": VERDICT_OK, "value": acc}
 
 
-def eval_expr(expr: str) -> Dict[str, Any]:
+def eval_expr(expr: str, mul_steps: int = MAX_MUL_STEPS) -> Dict[str, Any]:
     """Matryoshka 評価: 最内括弧 → 値 → 上の層へ、を収束まで."""
     tokens = _lex(expr)
     if tokens is None or not tokens:
@@ -220,7 +226,7 @@ def eval_expr(expr: str) -> Dict[str, Any]:
                         "layers": layers,
                     }
                 inner = tokens[open_i + 1:i]
-                r = _eval_flat(inner)
+                r = _eval_flat(inner, mul_steps=mul_steps)
                 if r["verdict"] != VERDICT_OK:
                     r["layers"] = layers
                     return r
@@ -237,7 +243,7 @@ def eval_expr(expr: str) -> Dict[str, Any]:
                 "value": None,
                 "layers": layers,
             }
-    r = _eval_flat(tokens)
+    r = _eval_flat(tokens, mul_steps=mul_steps)
     if r["verdict"] != VERDICT_OK:
         r["layers"] = layers
         return r
@@ -250,11 +256,32 @@ def eval_expr(expr: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def solve_equation(
-    equation: str, *, limit: int = 200
+    equation: str, *, limit: int = 200, mul_steps: int = MAX_MUL_STEPS
 ) -> Dict[str, Any]:
     """x を 1 つ含む等式を候補探索で解く (検査は wire 演算)。
 
-    一意 → ANSWER / 複数 → AMBIGUOUS / 皆無 → UNKNOWN_NO_SOLUTION。
+    一意 → ANSWER / 複数 → AMBIGUOUS。
+
+    解が見つからなかったときの verdict は 2 つに分かれる。以前はどちらも
+    UNKNOWN_NO_SOLUTION と言っていたが、それは過大主張だった: "x + 3 = 940"
+    の解 x=937 は実在し、探索範囲 0..200 の外にあっただけだ。「範囲内に
+    無かった」を「無い」と言う計算機の上では、その verdict から学ぶ分類器も
+    較正器も全部間違った結論を学ぶ。
+
+    区別は列挙が既に持っている情報から取れる。x はちょうど 1 回しか現れず
+    (上でガード済み)、演算は +,-,* のみで自然数上どれも各引数に単調、
+    単調写像の合成は単調 — つまり x_side は x について大域単調であることが
+    構造から保証される。全候補を評価済みなので向きは観測できる:
+
+      非減少で最終値が target を超えた → これ以上遠くに解はない
+                                          → UNKNOWN_NO_SOLUTION (確定)
+      非増加で最終値が target 未満     → 同上
+      全値が同一 (定数) で target 以外  → 同上
+      まだ target に向かっている途中    → UNKNOWN_BUDGET
+                                          "no_solution_in_0..limit"
+
+    途中の候補が wire 演算の overflow で評価不能だった場合は列が欠けるので、
+    確定は主張せず UNKNOWN_BUDGET に留まる。
     """
     if "=" not in (equation or ""):
         return {"verdict": "UNKNOWN_UNPARSED", "x": None, "solutions": []}
@@ -262,9 +289,8 @@ def solve_equation(
     if (lhs + rhs).count("x") != 1:
         return {"verdict": "UNKNOWN_UNPARSED", "x": None, "solutions": []}
 
-    rhs_val = eval_expr(rhs) if "x" not in rhs else None
     target_side, x_side = (rhs, lhs) if "x" in lhs else (lhs, rhs)
-    tgt = eval_expr(target_side)
+    tgt = eval_expr(target_side, mul_steps=mul_steps)
     if tgt["verdict"] != VERDICT_OK:
         return {
             "verdict": tgt["verdict"],
@@ -275,18 +301,42 @@ def solve_equation(
     target = tgt["value"]
 
     solutions: List[int] = []
+    values: List[int] = []
+    complete = True  # every candidate in range evaluated successfully
     for cand in range(0, limit + 1):
-        trial = eval_expr(x_side.replace("x", str(cand)))
-        if trial["verdict"] == VERDICT_OK and trial["value"] == target:
+        trial = eval_expr(x_side.replace("x", str(cand)), mul_steps=mul_steps)
+        if trial["verdict"] != VERDICT_OK:
+            complete = False
+            continue
+        values.append(trial["value"])
+        if trial["value"] == target:
             solutions.append(cand)
             if len(solutions) > 1:
                 break  # 複数確定 → AMBIGUOUS
     if not solutions:
+        certain = False
+        if complete and len(values) >= 2:
+            nondec = all(b >= a for a, b in zip(values, values[1:]))
+            noninc = all(b <= a for a, b in zip(values, values[1:]))
+            certain = (
+                (nondec and noninc)                      # 定数で target 以外
+                or (nondec and values[-1] > target)      # 通り過ぎた
+                or (noninc and values[-1] < target)
+            )
+        if certain:
+            return {
+                "verdict": "UNKNOWN_NO_SOLUTION",
+                "x": None,
+                "solutions": [],
+                "searched": limit,
+                "reason": "monotone_past_target",
+            }
         return {
-            "verdict": "UNKNOWN_NO_SOLUTION",
+            "verdict": "UNKNOWN_BUDGET",
             "x": None,
             "solutions": [],
             "searched": limit,
+            "reason": f"no_solution_in_0..{limit}",
         }
     if len(solutions) > 1:
         return {
@@ -302,18 +352,26 @@ def solve_equation(
 # 入口
 # ---------------------------------------------------------------------------
 
-def math_ask(query: str) -> Dict[str, Any]:
-    """"what is 2 + 3" / "(2+3)*4" / "x + 3 = 7" / "1+1=" を型付きで解く."""
+def math_ask(
+    query: str, *, solve_limit: int = 200, mul_steps: int = MAX_MUL_STEPS
+) -> Dict[str, Any]:
+    """"what is 2 + 3" / "(2+3)*4" / "x + 3 = 7" / "1+1=" を型付きで解く.
+
+    limits はキーワード引数。既定値はこれまでの定数と同一なので、引数を
+    渡さない既存呼び出しの挙動は変わらない。渡すのは 2 箇所だけ:
+    domains の登録ラッパ (設定値を反映) と capacity_calibration (拡大した
+    値で再実行して needs_more_capacity 分類そのものを検証する)。
+    """
     q = (query or "").strip().lower()
     q = re.sub(r"^(what\s+is|compute|solve)\s+", "", q).rstrip("?").strip()
     if "=" in q and "x" in q:
-        out = solve_equation(q)
+        out = solve_equation(q, limit=solve_limit, mul_steps=mul_steps)
         out["mode"] = "equation"
         return out
     # 電卓風の末尾 "=" ("1+1=", "1+1 = ") は式であって方程式ではない —
     # x が無ければ左辺だけを評価する (右辺が省略された calculator 記法)
     if q.endswith("="):
         q = q[:-1].strip()
-    out = eval_expr(q)
+    out = eval_expr(q, mul_steps=mul_steps)
     out["mode"] = "expression"
     return out

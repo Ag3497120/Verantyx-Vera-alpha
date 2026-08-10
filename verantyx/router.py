@@ -61,7 +61,20 @@ def _vera_answer(
                 return fallback
         out["route"] = "knowledge_ja"
         return out
-    out = consensus_over_store(store, query)
+    # The knowledge layer reads its tuning from config per call — same
+    # pattern and same justification as the math domain's limits: a few
+    # hundred bytes of JSON per query, in exchange for accepted changes
+    # taking effect without a restart and without a cached value someone
+    # must remember to invalidate.
+    from .config import VeraConfig
+    _cfg = VeraConfig.load()
+    from .consensus import ConsensusConfig as _CC
+    out = consensus_over_store(
+        store, query,
+        cfg=_CC(geometric_visibility=True) if _cfg.consensus_geometric else None,
+        matryoshka=_cfg.consensus_matryoshka,
+        carry=_cfg.consensus_carry if _cfg.consensus_carry in ("A", "B", "C") else "A",
+    )
     out["route"] = "knowledge"
     return out
 

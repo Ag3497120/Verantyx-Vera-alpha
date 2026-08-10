@@ -78,7 +78,19 @@ def register_builtins() -> None:
     from ..code_ingest import code_ask
     from ..kripke import kripke_ask
 
-    register(DomainModule("math", lambda _store, q: math_ask(q)))
+    def _math_with_config_limits(_store, q):
+        # Reads VeraConfig per call so an accepted capacity proposal takes
+        # effect without a restart. The file is a few hundred bytes of JSON;
+        # at interactive query rates that cost is noise, and the alternative
+        # — a cached value someone must remember to invalidate on accept —
+        # is exactly the kind of silent staleness this codebase keeps
+        # getting bitten by.
+        from ..config import VeraConfig
+        cfg = VeraConfig.load()
+        return math_ask(q, solve_limit=cfg.math_solve_limit,
+                        mul_steps=cfg.math_mul_steps)
+
+    register(DomainModule("math", _math_with_config_limits))
     register(DomainModule("code", code_ask))
     register(DomainModule("kripke", kripke_ask))
 

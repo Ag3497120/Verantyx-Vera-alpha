@@ -179,9 +179,23 @@ def cmd_heartbeat(args) -> int:
         else:
             drafted_out.append({"normalized": bucket.normalized, "ok": False, "verify_reports": report_dicts})
 
+    # Capacity pass — same helper the MCP heartbeat uses, so the CLI and
+    # server cannot drift apart in what a heartbeat means.
+    from .capacity_calibration import capacity_pass
+    from .capacity_ingest import CapacityQuarantine
+    from .config import VeraConfig
+
+    cqpath = store_path.with_name(store_path.stem + ".capacity_quarantine.json")
+    capacity_quarantine = CapacityQuarantine.load(cqpath)
+    capacity = capacity_pass(
+        list(growth.buckets.values()), VeraConfig.load(), capacity_quarantine)
+    if any(r.get("queued") for r in capacity):
+        capacity_quarantine.save(cqpath)
+
     growth.save(gpath)
     module_quarantine.save(mqpath)
-    _print({"drifted_cores": drifted, "growth_candidates": candidates, "drafted": drafted_out})
+    _print({"drifted_cores": drifted, "growth_candidates": candidates,
+            "drafted": drafted_out, "capacity": capacity})
     return 0
 
 
@@ -357,6 +371,8 @@ def cmd_code(args) -> int:
 
 def cmd_lab(args) -> int:
     from .consensus_forks import all_consensus_forks
+    from .cross_geometry_forks import all_cross_geometry_forks
+    from .structure_forks import all_structure_forks
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
     from .agent_forks import all_agent_forks
     from .ai_ingest_forks import all_ai_ingest_forks
@@ -369,6 +385,8 @@ def cmd_lab(args) -> int:
 
     experiments = (
         all_consensus_forks()
+        + all_cross_geometry_forks()
+        + all_structure_forks()
         + all_pour_forks()
         + all_math_sim_forks()
         + all_kripke_rewrite_forks()
@@ -379,9 +397,16 @@ def cmd_lab(args) -> int:
         + all_obfuscate_forks()
         + all_watermark_forks()
     )
-    forks = {e["fork"]: e["pass"] for e in experiments}
+    # A fork that could not run is reported by name and kept OUT of the pass
+    # count, never folded into it. Optional extras are the usual reason (a
+    # fork needing `cryptography` on an install without it); counting an
+    # unrun check as a pass would make the suite quietly weaker on exactly
+    # the installs where it is least verified.
+    skipped = {e["fork"]: e["skipped"] for e in experiments if e.get("skipped")}
+    forks = {e["fork"]: e["pass"] for e in experiments if not e.get("skipped")}
     all_pass = all(forks.values())
-    _print({"all_pass": all_pass, "n_forks": len(forks), "forks": forks})
+    _print({"all_pass": all_pass, "n_forks": len(forks),
+            "n_skipped": len(skipped), "skipped": skipped, "forks": forks})
     return 0 if all_pass else 1
 
 
@@ -389,6 +414,167 @@ def cmd_mcp(args) -> int:
     from .mcp_server import serve
 
     return serve(args.store)
+
+
+def cmd_field(args) -> int:
+    """The whole thing on one screen, for somebody with a phone ringing.
+
+    Separate from `vera audit` because the audience is: audit is for a person
+    checking whether the ENGINE is right; this is for a person trying to find
+    out whether the water is back on in their town.
+    """
+    from .field_app import serve
+
+    return serve(port=args.port, open_browser=not args.no_browser)
+
+
+def cmd_lexicon(args) -> int:
+    """The dictionary half of a local model: state-likeness and neighbours.
+
+    Never polarity — measured at 54.8%, a coin flip, and absent from the API.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .ja_grammar import ASPECT_OF
+    from .jgen_lexicon import open_configured
+
+    home = _Path.home() / ".verantyx-audit"
+    lex = open_configured(home)
+    if lex is None:
+        print(_json.dumps({
+            "verdict": "UNKNOWN_NO_LEXICON",
+            "how": f"write {home / 'lexicon.json'} with "
+                   '{"jgen": "...", "tokenizer": "..."} — build one with '
+                   "jgen_forge pull <model> --parts lexicon",
+        }, ensure_ascii=False, indent=2))
+        return 1
+    known = sorted(ASPECT_OF)
+    out = []
+    for w in args.words:
+        out.append({
+            "word": w,
+            "state_likeness": lex.state_likeness(w, known),
+            "nearest_known": lex.nearest(w, known, k=5),
+        })
+    print(_json.dumps({"verdict": "ANSWER", "words": out,
+                       "not_in_this_dictionary": "polarity — measured 54.8%"},
+                      ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_self_evolve(args) -> int:
+    """Read, prove, repair, measure, keep — with nothing outside the machine.
+
+    The acceptance is mechanical only where the answer key is internal: a
+    transform that cannot change what a document says, changing what the
+    engine reads out of it. Everything else is filed for a person.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .self_evolve import run
+
+    home = _Path.home() / ".verantyx-audit"
+    overlay = _Path(args.overlay) if args.overlay else home / "grammar.json"
+    out = run(list(args.paths), home=home, overlay=overlay, write=args.write)
+    print(_json.dumps({"verdict": "ANSWER", **out}, ensure_ascii=False,
+                      indent=2))
+    return 0
+
+
+def cmd_placement(args) -> int:
+    """Decide which facts occupy an arm's four faces — once, before shipping.
+
+    A build-time stage, not a query-time one: it computes the anticipated
+    answer distribution, bakes a placement into a copy of the store, and the
+    engine that reads it stays as deterministic as it was. Refuses to write
+    unless the placement is measured better on held-out questions.
+    """
+    from .placement import main as _placement_main
+
+    argv = [args.store, "--n-queries", str(args.n_queries),
+            "--demand", args.demand, "--weight", str(args.weight)]
+    if args.queries:
+        argv += ["--queries", args.queries]
+    if args.sweep:
+        argv += ["--sweep"]
+    if args.write:
+        argv += ["--write", args.write]
+    return _placement_main(argv)
+
+
+def cmd_sovereign(args) -> int:
+    """Documents in, one sovereign node out — every stage, in order.
+
+    ingest -> simulate placement -> plan the depth capacity requires ->
+    assemble routers -> federate -> descend real questions. Refuses to skip
+    a stage; a tree assembled without the placement simulation routes on
+    whichever four facts sorted first.
+    """
+    from .sovereign import main as _sovereign_main
+
+    argv: list = []
+    for d in args.domain:
+        argv += ["--domain", d]
+    for q in args.ask or []:
+        argv += ["--ask", q]
+    if args.questions:
+        argv += ["--questions", args.questions]
+    argv += ["--n-queries", str(args.n_queries), "--name", args.name]
+    if args.out:
+        argv += ["--out", args.out]
+    return _sovereign_main(argv)
+
+
+def cmd_self_audit(args) -> int:
+    """Signals a defect leaves in the store, without anybody reading output.
+
+    This is the end of the loop that still needed a person. It does NOT mark
+    anything wrong — a suspected gap is a place to look, never a verdict, and
+    it never reaches rule synthesis on its own.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .arm_schema import ArmIndex
+    from .catalog import collect as _collect
+    from .cross_store import CrossStore
+    from .document_ingest import ingest_documents
+    from .document_loaders import load_paths
+    from .self_audit import scan, summary, to_gaps
+
+    docs = load_paths(_collect(list(args.paths))["files"])["documents"]
+    if not docs:
+        print(_json.dumps({"verdict": "UNKNOWN_NO_DOCUMENTS"},
+                          ensure_ascii=False))
+        return 1
+    store, arms = CrossStore(track_provenance=True), ArmIndex()
+    ingest_documents(store, docs, arms)
+    found = scan(store, arms)
+
+    out = {"verdict": "ANSWER", "documents": len(docs), **summary(found),
+           "signals": [s.as_dict() for s in found]}
+    if args.file_gaps:
+        from .gap_graph import GapGraph, gap_graph_path
+
+        home = _Path.home() / ".verantyx-audit"
+        home.mkdir(parents=True, exist_ok=True)
+        path = gap_graph_path(home / "audit.json")
+        graph = GapGraph.load(path)
+        out["filed"] = to_gaps(graph, found)
+        graph.save(path)
+    print(_json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_audit(args) -> int:
+    """A local page for auditing documents — the tool that lets somebody
+    other than the author of the fixes read the output. Binds to 127.0.0.1
+    only: the documents may be unpublished drafts."""
+    from .audit_app import serve as serve_audit
+
+    return serve_audit(port=args.port, open_browser=not args.no_open)
 
 
 def cmd_serve(args) -> int:
@@ -647,6 +833,78 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("mcp", help="start MCP server (stdio)")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser(
+        "field",
+        help="the full local app for a municipal desk (127.0.0.1, no network)")
+    p.add_argument("--port", type=int, default=8900)
+    p.add_argument("--no-browser", action="store_true")
+    p.set_defaults(fn=cmd_field)
+
+    p = sub.add_parser(
+        "lexicon",
+        help="ask the configured static dictionary about a word")
+    p.add_argument("words", nargs="+")
+    p.set_defaults(fn=cmd_lexicon)
+
+    p = sub.add_parser(
+        "self-evolve",
+        help="prove defects from the documents themselves, repair, and keep")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--write", action="store_true",
+                   help="write an accepted repair to the overlay")
+    p.add_argument("--overlay", default=None,
+                   help="default ~/.verantyx-audit/grammar.json")
+    p.set_defaults(fn=cmd_self_evolve)
+
+    p = sub.add_parser(
+        "placement",
+        help="simulate which facts go on the faces, before shipping a store")
+    p.add_argument("store")
+    p.add_argument("--queries",
+                   help="one anticipated question per line; strongly "
+                        "preferred over the synthetic stand-in")
+    p.add_argument("--n-queries", type=int, default=120)
+    p.add_argument("--demand", choices=("zipf", "uniform"), default="zipf",
+                   help="how synthetic questions pick a facet; zipf models "
+                        "concentrated stable demand, uniform models none")
+    p.add_argument("--weight", type=float, default=0.0,
+                   help="discrimination weight; measured as unhelpful at "
+                        "one arm per query, see verantyx/placement.py")
+    p.add_argument("--sweep", action="store_true",
+                   help="measure the weight instead of using it")
+    p.add_argument("--write", metavar="OUT",
+                   help="bake the placement into a copy of the store")
+    p.set_defaults(fn=cmd_placement)
+
+    p = sub.add_parser(
+        "sovereign",
+        help="build one federated node from documents, stage by stage")
+    p.add_argument("--domain", action="append", metavar="NAME=PATH", required=True,
+                   help="a field and the folder its documents live in")
+    p.add_argument("--ask", action="append", default=[],
+                   help="a question to descend after the build")
+    p.add_argument("--questions", help="a file of questions, one per line")
+    p.add_argument("--n-queries", type=int, default=200)
+    p.add_argument("--name", default="主権")
+    p.add_argument("--out", help="write the build record as JSON")
+    p.set_defaults(fn=cmd_sovereign)
+
+    p = sub.add_parser(
+        "self-audit",
+        help="find structural signals of defects, with no person reading")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--file-gaps", action="store_true",
+                   help="record what it finds in the local gap graph")
+    p.set_defaults(fn=cmd_self_audit)
+
+    p = sub.add_parser(
+        "audit",
+        help="drop documents in a browser and read what the engine did")
+    p.add_argument("--port", type=int, default=8899)
+    p.add_argument("--no-open", action="store_true",
+                   help="do not launch a browser")
+    p.set_defaults(fn=cmd_audit)
 
     p = sub.add_parser(
         "serve",

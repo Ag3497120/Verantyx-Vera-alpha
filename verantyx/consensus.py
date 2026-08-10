@@ -66,6 +66,22 @@ class ConsensusConfig:
     max_moves: int = 64
     allow_escape: bool = True    # one-shot: unlock all + widen to full view
     tie_delta: float = 0.0       # energy gap treated as a tie (ambiguity)
+    # E1 — the visibility question only the designer's data can settle.
+    #
+    # False (default): the original ring. AXES is treated as a cycle, so a
+    # section's window contains its own OPPOSITE pole (+x sees -x at
+    # window=1). Under the both-poles-express-nuance reading this is a
+    # feature: a section perceives a claim and its counter-side together.
+    #
+    # True: the actual solid geometry. A section sees its own axis plus
+    # PERPENDICULAR neighbours only; the opposite pole is invisible from
+    # where you stand, and the only ways to ever face it are rotation or
+    # the one-shot escape — turning "consider the counter-evidence" into an
+    # explicit, logged move.
+    #
+    # Same visible-arc size in both modes (2*window+1), so an A/B compares
+    # topology, not window area.
+    geometric_visibility: bool = False
 
 
 @dataclass
@@ -118,10 +134,22 @@ def axis_energy(
     return e
 
 
+def _perpendicular(axis: str) -> List[str]:
+    """The four axes orthogonal to `axis`, in AXES order. The opposite pole
+    (same letter, other sign) is exactly what this excludes."""
+    return [a for a in AXES if a[1] != axis[1]]
+
+
 def visible_axes(state: SearchState, section: int, cfg: ConsensusConfig) -> List[str]:
     if state.widened:
         return list(AXES)
     idx = section + state.rotation
+    if cfg.geometric_visibility:
+        home = AXES[idx % N_SECTIONS]
+        # Own axis + the first 2*window perpendicular neighbours. Rotation
+        # still changes which axis is "home", so the epistemic move survives;
+        # what can never appear here is home's opposite pole.
+        return [home] + _perpendicular(home)[: 2 * cfg.window]
     out: List[str] = []
     for off in range(-cfg.window, cfg.window + 1):
         a = AXES[(idx + off) % N_SECTIONS]

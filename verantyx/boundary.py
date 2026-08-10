@@ -16,11 +16,46 @@ from typing import Literal
 from .en_decompose import decompose
 from .growth_signals import UnknownBucket
 
-Classification = Literal["reject_open_domain", "needs_more_facts", "growth_candidate"]
+Classification = Literal[
+    "reject_open_domain", "needs_more_facts", "growth_candidate",
+    "needs_more_capacity",
+]
 
 MIN_RECURRENCE = 5
 _SYMBOL_DENSITY_RE = re.compile(r"[0-9+\-*/=<>()^%]")
-_OPEN_DOMAIN_ROLE_LIMIT = 4  # distinct content-word roles = too open-ended for a closed module
+
+# Verdicts meaning "the right procedure ran and hit a limit", as opposed to
+# "no procedure exists" or "facts are missing". They used to fall through to
+# the needs_more_facts default, which is the worst available answer: the
+# facts are already there, and a human told to add more would find nothing to
+# add. The remedy is the same shape for both — raise a number, re-run, check
+# it now answers — which is what makes them one class rather than two.
+#
+# UNKNOWN_LOCAL_MINIMUM is deliberately NOT here. Its remedy is a different
+# knob (ConsensusConfig.allow_escape) and no case in boundary_eval pins down
+# what the right classification for it is, so guessing would put an unverified
+# label into the loop that learns from these labels.
+_CAPACITY_VERDICTS = frozenset({"UNKNOWN_BUDGET", "UNKNOWN_OVERFLOW"})
+
+# Distinct content tokens, not distinct part-of-speech tags.
+#
+# The original signal was `len(set(rec.roles))`, which counts grammatical
+# categories. That set has ten members in total and only four content ones,
+# so it saturates almost immediately: a seventeen-word question about housing
+# in cold climates scores 4, exactly the same as "is the staging certificate
+# current". The reject branch required *more* than 4, so it was close to
+# unreachable, and every query without symbols fell through to the
+# growth_candidate default — the permanent architectural boundary was, in
+# practice, the path of least resistance into module drafting.
+#
+# Content-token breadth measures topical spread instead, and it does not
+# saturate. Measured on the boundary_eval cases: formal and narrow queries
+# land at 2-3, open-domain questions at 8-13. The thresholds sit inside that
+# empty band with margin on both sides. Still a starting point to be retuned
+# from real growth_signals.json data, but a starting point on a signal that
+# can separate the classes at all.
+_NARROW_CONTENT_MAX = 4
+_OPEN_CONTENT_MIN = 7
 
 # Structural sub-labels for reject_open_domain — logging/routing only, NEVER
 # a growth_candidate path. Extending the module-generation loop to "learn"
@@ -95,6 +130,14 @@ def classify(bucket: UnknownBucket, min_recurrence: int = MIN_RECURRENCE) -> Bou
 
     dominant = bucket.dominant_verdict()
 
+    # A limit was hit, not a gap in knowledge. Checked before everything
+    # below because the query shape is irrelevant here: a 7-digit addition is
+    # as narrow and symbol-dense as a 6-digit one, so the shape heuristics
+    # would happily call it a growth_candidate and draft a module duplicating
+    # arithmetic that already works.
+    if dominant in _CAPACITY_VERDICTS:
+        return BoundaryVerdict("needs_more_capacity", f"limit_reached:{dominant}")
+
     # Repeated "found the right shell, not enough facts" is a memory gap,
     # not a missing domain — telling a human to add facts is the honest fix.
     if dominant == "UNKNOWN_INSUFFICIENT_EVIDENCE":
@@ -118,23 +161,30 @@ def classify(bucket: UnknownBucket, min_recurrence: int = MIN_RECURRENCE) -> Bou
     example = bucket.examples[0] if bucket.examples else bucket.normalized
     density = _symbol_density(example)
     rec = decompose(example)
-    distinct_roles = len(set(rec.roles)) if rec.roles else 0
+    breadth = len(set(rec.content_tokens)) if rec.content_tokens else 0
 
     # High symbol density (numbers/operators) with a tight query shape looks
     # like a closed formal domain (cf. math_sim.py's own regex-first style).
-    if density >= 0.15 and distinct_roles <= _OPEN_DOMAIN_ROLE_LIMIT:
+    if density >= 0.15 and breadth <= _NARROW_CONTENT_MAX:
         return BoundaryVerdict("growth_candidate", "high_symbol_density_narrow_shape")
 
-    # Broad, role-diverse natural-language questions are open-domain by
-    # nature — no fixed-form module can close them; route to the LLM
-    # permanently rather than re-proposing the same rejection every heartbeat.
-    if distinct_roles > _OPEN_DOMAIN_ROLE_LIMIT:
+    # Broad natural-language questions are open-domain by nature — no
+    # fixed-form module can close them; route to the LLM permanently rather
+    # than re-proposing the same rejection every heartbeat.
+    if breadth >= _OPEN_CONTENT_MIN:
         return BoundaryVerdict(
-            "reject_open_domain", "role_diversity_too_broad",
+            "reject_open_domain", f"content_breadth_too_broad:{breadth}",
             subcategory="general_open_domain",
         )
 
-    # Narrow shape but no symbol density (e.g. repeated short imperative
-    # queries) — plausible but weak signal; still worth a candidate since
-    # it's cheap and gated by human approval either way (M7).
-    return BoundaryVerdict("growth_candidate", "narrow_shape_low_density_default")
+    # Narrow shape without symbol density: a weak positive, but a positive.
+    if breadth <= _NARROW_CONTENT_MAX:
+        return BoundaryVerdict("growth_candidate", "narrow_shape_low_density")
+
+    # Between the two thresholds nothing is claimed. The previous version
+    # defaulted to growth_candidate here on the grounds that drafting is cheap
+    # and human approval gates it anyway. That reasoning inverts what the
+    # approval queue is for: it is the last line of defence, not a reason to
+    # aim noise at it, and a queue that fills with things a human must reject
+    # is a queue a human stops reading carefully. Undecided means undecided.
+    return BoundaryVerdict("needs_more_facts", f"content_breadth_undecided:{breadth}")

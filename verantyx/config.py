@@ -44,6 +44,23 @@ class VeraConfig:
     gap_max_depth: int = 1
     gap_max_new_nodes_per_run: int = 20
     gap_max_tool_calls_per_run: int = 20
+    # Runtime capacity limits for the math domain. These exist as config
+    # rather than only as math_sim constants because the capacity loop
+    # (needs_more_capacity -> calibrate -> quarantine -> human accept)
+    # needs somewhere durable to apply an accepted proposal. N_ARMS is
+    # deliberately NOT here: six is the length of AXES, the geometry of
+    # the cross itself, and everything else depends on it.
+    math_solve_limit: int = 200
+    math_mul_steps: int = 500
+    # Consensus tuning, measured before being exposed (consensus_ab_eval).
+    # Defaults reproduce historical behaviour exactly. What the measurement
+    # showed on the synthetic corpus: matryoshka carry A matches flat
+    # accuracy; B/C answer less and surface AMBIGUOUS instead — a
+    # conservatism trade, not an upgrade. Geometry showed no effect there
+    # (the corpus holds no opposed facts to make the pole matter).
+    consensus_matryoshka: bool = False
+    consensus_carry: str = "A"
+    consensus_geometric: bool = False
 
     def save(self, path: Path = CONFIG_PATH) -> None:
         path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False))
@@ -64,6 +81,11 @@ class VeraConfig:
             gap_max_depth=d.get("gap_max_depth", 1),
             gap_max_new_nodes_per_run=d.get("gap_max_new_nodes_per_run", 20),
             gap_max_tool_calls_per_run=d.get("gap_max_tool_calls_per_run", 20),
+            math_solve_limit=d.get("math_solve_limit", 200),
+            math_mul_steps=d.get("math_mul_steps", 500),
+            consensus_matryoshka=d.get("consensus_matryoshka", False),
+            consensus_carry=d.get("consensus_carry", "A"),
+            consensus_geometric=d.get("consensus_geometric", False),
         )
 
 
