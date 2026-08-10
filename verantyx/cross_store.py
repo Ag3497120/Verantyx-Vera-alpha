@@ -164,12 +164,20 @@ class CrossStore:
         return out
 
     def ingest_sentence(self, text: str) -> Optional[str]:
-        unit = classify_sentence(text)
+        # Read structure from the CLAIM, keep the citation in provenance.
+        # `ingest_documents` appends "(reported by <label>)", and the English
+        # decomposer's word pattern happily split that label into facets —
+        # `source_labels` only ever held the label WHOLE, so the skip that
+        # protects a face never matched its pieces.
+        from .lang import strip_attribution
+
+        claim = strip_attribution(text) or text
+        unit = classify_sentence(claim)
         if unit.core is None or is_junk_core(unit.core):
             return None
-        runs = proper_runs(text)
+        runs = proper_runs(claim)
         key, run_rest = sense_key(
-            unit.core, text, runs, proper_lexicon=self.proper_lexicon
+            unit.core, claim, runs, proper_lexicon=self.proper_lexicon
         )
         drop = set(run_rest)
         # 他の proper run に属する facts はその複合語に合流させる
