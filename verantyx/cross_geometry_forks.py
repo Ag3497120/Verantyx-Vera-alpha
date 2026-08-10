@@ -2120,6 +2120,67 @@ def not_knowing_is_not_disagreeing_fork() -> Dict[str, Any]:
     }
 
 
+def a_covenant_binds_the_exchange_not_the_wording_fork() -> Dict[str, Any]:
+    """Catch a forgotten instruction without crying on every turn.
+
+    The failure worth catching in a long session is silent: an instruction
+    from an early turn slides out of the window and nothing anywhere says
+    so. A scoped string test catches it, and the scope is where it goes
+    wrong in both directions.
+
+    Measured against a local 4B model with the instructions deliberately
+    withheld: a rule about the implementation language did NOT fire on the
+    reply 「Python。」 — one word, plainly on topic, naming no scope term.
+    Scoping on the EXCHANGE rather than the reply's wording fixed exactly
+    that, and it is the right reading anyway: a covenant binds what was
+    asked and answered. With it, both in-scope replies were caught, the
+    out-of-scope one was not, and five compliant replies raised nothing.
+
+    The finding is a PROPOSAL carrying the user's own sentence. It is never
+    a verdict on the reply — the rule may have been superseded one turn ago
+    and this layer sees text, not intent.
+    """
+    from .covenant import Covenant, Register
+
+    quote = "このプロジェクトではTypeScriptを使います。JavaScriptは使いません。"
+    reg = Register()
+    reg.add(Covenant(name="TypeScriptを使う", requires=["TypeScript"],
+                     forbids=["JavaScript"],
+                     topic=["言語", "実装", "コード", "TypeScript", "JavaScript"],
+                     said_at_turn=0, quote=quote))
+
+    asked = "このプロジェクトの実装言語は何ですか。"
+    terse = reg.check("Python。", asked=asked)          # on topic, no scope term
+    blind = reg.check("Python。")                        # no exchange given
+    kept = reg.check("実装言語はTypeScriptです。")
+    forbidden = reg.check("実装言語はJavaScriptです。")
+    off = reg.check("テストはJestで書きます。", asked="テストはどう書きますか。")
+
+    ok = (terse["verdict"] == "BROKEN"
+          # without the question, the same reply is out of scope — which is
+          # why `asked` exists and why the fork pins both readings
+          and blind["verdict"] == "KEPT"
+          and terse["violations"][0]["required_missing"] == ["TypeScript"]
+          and terse["violations"][0]["inject"] == quote
+          and kept["verdict"] == "KEPT"
+          and forbidden["verdict"] == "BROKEN"
+          and forbidden["violations"][0]["forbidden_used"] == ["JavaScript"]
+          and off["verdict"] == "KEPT")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_COVENANT_BINDS_THE_EXCHANGE_NOT_THE_WORDING",
+        "pass": bool(ok),
+        "result": {
+            "terse_reply_with_question": terse["verdict"],
+            "terse_reply_without_question": blind["verdict"],
+            "compliant": kept["verdict"],
+            "forbidden_term": forbidden["verdict"],
+            "out_of_scope": off["verdict"],
+            "inject_is_verbatim": terse["violations"][0]["inject"] == quote,
+        },
+    }
+
+
 def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     """A store with no baked placement must answer exactly as it always did.
 
@@ -2198,6 +2259,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         presence_in_the_corpus_is_not_support_fork(),
         a_wholesale_replacement_is_not_no_change_fork(),
         not_knowing_is_not_disagreeing_fork(),
+        a_covenant_binds_the_exchange_not_the_wording_fork(),
         placement_is_backward_compatible_fork(),
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),

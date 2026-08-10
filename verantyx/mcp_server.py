@@ -319,6 +319,74 @@ def serve(store_path: str) -> int:
         """Store statistics (cores, facet links, sentences ingested)."""
         return json.dumps(store.report(), ensure_ascii=False)
 
+    from .covenant import Covenant as _Covenant, Register as _Register, collapse as _collapse
+    _cov_path = path.with_name(path.stem + ".covenants.json")
+    _register = _Register.load(_cov_path)
+
+    @mcp.tool()
+    def set_covenant(name: str, requires: str = "", forbids: str = "",
+                     topic: str = "", quote: str = "", turn: int = -1) -> str:
+        """Register something the user settled, so a later reply can be
+        checked against it. Comma-separated lists.
+
+        `topic` scopes it — the terms that put a reply in range. Leave it
+        empty only for a rule that really is always on: a covenant with no
+        scope fires on replies that were never about it, and a guard that
+        cries every turn gets switched off.
+
+        `quote` is what gets proposed for re-injection, so put the user's
+        own sentence there rather than a paraphrase of it."""
+        c = _Covenant(
+            name=name,
+            requires=[x.strip() for x in requires.split(",") if x.strip()],
+            forbids=[x.strip() for x in forbids.split(",") if x.strip()],
+            topic=[x.strip() for x in topic.split(",") if x.strip()],
+            said_at_turn=turn, quote=quote or name)
+        _register.add(c)
+        _register.save(_cov_path)
+        return json.dumps({"verdict": "ANSWER", "covenant": c.as_dict(),
+                           "in_force": len(_register.covenants)},
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def list_covenants() -> str:
+        """Every covenant in force, with the turn it came from."""
+        return json.dumps([c.as_dict() for c in _register.covenants],
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def check_reply(reply: str, asked: str = "") -> str:
+        """Does this reply still honour what the user settled?
+
+        Pass `asked` — the question that prompted the reply — because scope
+        is the EXCHANGE, not the reply's wording. A rule about the
+        implementation language did not fire on the reply 「Python。」 until
+        the question was checked too: one word, on topic, naming no scope
+        term.
+
+        Returns KEPT or BROKEN with, per violation, the missing requirement,
+        the forbidden term used, and the exact sentence to re-inject. It is
+        a PROPOSAL: the user may have changed the rule one turn ago and this
+        cannot see intent, only text."""
+        return json.dumps(_register.check(reply, asked=asked), ensure_ascii=False)
+
+    @mcp.tool()
+    def check_context_drift(reply: str) -> str:
+        """Is the reply about something this conversation already settled,
+        while using none of what was settled?
+
+        The linkage test `attest_claim` uses, with the CONVERSATION as the
+        corpus. Catches the quiet failure a sliding window produces: the
+        model reverts to generic knowledge about a subject the user already
+        pinned down, and nothing anywhere says so. Every layer is consulted,
+        frozen ones included — that is why overflow freezes instead of
+        dropping.
+
+        Returns the turns to re-inject VERBATIM. Rebuilding a sentence from
+        the store's facets produced 「プロジェクト: 使い」; the ingest keeps
+        what a fact is about, not how it was put."""
+        return json.dumps(_collapse(_conversation, reply), ensure_ascii=False)
+
     @mcp.tool()
     def attest_claim(subject: str, text: str) -> str:
         """Judge whether THIS store supports what a claim says about a
