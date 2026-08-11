@@ -1487,6 +1487,7 @@ print(v.ask('正当防衛とは'))"</pre>
        + '<div class="rhead"><span class="qq">'+esc(r.q)+'</span>'
        + '<span class="vd">'+esc(r.verdict)+'</span>'
        + (r.witness && r.witness.answered ? '<span class="vd" style="background:var(--held-bg);color:var(--held)">独立合議 '+r.witness.agree+'/'+r.witness.answered+'</span>' : '')
+       + (r.grain && r.grain.of ? '<span class="vd" style="background:var(--final-bg);color:var(--final)">粒度一致 '+r.grain.agree+'/'+r.grain.of+'</span>' : '')
        + '<span class="meta">'+esc(r.lang)+' · '+r.ms+' ms</span></div>';
      if (r.path && r.path.length){
        // 証拠が順位を持たない核では、矢印は嘘になる。集合として見せる。
@@ -1537,6 +1538,11 @@ print(v.ask('正当防衛とは'))"</pre>
 
  function say(s){ bootMsg.textContent = s; }
 
+ async function gunzip(buf){
+   const ds = new DecompressionStream("gzip");
+   const out = new Response(new Blob([buf]).stream().pipeThrough(ds));
+   return new Uint8Array(await out.arrayBuffer());
+ }
  async function fetchBytes(url, label, done){
    var res = await fetch(url);
    if (!res.ok) throw new Error(label + " " + res.status);
@@ -1573,10 +1579,14 @@ print(v.ask('正当防衛とは'))"</pre>
 
      var zip = await fetchBytes("verantyx.zip", "エンジン");
      PY.unpackArchive(zip.buffer, "zip");
-     var db = await fetchBytes("vera_web.db", "構造");
+     var db = await gunzip(await fetchBytes("vera_web.db.gz", "構造"));
      PY.FS.writeFile("vera_web.db", db);
      try {
-       var wr = await fetchBytes("writer.json", "文生成");
+       PY.FS.writeFile("vera_edges.db",
+         await gunzip(await fetchBytes("vera_edges.db.gz", "辺")));
+     } catch(e){ /* 辺が無ければ同点核は沈黙のまま — 嘘にはならない */ }
+     try {
+       var wr = await gunzip(await fetchBytes("writer.json.gz", "文生成"));
        PY.FS.writeFile("writer.json", wr);
      } catch(e){ /* 文は出ないが判定は出る。落とすほどではない */ }
 
@@ -1600,6 +1610,7 @@ print(v.ask('正当防衛とは'))"</pre>
        "                     for s in (w.get('sentences') or [])[:2] ],",
        "      'register': rem.get('register'), 'closes': rem.get('needs_registration'),",
        "      'order': r.get('order_evidence'),",
+       "      'grain': r.get('grain'),",
        "      'subject': r.get('subject'), 'nearest': r.get('nearest_held'),",
        "      'witness': ({'agree': (r.get('witnesses') or {}).get('agree'),",
        "                   'answered': (r.get('witnesses') or {}).get('answered')}",

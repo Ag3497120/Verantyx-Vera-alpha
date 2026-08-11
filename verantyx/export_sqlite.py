@@ -289,27 +289,62 @@ def export_web(root: Path, out: Path, *, cap: int = CROSS_CAPACITY) -> Dict[str,
     if stores is None:
         raise SystemExit("build/vera.db first: python3 -m verantyx.export_sqlite")
 
+    # One leaf per SELECTION RULE, not per language. The first version
+    # wrote a single ja-merged leaf, which quietly erased the domain
+    # column — and with it the witnesses: the browser build answered with
+    # 独立合議 1/1 on subjects the full store attests 3/3, because the
+    # partition the witnesses are built from no longer existed in the
+    # file. The cap still applies to the MERGED cross (the shown faces
+    # must match), and each kept facet is written back per domain with
+    # its domain-local count, so the summing load reassembles the same
+    # totals AND the same witnesses.
+    from .vera import load as _pickle_load  # noqa: F401  (doc anchor)
+
+    per_domain: Dict[str, Dict[str, Any]] = {}
+    if (root / "build" / "federation.pkl").exists():
+        doms = pickle.loads((root / "build" / "federation.pkl").read_bytes())
+        for d in doms:
+            agg: Dict[str, Dict[str, int]] = {}
+            for st0 in doms[d].values():
+                for c, cr in st0.crosses.items():
+                    dst = agg.setdefault(c, {})
+                    for f, n in cr.items():
+                        dst[f] = dst.get(f, 0) + n
+            per_domain[d] = agg
+
     con = sqlite3.connect(str(out))
     con.executescript(SCHEMA)
     n_f = 0
     with con:
-        for i, (lang, s) in enumerate(sorted(stores.items())):
-            con.execute("INSERT INTO leaves VALUES (?,?,?,?,?)",
-                        (i, lang, lang, f"{lang}-merged", 0))
-            con.executemany(
-                "INSERT INTO cores VALUES (?,?,?)",
-                ((i, c, int(s.core_count.get(c, 0))) for c in s.crosses))
-            rows = [(i, c, f, int(n))
-                    for c, cross in s.crosses.items()
-                    for f, n in sorted(cross.items(),
-                                       key=lambda kv: -kv[1])[:cap]]
-            con.executemany("INSERT INTO facets VALUES (?,?,?,?)", rows)
-            n_f += len(rows)
+        leaf_id = 0
+        for lang, s in sorted(stores.items()):
+            kept = {c: set(sorted(cross, key=lambda f: (-cross[f], f))[:cap])
+                    for c, cross in s.crosses.items()}
+            groups = (sorted(per_domain) if (lang == "ja" and per_domain)
+                      else [f"{lang}-merged"])
+            for d in groups:
+                agg = per_domain.get(d, s.crosses)
+                con.execute("INSERT INTO leaves VALUES (?,?,?,?,?)",
+                            (leaf_id, lang, d if lang == "ja" else lang,
+                             d, 0))
+                rows = [(leaf_id, c, f, int(n))
+                        for c, cross in agg.items()
+                        for f, n in cross.items()
+                        if f in kept.get(c, ())]
+                con.executemany("INSERT INTO facets VALUES (?,?,?,?)", rows)
+                n_f += len(rows)
+                con.executemany(
+                    "INSERT INTO cores VALUES (?,?,?)",
+                    ((leaf_id, c, 0) for c in agg))
+                leaf_id += 1
+            # Labels and caps ride on the first leaf of the language —
+            # load() unions labels per language and caps are global.
+            first = leaf_id - len(groups)
             con.executemany("INSERT INTO labels VALUES (?,?)",
-                            ((i, l) for l in sorted(s.source_labels)))
+                            ((first, l) for l in sorted(s.source_labels)))
             con.executemany(
                 "INSERT INTO caps VALUES (?,?,?,?)",
-                ((i, w, int(v[0]), int(v[1]))
+                ((first, w, int(v[0]), int(v[1]))
                  for w, v in (getattr(s, "cap_stats", {}) or {}).items()
                  if isinstance(v, (list, tuple)) and len(v) >= 2))
     con.executescript(INDEXES)

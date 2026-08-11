@@ -133,6 +133,7 @@ def run_query(query: str) -> Dict[str, Any]:
                        "answered": wt.get("answered")} if wt else None),
           "origin": origin,
           "order": full.get("order_evidence"),
+          "grain": full.get("grain"),
           "subject": full.get("subject"),
           "nearest": full.get("nearest_held")})
     # The structure evolves under the reader. A refused subject is fetched

@@ -142,6 +142,17 @@ class Vera:
                     landed.append(r)
             if landed:
                 out["reached"] = landed
+        # Grain agreement, beside the data-varied witnesses and never pooled
+        # with them: cut-varied readings agreeing is STRUCTURE, data-varied
+        # is EVIDENCE (measured: pooling the two let out-of-corpus terms
+        # reach quorum, 0 -> 8). Both are worth showing; they answer
+        # different questions, so they ride under different names. The
+        # number was always computed — the staircase's rungs vote every
+        # ask — and simply never surfaced, which is why a viewer watching
+        # the rungs saw only the abstainers and read failure into a 2/6.
+        if graded.get("agreeing") is not None:
+            out["grain"] = {"agree": graded.get("agreeing"),
+                            "of": len(self.judges[lang].settings)}
         if out.get("core_key") and lang == "ja" and self.witnesses:
             out["witnesses"] = self.attest(out)
         if out.get("core_key") and out.get("text") and self.origin is not None:
