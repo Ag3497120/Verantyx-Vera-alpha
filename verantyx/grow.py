@@ -115,8 +115,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     manifest = Path("corpora") / f"wikipedia_ja_queue_{stamp}.json"
     got = fetch_titles(
         subjects, root / "wikipedia_named", manifest,
-        rule=("subjects refused as UNKNOWN_NOT_PRESENT, drawn from the "
-              "operational queue %s; nothing curated" % a.queue),
+        rule=("subjects from the operational queue %s — refusals "
+              "(UNKNOWN_NOT_PRESENT) and peer gaps (held by >=2 sibling "
+              "witnesses, absent in the rule-free one); nothing curated"
+              % a.queue),
         label="ja.wikipedia 拒否キュー由来 %s" % stamp)
 
     # Rebuild through the same front doors everything else uses.
@@ -124,7 +126,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     from .export_sqlite import main as export_main
 
     build_main(["--root", str(root), "--rebuild"])
-    code = export_main(["--root", str(root), "--verify"])
+    # Force a fresh export: with --verify alone and an existing vera.db the
+    # exporter SKIPS re-exporting and verifies new pickles against the old
+    # file — the first real loop run came back DRIFTED on exactly that,
+    # 6,090 labels in the rebuilt federation against 6,070 in the stale
+    # artifact. The edges sidecar is rebuilt too: new documents mean new
+    # provenance, and stale edges would licence yesterday's pairs only.
+    (root / "build" / "vera.db").unlink(missing_ok=True)
+    code = export_main(["--root", str(root), "--verify",
+                        "--edges", str(root / "build" / "vera_edges.db")])
     print(json.dumps({"verdict": "ANSWER" if code == 0 else "DRIFTED",
                       "fetched": got["articles"], "missing": got["missing"],
                       "manifest": str(manifest)}, ensure_ascii=False, indent=1))
