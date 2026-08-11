@@ -130,11 +130,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     from .export_sqlite import load, witnesses as load_witnesses
 
+    Path(a.queue).touch()
     if a.demand:
         import urllib.request
         try:
-            with urllib.request.urlopen(
-                    "https://verantyx.ai/api/vera/demand", timeout=30) as r:
+            req = urllib.request.Request(
+                "https://verantyx.ai/api/vera/demand",
+                headers={"User-Agent": "verantyx-vera grow"})
+            with urllib.request.urlopen(req, timeout=30) as r:
                 d = json.loads(r.read().decode())
             rows = d.get("demand") or []
             with open(a.queue, "a", encoding="utf-8") as f:
