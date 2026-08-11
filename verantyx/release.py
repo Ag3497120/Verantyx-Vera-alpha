@@ -103,8 +103,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         out = vdir / f"{vid}.{name}.gz"
         _gz(src, out)
         files[name] = f"versions/{out.name}"
+    # Credit: everyone whose queued suggestion this release consumed. The
+    # names ride the version entry and the boot line — a contribution that
+    # becomes a permanent, named part of the structure is the reward this
+    # geometry can uniquely offer.
+    contributors: List[str] = []
+    try:
+        for line in Path(queue).read_text(encoding="utf-8").splitlines():
+            try:
+                by = json.loads(line).get("by")
+            except Exception:
+                continue
+            if by and by not in contributors:
+                contributors.append(by)
+    except Exception:
+        pass
     entry = {"id": vid, "gen": a.gen, "date": date, **files,
-             "notes": a.notes, "cores": web.get("facets") and None}
+             "notes": a.notes, "contributors": contributors,
+             "cores": web.get("facets") and None}
     from .export_sqlite import load as _load
     entry["cores"] = len(_load(root / "build" / "vera.db")["ja"].crosses)
     index.append(entry)
