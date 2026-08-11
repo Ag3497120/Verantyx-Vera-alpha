@@ -12,7 +12,7 @@
    "q": "正当防衛とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 68.9,
+   "ms": 77.0,
    "core": "正当防衛",
    "path": [
     "正当防衛",
@@ -45,7 +45,7 @@
    "q": "殺人罪の刑は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 55.9,
+   "ms": 56.7,
    "core": "殺人罪",
    "path": [
     "殺人罪",
@@ -78,7 +78,7 @@
    "q": "契約の成立要件は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 70.0,
+   "ms": 71.9,
    "core": "契約",
    "path": [
     "契約",
@@ -111,7 +111,7 @@
    "q": "時効とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 80.2,
+   "ms": 81.5,
    "core": "時効",
    "path": [
     "時効",
@@ -144,7 +144,7 @@
    "q": "過失相殺とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 64.5,
+   "ms": 65.2,
    "core": "過失相殺",
    "path": [
     "過失相殺",
@@ -173,7 +173,7 @@
    "q": "所有権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 67.7,
+   "ms": 70.9,
    "core": "所有権",
    "path": [
     "所有権",
@@ -206,7 +206,7 @@
    "q": "民法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 81.7,
+   "ms": 82.7,
    "core": "民法",
    "path": [
     "民法",
@@ -239,7 +239,7 @@
    "q": "相続とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 89.9,
+   "ms": 91.1,
    "core": "相続",
    "path": [
     "相続",
@@ -272,7 +272,7 @@
    "q": "抵当権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 92.0,
+   "ms": 94.1,
    "core": "抵当権",
    "path": [
     "抵当権",
@@ -304,7 +304,7 @@
    "q": "不法行為とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 87.6,
+   "ms": 88.2,
    "core": "不法行為",
    "path": [
     "不法行為",
@@ -337,7 +337,7 @@
    "q": "詐欺罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 63.4,
+   "ms": 64.7,
    "core": "詐欺罪",
    "path": [
     "詐欺罪",
@@ -368,7 +368,7 @@
    "q": "窃盗罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 65.9,
+   "ms": 67.3,
    "core": "窃盗罪",
    "path": [
     "窃盗罪",
@@ -397,7 +397,7 @@
    "q": "名誉毀損とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 72.7,
+   "ms": 74.7,
    "core": "名誉毀損",
    "path": [
     "名誉毀損",
@@ -428,7 +428,7 @@
    "q": "労働基準法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 87.7,
+   "ms": 89.7,
    "core": "労働基準法",
    "path": [
     "労働基準法",
@@ -457,7 +457,7 @@
    "q": "著作権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 53.9,
+   "ms": 54.8,
    "core": "著作権",
    "path": [
     "著作権",
@@ -490,7 +490,7 @@
    "q": "超伝導とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 50.9,
+   "ms": 52.2,
    "core": "超伝導",
    "path": [
     "超伝導",
@@ -523,7 +523,7 @@
    "q": "光合成とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 51.5,
+   "ms": 53.1,
    "core": "光合成",
    "path": [
     "光合成",
@@ -556,7 +556,7 @@
    "q": "量子力学とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 51.2,
+   "ms": 71.4,
    "core": "量子力学",
    "path": [
     "量子力学",
@@ -589,7 +589,7 @@
    "q": "民主主義とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 52.6,
+   "ms": 57.0,
    "core": "民主主義",
    "path": [
     "民主主義",
@@ -622,7 +622,7 @@
    "q": "インフレとは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 30.8,
+   "ms": 37.2,
    "core": null,
    "path": [],
    "sentences": [],
@@ -636,10 +636,122 @@
    "origin": []
   },
   {
+   "q": "時効は援用が必要か",
+   "verdict": "ATTESTED",
+   "lang": "ja",
+   "ms": 54.7,
+   "core": "時効",
+   "path": [
+    "時効",
+    "援用",
+    "援用権者",
+    "必要"
+   ],
+   "sentences": [
+    "時効と必要を援用してはならない。",
+    "時効と必要をとることもある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": "時効",
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／時効.txt",
+    "指名／消滅時効.txt"
+   ]
+  },
+  {
+   "q": "相続は放棄できるか",
+   "verdict": "ATTESTED",
+   "lang": "ja",
+   "ms": 69.6,
+   "core": "相続",
+   "path": [
+    "相続",
+    "放棄"
+   ],
+   "sentences": [
+    "相続は、放棄のとおりとする。",
+    "相続 - 放棄にある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": "相続",
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／相続.txt",
+    "法学／家事事件手続法.txt",
+    "法学／相続.txt"
+   ]
+  },
+  {
+   "q": "殺人罪は死刑があるか",
+   "verdict": "NOT_ATTESTED",
+   "lang": "ja",
+   "ms": 0.2,
+   "core": "殺人罪",
+   "path": [],
+   "sentences": [],
+   "register": "sentences connecting the subject to the asked condition, if the connection is in fact true",
+   "closes": true,
+   "why": null,
+   "order": null,
+   "subject": "殺人罪",
+   "nearest": null,
+   "witness": null,
+   "origin": []
+  },
+  {
+   "q": "労働時間 休憩 休日",
+   "verdict": "UNKNOWN_UNDERDETERMINED",
+   "lang": "ja",
+   "ms": 40.9,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "nothing — supply another condition instead",
+   "closes": false,
+   "why": "the conditions given leave several cores standing and ties must abstain; a fourth condition narrows where registration would only thicken the tie",
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
+  },
+  {
+   "q": "時効 援用 中断",
+   "verdict": "UNKNOWN_UNDERDETERMINED",
+   "lang": "ja",
+   "ms": 40.1,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "nothing — supply another condition instead",
+   "closes": false,
+   "why": "the conditions given leave several cores standing and ties must abstain; a fourth condition narrows where registration would only thicken the tie",
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
+  },
+  {
    "q": "殺人罪の刑は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 55.8,
+   "ms": 64.0,
    "core": "殺人罪",
    "path": [
     "殺人罪",
@@ -672,7 +784,7 @@
    "q": "時効の期間は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 80.2,
+   "ms": 86.2,
    "core": "時効",
    "path": [
     "時効",
@@ -705,7 +817,7 @@
    "q": "相続の効果は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 89.5,
+   "ms": 96.2,
    "core": "相続",
    "path": [
     "相続",
@@ -738,7 +850,7 @@
    "q": "著作権の侵害は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 53.9,
+   "ms": 60.0,
    "core": "著作権",
    "path": [
     "著作権",
@@ -771,7 +883,7 @@
    "q": "negligence",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.7,
+   "ms": 0.8,
    "core": "negligence",
    "path": [
     "negligence",
@@ -821,7 +933,7 @@
    "q": "jurisdiction",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.8,
+   "ms": 0.7,
    "core": "jurisdiction",
    "path": [
     "jurisdiction",
@@ -871,7 +983,7 @@
    "q": "tort",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.7,
+   "ms": 1.5,
    "core": "tort",
    "path": [
     "tort",
@@ -896,7 +1008,7 @@
    "q": "due process",
    "verdict": "UNKNOWN_INSUFFICIENT_EVIDENCE",
    "lang": "en",
-   "ms": 2.0,
+   "ms": 2.2,
    "core": null,
    "path": [],
    "sentences": [],
@@ -913,7 +1025,7 @@
    "q": "habeas corpus",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.5,
+   "ms": 0.6,
    "core": "habeas",
    "path": [
     "habeas",
@@ -969,7 +1081,7 @@
    "q": "こんにちは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 30.3,
+   "ms": 33.4,
    "core": null,
    "path": [],
    "sentences": [],
@@ -986,7 +1098,7 @@
    "q": "ありがとう",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 30.0,
+   "ms": 31.9,
    "core": null,
    "path": [],
    "sentences": [],
@@ -1003,7 +1115,7 @@
    "q": "ヴォルフガング粒子とは",
    "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 30.8,
+   "ms": 35.5,
    "core": null,
    "path": [],
    "sentences": [],
@@ -1020,7 +1132,7 @@
    "q": "ズミルノフ環礁の面積は",
    "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 30.4,
+   "ms": 36.6,
    "core": null,
    "path": [],
    "sentences": [],
@@ -1037,7 +1149,7 @@
    "q": "Wie geht es dir",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "en",
-   "ms": 10.2,
+   "ms": 11.7,
    "core": null,
    "path": [],
    "sentences": [],

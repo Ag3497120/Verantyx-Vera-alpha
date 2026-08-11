@@ -84,6 +84,17 @@ class Vera:
         lang = detect(query)
         if lang == "latin" and "en" in self.stores:
             lang = "en"
+        # Kanji without kana detects as Chinese — the same shape
+        # `document_ingest._place` already handles for table rows: a
+        # kana-less segment inside a Japanese document is Japanese. A
+        # kana-less QUERY typed at a system holding a Japanese sovereign is
+        # the query-level case: 「過失 故意 責任」 is three Japanese law
+        # terms and no kana, and refusing it as an unheld language while
+        # holding all three terms is a routing failure, not honesty. A
+        # genuinely Chinese question still gets no false answer — the
+        # Japanese sovereign refuses on its own evidence.
+        if lang == "zh" and "zh" not in self.stores and "ja" in self.stores:
+            lang = "ja"
         store = self.stores.get(lang)
         if store is None:
             out = {"verdict": "UNKNOWN_LANGUAGE_NOT_HELD", "language": lang,
@@ -129,6 +140,13 @@ class Vera:
             except Exception:
                 pass
         out["remedy"] = remedy(out)
+        # Opt-in only: when $VERA_QUEUE names a file, queueable refusals
+        # are appended there and become the fetch list for `grow`. The
+        # answer itself is unchanged — the queue is how the corpus learns
+        # where the questions found it thin.
+        from .grow import log_refusal
+
+        log_refusal(out)
         return out
 
     def attest(self, out: Dict[str, Any]) -> Dict[str, Any]:

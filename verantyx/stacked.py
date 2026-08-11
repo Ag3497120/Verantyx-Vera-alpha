@@ -224,6 +224,139 @@ def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
     return {"ok": False, "subject": subject, "single": single, "aspects": aspects}
 
 
+#: A question whose answer would be yes or no. The verbs are hiragana, so
+#: `ja_content_runs` already excludes them — 「未成年者は契約できるか」 yields
+#: the runs [未成年者, 契約] and the modality stays out of the condition set.
+_YESNO = None
+
+
+def _yesno_re():
+    global _YESNO
+    if _YESNO is None:
+        import re as _re
+        _YESNO = _re.compile(
+            r"(?:できますか|できるか|必要ですか|必要か|可能ですか|可能か|"
+            r"ありますか|あるか|ですか|ますか|されるか|するか|なるか)[?？]?$")
+    return _YESNO
+
+
+def yes_no(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """「XはYできるか」— answered as attestation, never as yes or no.
+
+    A store under closure cannot say いいえ: the absence of a facet is the
+    absence of evidence, not a negation the corpus wrote. What it CAN say is
+    typed and citable both ways:
+
+        ATTESTED       every condition appears on the subject's own cross,
+                       and the matching facets are shown with their counts
+        NOT_ATTESTED   the subject is held and some condition has nothing
+                       on the cross — a gap, closable by registration, and
+                       explicitly NOT a "no"
+
+    The mechanics are `puzzle.eliminate` turned inward: instead of asking
+    which candidate holds a condition, ask which conditions this subject
+    holds. Same filter, one subject. Anything else routes back to the
+    ordinary path by returning None.
+    """
+    from .lang import ja_content_runs
+
+    if not _yesno_re().search(query or ""):
+        return None
+    cov = subject_check(store, query, "")
+    subject = cov.get("reseed") or (cov.get("subject")
+                                    if cov.get("subject") in store.crosses
+                                    else None)
+    conditions = [c for c in (cov.get("aspects") or [])]
+    if not conditions:
+        return None
+    if subject is None:
+        return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None, "text": "",
+                "subject": cov.get("subject"),
+                "note": "a yes/no question about a subject the store does "
+                        "not hold cannot be attested either way"}
+    cross = store.crosses.get(subject) or {}
+    hits: Dict[str, List[str]] = {}
+    gaps: List[str] = []
+    for c in conditions:
+        m = sorted((f for f in cross if c in f or f in c),
+                   key=lambda f: (-cross[f], f))[:4]
+        if m:
+            hits[c] = m
+        else:
+            gaps.append(c)
+    if gaps:
+        return {"verdict": "NOT_ATTESTED", "core": subject, "text": "",
+                "subject": subject, "conditions": conditions,
+                "attested": hits, "unattested": gaps,
+                "note": "the subject is held and nothing on its cross "
+                        "attests these conditions — a coverage gap, not a "
+                        "denial; the corpus never wrote the negative either"}
+    shown = [f for c in conditions for f in hits[c][:2]]
+    return {"verdict": "ATTESTED", "core": subject,
+            "core_key": subject,
+            "text": " ".join([subject] + shown[:4]),
+            "subject": subject, "conditions": conditions, "attested": hits,
+            "order_evidence": "aspect",
+            "note": "every asked condition appears on the subject's own "
+                    "cross; the matching facets are the citation, and this "
+                    "is attestation, not assent"}
+
+
+def intersect(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """Three or more conditions: narrow, never chain.
+
+    The half of the early conception that measured out alive. A chain decays
+    (41.5% -> 19.3% over five steps) because each step conditions on the
+    previous answer; an intersection holds (100% answer retention, 93 -> 1
+    candidates over four conditions) because every condition reads the same
+    store. So a question carrying several content phrases is treated as a
+    puzzle: the phrases are conditions, the candidates shrink monotonically,
+    and the verdicts are the ones `puzzle` already types — a unique survivor
+    is ANSWER_BY_INTERSECTION, several are UNKNOWN_UNDERDETERMINED with the
+    survivors listed, none is UNKNOWN_CONDITIONS_CONFLICT, which is a
+    statement about the question rather than the coverage.
+    """
+    from .lang import ja_content_runs
+    from .puzzle import Puzzle, solve
+
+    runs = ja_content_runs(query)
+    if len(runs) < 3:
+        return None
+    # CONFLICT is a claim about the QUESTION — every condition individually
+    # holds somewhere and they cannot hold together. A condition nothing
+    # holds is a different fact (an absent term), and reporting it as
+    # conflict misdirects the reader: ズミルノフ環礁の面積は came back
+    # CONDITIONS_CONFLICT because no core holds ズミルノフ, when the honest
+    # verdict — the subject gate's UNKNOWN_NOT_PRESENT naming the missing
+    # phrase — was one branch further down. Empty-holder conditions hand
+    # the question back.
+    probe = Puzzle(store=store)
+    if any(not probe._holders(t) for t in runs):
+        return None
+    sol = solve(store, runs)
+    v = sol.get("verdict")
+    if v == "ANSWER":
+        core = sol["item"]
+        cross = store.crosses.get(core) or {}
+        shown = sorted(cross, key=lambda f: (-cross[f], f))[:4]
+        return {"verdict": "ANSWER_BY_INTERSECTION", "core": core,
+                "core_key": core, "text": " ".join([core] + shown),
+                "conditions": sol.get("conditions"),
+                "trail": sol.get("trail"),
+                "note": "the conditions leave exactly one core standing; "
+                        "the trail shows how each one narrowed the set"}
+    if v == "UNKNOWN_UNDERDETERMINED" and sol.get("remaining", 0) <= 12:
+        return {"verdict": "UNKNOWN_UNDERDETERMINED", "core": None,
+                "text": "", "candidates": sol.get("candidates"),
+                "remaining": sol.get("remaining"),
+                "conditions": sol.get("conditions"), "trail": sol.get("trail")}
+    if v == "UNKNOWN_CONDITIONS_CONFLICT":
+        return {"verdict": "UNKNOWN_CONDITIONS_CONFLICT", "core": None,
+                "text": "", "conditions": sol.get("conditions"),
+                "trail": sol.get("trail")}
+    return None
+
+
 def aspect_read(store: Any, out: Dict[str, Any],
                 aspects: Sequence[str]) -> Dict[str, Any]:
     """Re-read the answered core's faces through the asked aspect.
@@ -282,6 +415,13 @@ def ask(
     """
     from .consensus_store import candidates_for_query, consensus_over_store
 
+    # Yes/no questions never reach the census: the census answers "what",
+    # and forcing 「〜できるか」 through it either refuses or answers about
+    # the subject as if とは had been asked. Attestation is its own shape.
+    yn = yes_no(store, query)
+    if yn is not None:
+        return yn
+
     direct = consensus_over_store(store, query, **kwargs)
     # The same subject gate, on the direct path — but ONLY for single-phrase
     # questions. After the staircase gate landed, the residual 4% of invented
@@ -306,6 +446,16 @@ def ask(
                          "subject; answering about the part would answer a "
                          "different question"),
             }
+    # Any refusal from the census is a chance for intersection first:
+    # 「時効 援用 中断」 came back UNKNOWN_INSUFFICIENT_EVIDENCE from the
+    # direct read while 時効 was the unique core holding 援用 AND 中断 —
+    # the conditions cut where the census could not converge. The puzzle's
+    # own refusals (UNDERDETERMINED with survivors named, CONFLICT) are
+    # more informative than a bare insufficiency, so they replace it.
+    if str(direct.get("verdict", "")).startswith("UNKNOWN"):
+        px = intersect(store, query)
+        if px is not None:
+            return px
     if direct.get("verdict") != "UNKNOWN_NO_EVIDENCE" or judge is None:
         return direct
 
