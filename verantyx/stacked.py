@@ -178,6 +178,102 @@ def in_words(
     return out
 
 
+#: English stopwords for shape extraction only — not retrieval, which
+#: already handles English. Kept minimal and closed: shape rules should
+#: fail silent, never guess.
+_EN_STOP = frozenset(
+    "the a an of in on at for to with by is are was were be been does do "
+    "did can could may must have has had what which who whom whose how "
+    "why when where and or not no it its this that these those".split())
+
+
+def en_shape(query: str) -> Optional[Dict[str, Any]]:
+    """Subject / aspects / yes-no for an English question, by fixed rules.
+
+    The Japanese side earned its gates one measurement at a time; English
+    had none of them — not for lack of data but for lack of SHAPE
+    extraction, since 「XのY」 rules read kana. These rules are the English
+    mirror, additive and closed:
+
+        what is X            subject X
+        X of Y / Y's X       subject Y, aspect X
+        does/can/is Y X ?    yes-no: subject Y, conditions X
+
+    Anything that does not match returns None and the pipeline behaves
+    exactly as before — the second-class fix must not create new ways to
+    be wrong.
+    """
+    import re as _re
+
+    q = query.strip().rstrip("?？ ").lower()
+    if _re.search(r"[぀-ゟ゠-ヺ㐀-䶿一-鿿]", q):
+        return None
+    words = [w for w in _re.findall(r"[a-z][a-z0-9'-]*", q)]
+    content = [w for w in words if w not in _EN_STOP]
+    if not content:
+        return None
+    yn = bool(words) and words[0] in ("does", "can", "is", "are", "do",
+                                      "must", "may", "has", "have")
+    m = _re.match(r"^(?:what\s+is\s+|what\s+are\s+)(?:the\s+)?(.+)$", q)
+    if m and not yn:
+        rest = m.group(1)
+        mo = _re.match(r"^(?:the\s+)?([a-z0-9' -]+?)\s+of\s+(?:the\s+)?"
+                       r"([a-z0-9' -]+)$", rest)
+        if mo:
+            aspect = [w for w in mo.group(1).split() if w not in _EN_STOP]
+            subj = [w for w in mo.group(2).split() if w not in _EN_STOP]
+            if subj:
+                return {"kind": "aspect", "subject": " ".join(subj),
+                        "aspects": aspect}
+        subj = [w for w in rest.split() if w not in _EN_STOP]
+        return {"kind": "definition", "subject": " ".join(subj), "aspects": []}
+    mo = _re.match(r"^([a-z0-9' -]+?)'s\s+([a-z0-9' -]+)$", q)
+    if mo:
+        subj = [w for w in mo.group(1).split() if w not in _EN_STOP]
+        aspect = [w for w in mo.group(2).split() if w not in _EN_STOP]
+        if subj and aspect:
+            return {"kind": "aspect", "subject": " ".join(subj),
+                    "aspects": aspect}
+    if yn and len(content) >= 2:
+        return {"kind": "yesno", "subject": content[0],
+                "conditions": content[1:]}
+    return None
+
+
+def yes_no_en(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """English yes/no as attestation — same verdicts, same closure."""
+    sh = en_shape(query)
+    if not sh or sh["kind"] != "yesno":
+        return None
+    subject = sh["subject"]
+    if subject not in store.crosses:
+        return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None, "text": "",
+                "subject": subject}
+    cross = store.crosses.get(subject) or {}
+    hits: Dict[str, List[str]] = {}
+    gaps: List[str] = []
+    for c in sh["conditions"]:
+        m = sorted((f for f in cross if c in f or f in c),
+                   key=lambda f: (-cross[f], f))[:4]
+        if not m:
+            other = store.crosses.get(c) or {}
+            if any(subject in f for f in other):
+                m = [c]
+        if m:
+            hits[c] = m
+        else:
+            gaps.append(c)
+    if gaps:
+        return {"verdict": "NOT_ATTESTED", "core": subject, "text": "",
+                "subject": subject, "conditions": sh["conditions"],
+                "attested": hits, "unattested": gaps}
+    shown = [f for c in sh["conditions"] for f in hits[c][:2]]
+    return {"verdict": "ATTESTED", "core": subject, "core_key": subject,
+            "text": " ".join([subject] + shown[:4]),
+            "subject": subject, "conditions": sh["conditions"],
+            "attested": hits, "order_evidence": "aspect"}
+
+
 def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
     """Does the staircase's seed actually cover what the question asked about?
 
@@ -484,6 +580,9 @@ def ask(
     yn = yes_no(store, query)
     if yn is not None:
         return yn
+    yn = yes_no_en(store, query)
+    if yn is not None:
+        return yn
 
     direct = consensus_over_store(store, query, **kwargs)
     # The same subject gate, on the direct path — but ONLY for single-phrase
@@ -498,6 +597,31 @@ def ask(
         cov0 = subject_check(store, query, seed0)
         if cov0.get("ok") and cov0.get("aspects"):
             direct = aspect_read(store, direct, cov0["aspects"])
+        else:
+            sh = en_shape(query)
+            if sh and sh.get("subject"):
+                # The English subject gate — found the same day the aspect
+                # rules landed: "what is the penalty of murder" answered
+                # about PENALTY, the exact theft the Japanese gate closed
+                # months of measurements ago. Same rules, mirrored: the
+                # core must be the subject, contain it, or hold it on its
+                # cross; a held subject displaces the wrong core; else
+                # refuse by name.
+                subj = sh["subject"]
+                core0 = str(direct.get("core_key") or "")
+                cross0 = store.crosses.get(core0) or {}
+                if not (subj == core0 or subj in core0 or subj in cross0):
+                    if subj in store.crosses:
+                        direct = consensus_over_store(store, subj, **kwargs)
+                        if str(direct.get("verdict", "")).startswith("ANSWER"):
+                            direct = dict(direct)
+                            direct["subject"] = subj
+                    else:
+                        return {"verdict": "UNKNOWN_NOT_PRESENT",
+                                "core": None, "text": "", "subject": subj,
+                                "nearest_held": direct.get("core")}
+            if sh and sh.get("aspects"):
+                direct = aspect_read(store, direct, sh["aspects"])
         if cov0.get("single") and not cov0["ok"]:
             return {
                 "verdict": "UNKNOWN_NOT_PRESENT",

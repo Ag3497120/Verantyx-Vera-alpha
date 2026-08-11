@@ -134,6 +134,8 @@ def run_query(query: str) -> Dict[str, Any]:
           "origin": origin,
           "order": full.get("order_evidence"),
           "grain": full.get("grain"),
+          "tier": full.get("tier"),
+          "known_gap": full.get("known_gap"),
           "subject": full.get("subject"),
           "nearest": full.get("nearest_held")})
     # The structure evolves under the reader. A refused subject is fetched
