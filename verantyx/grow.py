@@ -83,6 +83,35 @@ def pending(queue: Path, store: Any,
     return seen
 
 
+def github_suggestions(repo: str = "Ag3497120/Verantyx-Vera-alpha",
+                       label: str = "vera-suggest") -> List[Dict[str, Any]]:
+    """Open community suggestions, read from the public issue tracker.
+
+    The worldwide inlet. Anyone may file an issue with the label; nothing
+    enters the structure until a human has read the issue AND run this
+    command — two approvals, both visible in public. No new
+    infrastructure: the queue is the issue tracker, the audit trail is
+    the issue history, and a rejected suggestion is a closed issue.
+    """
+    import urllib.request
+
+    url = ("https://api.github.com/repos/%s/issues?state=open&labels=%s"
+           % (repo, label))
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "verantyx-vera grow"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        issues = json.loads(r.read().decode())
+    out = []
+    for it in issues:
+        title = str(it.get("title") or "")
+        subject = title.replace("[提案]", "").strip()
+        if subject:
+            out.append({"subject": subject, "issue": it.get("number"),
+                        "rule": "community:issue#%s" % it.get("number")})
+    return out
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--queue", required=True)
@@ -90,10 +119,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="show what would be fetched, fetch nothing")
     ap.add_argument("--limit", type=int, default=50)
+    ap.add_argument("--github", action="store_true",
+                    help="also pull open vera-suggest issues into the queue")
     a = ap.parse_args(argv)
     root = Path(a.root)
 
     from .export_sqlite import load, witnesses as load_witnesses
+
+    if a.github:
+        got = github_suggestions()
+        with open(a.queue, "a", encoding="utf-8") as f:
+            for rec in got:
+                rec["asked"] = time.strftime("%Y-%m-%d")
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        print(json.dumps({"community_suggestions": len(got),
+                          "subjects": [g["subject"] for g in got][:10]},
+                         ensure_ascii=False))
 
     store = load(root / "build" / "vera.db")["ja"]
     wits = load_witnesses(root / "build" / "vera.db")
