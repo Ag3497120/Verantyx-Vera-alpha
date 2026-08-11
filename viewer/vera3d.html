@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Vera 立体十字構造</title>
 <style>
 :root{
@@ -721,20 +722,170 @@ function showAnswer(m){
   answerEl.innerHTML = h;
 }
 
+// ── サーバ無しモード: ブラウザ内 CPython ─────────────────
+// verantyx.ai のような静的配信では SSE サーバが無い。その場合は HF の静的
+// アセット(CORS *)から同じエンジンと同じ構造を取得し、Pyodide 上の CPython
+// で推論する。JS への再実装は二つ目の実装を生むのでしない — 動くのは常に
+// 本物の verantyx。生育も Wikipedia API(origin=*)で本物が動く。
+const ASSETS = "https://kofdai-ask-vera.static.hf.space";
+let PY = null, pyBooting = false;
+function offerPyodide(){
+  const askq = document.getElementById("askq");
+  askq.disabled = true;
+  liveEl.innerHTML = "<button id='b-boot' style='background:var(--raised);" +
+    "border:1px solid var(--line);color:var(--text);border-radius:3px;" +
+    "cursor:pointer;font:inherit;font-size:11.5px;padding:3px 10px'>" +
+    (LANGUI === "en" ? "boot the engine in this browser (~30MB)"
+                     : "ブラウザ内でエンジンを起動 (~30MB)") + "</button>";
+  document.getElementById("b-boot").onclick = bootPyodide;
+}
+async function fetchBytes(url, label){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(label + " " + res.status);
+  const total = +(res.headers.get("content-length") || 0);
+  const reader = res.body.getReader(); const chunks = []; let got = 0;
+  for(;;){
+    const r = await reader.read();
+    if(r.done) break;
+    chunks.push(r.value); got += r.value.length;
+    liveEl.textContent = label + " " + (got/1048576).toFixed(1) +
+      (total ? "/" + (total/1048576).toFixed(1) : "") + " MB";
+  }
+  const buf = new Uint8Array(got); let off = 0;
+  for(const c of chunks){ buf.set(c, off); off += c.length; }
+  return buf;
+}
+async function bootPyodide(){
+  if(pyBooting || PY) return;
+  pyBooting = true;
+  try{
+    liveEl.textContent = "Pyodide…";
+    await new Promise((res, rej) => {
+      const sc = document.createElement("script");
+      sc.src = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js";
+      sc.onload = res; sc.onerror = () => rej(new Error("pyodide load failed"));
+      document.head.appendChild(sc);
+    });
+    PY = await loadPyodide({indexURL:"https://cdn.jsdelivr.net/pyodide/v0.26.4/full/"});
+    liveEl.textContent = "sqlite3…";
+    await PY.loadPackage("sqlite3");
+    PY.unpackArchive((await fetchBytes(ASSETS + "/verantyx.zip", "engine")).buffer, "zip");
+    PY.FS.writeFile("vera_web.db", await fetchBytes(ASSETS + "/vera_web.db", "structure"));
+    try{ PY.FS.writeFile("writer.json", await fetchBytes(ASSETS + "/writer.json", "writer")); }catch(e){}
+    liveEl.textContent = LANGUI === "en" ? "assembling…" : "ソブリンを組み立て中…";
+    await PY.runPythonAsync([
+      "import sys, json",
+      "sys.path.insert(0, '/home/pyodide')",
+      "from verantyx.export_sqlite import vera as _vera",
+      "V = _vera('vera_web.db')",
+      "def ASK(q):",
+      "    r = V.ask(q)",
+      "    w = r.get('written') or {}",
+      "    wt = r.get('witnesses') or {}",
+      "    subj = r.get('subject')",
+      "    if not subj and r.get('verdict') in ('UNKNOWN_NOT_PRESENT','UNKNOWN_NO_EVIDENCE'):",
+      "        from verantyx.stacked import subject_check",
+      "        cov = subject_check(V.stores['ja'], q, '')",
+      "        if cov.get('single') and cov.get('subject') and cov['subject'] not in V.stores['ja'].crosses:",
+      "            subj = cov['subject']",
+      "    return json.dumps({'verdict': r.get('verdict'), 'item': r.get('core'),",
+      "      'language': r.get('language'), 'path': r.get('text'),",
+      "      'terms': [t for t in str(r.get('text') or '').split()],",
+      "      'sentences': [(x.get('text') if isinstance(x, dict) else str(x))",
+      "                    for x in (w.get('sentences') or [])[:3]],",
+      "      'witness': ({'agree': wt.get('agree'), 'answered': wt.get('answered')} if wt else None),",
+      "      'origin': sorted({s2 for v2 in (r.get('facet_origin') or {}).values() for s2 in v2})[:3],",
+      "      'order': r.get('order_evidence'), 'subject': subj,",
+      "      'nearest': r.get('nearest_held'), 'remedy': r.get('remedy'),",
+      "      'missing': r.get('missing'), 'facet_only': r.get('as_facet_only')},",
+      "      ensure_ascii=False)",
+      "def GROW(subject, text):",
+      "    from verantyx.document_ingest import Document, ingest_documents",
+      "    st = V.stores['ja']",
+      "    before = set(st.crosses)",
+      "    label = '指名／' + subject + '.txt'",
+      "    st.source_labels.add(label)",
+      "    ingest_documents(st, [Document(source=label, text=text)])",
+      "    wit = V.witnesses.get('指名')",
+      "    if wit is not None:",
+      "        wit.source_labels.add(label)",
+      "        ingest_documents(wit, [Document(source=label, text=text)])",
+      "    new = sorted(set(st.crosses) - before)",
+      "    V.add('ja', st)",
+      "    return json.dumps({'count': len(new), 'cores': new[:60]}, ensure_ascii=False)"
+    ].join("\n"));
+    liveEl.innerHTML = LANGUI === "en"
+      ? "<b>engine live</b> — CPython in this tab"
+      : "<b>起動</b> — このタブの中の CPython";
+    const askq = document.getElementById("askq");
+    askq.disabled = false;
+    askq.onkeydown = async ev => {
+      if(ev.key !== "Enter" || !askq.value.trim() || askq.disabled) return;
+      const q = askq.value.trim();
+      askq.disabled = true;
+      answerEl.innerHTML = "<div class='v'>…</div>"; traceEl.innerHTML = "";
+      handleEvent({type:"ask", query:q, terms:[]});
+      try{
+        const m = JSON.parse(await PY.runPythonAsync("ASK(" + JSON.stringify(q) + ")"));
+        handleEvent({type:"language", language:m.language});
+        handleEvent({type:"touch", nodes:m.terms || []});
+        handleEvent({type:"verdict", ...m, detail:""});
+        if(m.subject && !m.item) growPyodide(m.subject);
+      }catch(err){
+        answerEl.innerHTML = "<div class='why'>" + esc(String(err).slice(0,140)) + "</div>";
+      }
+      askq.disabled = false;
+    };
+  }catch(err){
+    liveEl.textContent = "boot failed: " + String(err).slice(0, 80);
+    pyBooting = false;
+  }
+}
+async function growPyodide(subject){
+  handleEvent({type:"grow_start", subject});
+  try{
+    const u = "https://ja.wikipedia.org/w/api.php?action=query&format=json&origin=*" +
+      "&prop=extracts&explaintext=1&redirects=1&titles=" + encodeURIComponent(subject);
+    const d = await (await fetch(u)).json();
+    const pages = (d.query || {}).pages || {};
+    let text = null;
+    for(const k in pages){ if(!("missing" in pages[k])) text = pages[k].extract; }
+    if(!text){ handleEvent({type:"grow_missing", subject}); return; }
+    const g = JSON.parse(await PY.runPythonAsync(
+      "GROW(" + JSON.stringify(subject) + "," + JSON.stringify(text) + ")"));
+    handleEvent({type:"grown", subject, count:g.count, cores:g.cores, domain:"指名"});
+    handleEvent({type:"grow_ready", subject});
+  }catch(err){
+    handleEvent({type:"grow_missing", subject});
+  }
+}
+
 if(location.protocol.startsWith("http") && location.hostname === "localhost"){
   try{
     const es = new EventSource("/events");
     const askq = document.getElementById("askq");
-    es.onopen = () => { liveEl.innerHTML = t("connected"); askq.disabled = false; };
-    es.onerror = () => { liveEl.textContent = t("offline"); askq.disabled = true; };
+    let sseOK = false;
+    es.onopen = () => { sseOK = true; liveEl.innerHTML = t("connected");
+                        askq.disabled = false; };
+    es.onerror = () => {
+      // 一度も繋がらなければ SSE サーバは居ない — ブラウザ内エンジンを
+      // 提案する。一度繋がった後の瞬断は再接続に任せる。
+      if(!sseOK && !PY){ es.close(); offerPyodide(); }
+      else if(!PY){ liveEl.textContent = t("offline"); askq.disabled = true; }
+    };
     askq.onkeydown = ev => {
       if(ev.key !== "Enter" || !askq.value.trim()) return;
       answerEl.innerHTML = "<div class='v'>…</div>";
       traceEl.innerHTML = "";
       fetch("/ask?q=" + encodeURIComponent(askq.value.trim()));
     };
-    es.onmessage = ev => {
-      const m = JSON.parse(ev.data);
+    es.onmessage = ev => handleEvent(JSON.parse(ev.data));
+  }catch(e){ offerPyodide(); }
+} else {
+  offerPyodide();
+}
+
+function handleEvent(m){
       if(m.type === "ask"){
         traceLine("<b>問</b> " + esc(m.query));
       } else if(m.type === "language"){
@@ -769,11 +920,6 @@ if(location.protocol.startsWith("http") && location.hostname === "localhost"){
         traceLine("<span style='color:var(--unit)'>" + t("ready") + "</span> " +
           esc(m.subject) + " — " + t("askagain"));
       }
-    };
-  }catch(e){ /* stays static */ }
-} else {
-  answerEl.innerHTML = "<div class='why'>静的表示です。engine の隣から配信すると" +
-    "質問できます: <span class='mono'>python3 -m verantyx.serve_view3d --page .</span></div>";
 }
 
 setInterval(() => {
