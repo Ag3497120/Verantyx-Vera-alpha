@@ -144,3 +144,79 @@ def word_center(
             "note": "surface flow across arms converged on a word the "
                     "corpus writes standalone; the key centre remains the "
                     "citation"}
+
+
+# ---------------------------------------------------------------------------
+# Routing across arms — the other side of the 24-face wall
+# ---------------------------------------------------------------------------
+
+def distinct_faces(stores: Dict[str, Any], k: int = 4) -> Dict[str, List[str]]:
+    """Each arm's faces: its heaviest facets that NO other arm carries.
+
+    The trajectory measured the wall exactly here: an upper node routes
+    20/24 for words on its faces and 0/60 for words off them, and raising
+    the per-arm facet count only destroys it (4 faces 4/8 -> 60 faces 0/8).
+    Reproducing it on the published store showed WHY frequency faces fail:
+    the heaviest facets of every statute are 二 三 四 — the same numerals
+    on every arm, distinguishing nothing. A face is a routing organ, and a
+    routing organ must be distinctive: 刑法 shows 未遂罪/傷害, 民法 shows
+    相続人/遺言, because no other arm carries them.
+    """
+    from collections import Counter
+
+    prof: Dict[str, Counter] = {}
+    for arm, st in stores.items():
+        agg: Counter = Counter()
+        for cr in st.values():
+            for f, n in cr.items():
+                if len(f) >= 2 and not f[0].isdigit():
+                    agg[f] += n
+        prof[arm] = agg
+    out: Dict[str, List[str]] = {}
+    for arm in stores:
+        others = set()
+        for a2 in stores:
+            if a2 != arm:
+                others |= set(prof[a2])
+        out[arm] = [f for f, _n in prof[arm].most_common(200)
+                    if f not in others][:k]
+    return out
+
+
+def route(stores: Dict[str, Any], faces: Dict[str, List[str]],
+          term: str) -> Optional[str]:
+    """Which arm a term belongs to, by surface conduction. Ties abstain.
+
+    Faces alone route 0 of 52 off-face terms — beyond the faces, a term
+    might as well not exist, which is the capacity law. Conduction repeals
+    it without touching the geometry: the term's own cross is a set of
+    surface points, and a face word REACHABLE from those points (directly
+    on the cross, or one step away on a cross both share) counts as a
+    connection. Measured on six statutes from the published store:
+
+        faces only                       0 / 52
+        + surface conduction            52 / 52   wrong 0
+        out-of-corpus terms              6 / 6 abstained
+
+    The abstention is load-bearing: an invented term reaches no face on
+    any arm, so the router says nothing rather than guessing — the same
+    behaviour the subject gate enforces at the answer level.
+    """
+    score: Dict[str, int] = {}
+    for arm, st in stores.items():
+        cr = st.get(term) or {}
+        n = sum(1 for f in faces.get(arm, ()) if f in cr or f == term)
+        if not n and cr:
+            for f in faces.get(arm, ()):
+                if any(f in cr2 and any(g in cr2 for g in cr)
+                       for cr2 in st.values()):
+                    n += 1
+                    break
+        if n:
+            score[arm] = n
+    ranked = sorted(score.items(), key=lambda kv: (-kv[1], kv[0]))
+    if not ranked:
+        return None
+    if len(ranked) > 1 and ranked[1][1] == ranked[0][1]:
+        return None
+    return ranked[0][0]
