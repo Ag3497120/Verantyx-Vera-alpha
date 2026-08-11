@@ -123,11 +123,23 @@ def in_words(
         return {"verdict": result.get("verdict"), "sentences": []}
     subject, rest = path[0], path[1:]
     if subject not in writer.vocab:
-        return {"verdict": "UNKNOWN_SUBJECT_NOT_A_WORD", "subject": subject,
-                "path": path,
-                "note": "the centre is a retrieval key and not a word the "
-                        "corpus writes on its own; the path stands as the "
-                        "answer"}
+        # Surface conduction: the key centre cannot speak, but activation
+        # can flow across arms — every word-core sharing the path's facets
+        # is one surface step away, and the word the flow converges on
+        # becomes the SPEAKING centre. The key stays the citation.
+        from .surface import word_center
+
+        wc = word_center(store, subject, rest, writer.vocab)
+        if wc is None:
+            return {"verdict": "UNKNOWN_SUBJECT_NOT_A_WORD",
+                    "subject": subject, "path": path,
+                    "note": "the centre is a retrieval key and not a word "
+                            "the corpus writes on its own, and the surface "
+                            "flow did not converge on a word; the path "
+                            "stands as the answer"}
+        subject = wc["word"]
+        rest = [f for f in wc["shared"] if f != subject] or rest
+        spoken_via = wc
     from .compose_ja import compose
 
     # Path-driven speech carries PRESENCE evidence only — counts, edges,
@@ -142,13 +154,16 @@ def in_words(
     drafts = compose(speakable, subject, rest, limit=limit,
                      content_from=[subject], vocab=writer.vocab,
                      licence=writer.licence(subject))
-    return {
+    out = {
         "verdict": result.get("verdict"),
         "path": path,
         "sentences": [d.as_dict() for d in drafts],
         "note": "content from the converged path, form from a harvested "
                 "template; neither makes it true",
     }
+    if "spoken_via" in dict(locals()):
+        out["surface_center"] = locals()["spoken_via"]
+    return out
 
 
 def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
