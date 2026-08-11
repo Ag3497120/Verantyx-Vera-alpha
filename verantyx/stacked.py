@@ -142,6 +142,18 @@ def in_words(
         spoken_via = wc
     from .compose_ja import compose
 
+    # Content words are sifted through the vocabulary when enough survive.
+    # 「法律　ｃｍは、規定の目的とする。」 put a full-width unit fragment in
+    # a sentence because the SUBJECT was vocabulary-gated and the content
+    # slots were not. Filtering all content to words would silence most
+    # answers (facets are 7.4% words), so the sieve applies only when at
+    # least two words remain — otherwise the unfiltered rest stands and
+    # the fragment risk is preferred to the silence.
+    if rest:
+        worded = [f for f in rest if f in writer.vocab]
+        if len(worded) >= 2:
+            rest = worded
+
     # Path-driven speech carries PRESENCE evidence only — counts, edges,
     # co-occurrence — and presence licenses neither negation nor a norm.
     # The form supplies the shape, and the shape was quietly supplying a

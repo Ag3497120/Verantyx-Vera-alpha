@@ -157,25 +157,42 @@ def run_query(query: str) -> Dict[str, Any]:
             if cov.get("single") and cov.get("subject")                     and cov["subject"] not in v.stores["ja"].crosses:
                 subject = cov["subject"]
         if subject:
-            threading.Thread(target=grow_one, args=(subject,),
-                             daemon=True).start()
+            # OFFERED, never taken. The automatic version ingested the
+            # moment it refused; the governed version follows the
+            # project's own quarantine rule — an AI may propose, only a
+            # human accepts. /preview shows WHAT would be ingested and
+            # /grow ingests only after the reader approves.
+            emit({"type": "grow_offer", "subject": subject})
     return full
 
 
-def grow_one(subject: str) -> None:
+def preview_one(subject: str) -> Dict[str, Any]:
+    """Fetch and HOLD the article so the reader sees it before approving."""
     from .corpus_wikipedia import extract
+
+    try:
+        text = extract(subject, intro=False)
+    except Exception as exc:
+        return {"ok": False, "why": type(exc).__name__}
+    if not text:
+        return {"ok": False, "why": "no_article"}
+    STATE.setdefault("pending", {})[subject] = text
+    return {"ok": True, "subject": subject, "chars": len(text),
+            "head": text[:220],
+            "url": "https://ja.wikipedia.org/wiki/" + subject}
+
+
+def grow_one(subject: str) -> None:
     from .document_ingest import Document, ingest_documents
     from .grow import log_refusal
 
     emit({"type": "grow_start", "subject": subject})
-    try:
-        text = extract(subject, intro=False)
-    except Exception as exc:
-        emit({"type": "grow_missing", "subject": subject,
-              "why": type(exc).__name__})
-        return
+    # Only what the reader saw and approved is ingested — the text held by
+    # preview_one, never a fresh fetch that could differ from the preview.
+    text = (STATE.get("pending") or {}).pop(subject, None)
     if not text:
-        emit({"type": "grow_missing", "subject": subject, "why": "no_article"})
+        emit({"type": "grow_missing", "subject": subject,
+              "why": "not_previewed"})
         return
 
     v = STATE["vera"]
@@ -249,6 +266,23 @@ class H(BaseHTTPRequestHandler):
             finally:
                 if q in CLIENTS:
                     CLIENTS.remove(q)
+            return
+
+        if u.path in ("/preview", "/grow"):
+            subj = parse_qs(u.query).get("s", [""])[0]
+            try:
+                subj = subj.encode("latin-1").decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+            if u.path == "/preview":
+                self._send(200, "application/json",
+                           json.dumps(preview_one(subj),
+                                      ensure_ascii=False).encode())
+            else:
+                threading.Thread(target=grow_one, args=(subj,),
+                                 daemon=True).start()
+                self._send(200, "application/json",
+                           json.dumps({"verdict": "ACCEPTED"}).encode())
             return
 
         if u.path == "/ask":
