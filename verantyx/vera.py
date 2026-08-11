@@ -187,6 +187,20 @@ class Vera:
         # KNOWN GAP — a refusal checks the gap store: if this absence is
         # already recorded (with which witnesses hold it), the reader sees
         # a mapped hole, not a fresh one.
+        # NEAR TERMS — a refusal offers same-slot siblings as SUGGESTIONS,
+        # never as answers: 返済 refused suggests 弁済 because both fill
+        # the same slots under shared parents. Suggesting is not deciding;
+        # the reader picks, which is why ties are fine here.
+        if str(out.get("verdict", "")).startswith("UNKNOWN") and lang == "ja":
+            subj = out.get("subject")
+            if subj:
+                try:
+                    from .covenant import siblings
+                    near = siblings(store, subj, limit=6)
+                    if near:
+                        out["near_terms"] = near[:5]
+                except Exception:
+                    pass
         if (str(out.get("verdict", "")).startswith("UNKNOWN")
                 and self.gaps is not None):
             subj = out.get("subject")

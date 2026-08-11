@@ -143,7 +143,7 @@ def remedy(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     verdict = str(result.get("verdict", ""))
     if verdict.startswith("ANSWER") or verdict in ("SEEDED", "AGREED", "LEAD",
-                                                   "ATTESTED"):
+                                                   "ATTESTED", "COMPARISON"):
         return {"verdict": verdict, "needs_registration": False}
     spec = REMEDIES.get(verdict)
     if spec is None:

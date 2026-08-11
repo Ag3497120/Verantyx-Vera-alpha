@@ -461,6 +461,47 @@ def yes_no(store: Any, query: str) -> Optional[Dict[str, Any]]:
                     "is attestation, not assent"}
 
 
+_COMPARE = None
+
+
+def compare_shape(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """「AとBの違いは」— the comparison the materials always allowed.
+
+    `eliminate` and `siblings` could compute facet differences for months;
+    no question SHAPE was wired to them. The verdict is COMPARISON, and it
+    only fires when BOTH subjects are held — comparing a held thing to an
+    unheld one would present absence as difference, which is the closure
+    violation wearing a table. Shared facets first (what the corpus says
+    they have in common), then each side's strongest own facets.
+    """
+    global _COMPARE
+    if _COMPARE is None:
+        import re as _re
+        _COMPARE = _re.compile(
+            r"^(.+?)と(.+?)の(?:違い|相違|差)(?:は|とは)?[?？]?$")
+    m = _COMPARE.match(query.strip())
+    if not m:
+        return None
+    a, b = m.group(1).strip(), m.group(2).strip()
+    ca, cb = store.crosses.get(a), store.crosses.get(b)
+    if ca is None or cb is None:
+        missing = [t for t, c in ((a, ca), (b, cb)) if c is None]
+        return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None, "text": "",
+                "subject": missing[0], "compare": [a, b],
+                "note": "comparison needs both subjects held; absence "
+                        "shown as difference would be fabrication"}
+    shared = sorted(set(ca) & set(cb),
+                    key=lambda f: (-(ca[f] + cb[f]), f))[:4]
+    only_a = sorted(set(ca) - set(cb), key=lambda f: (-ca[f], f))[:4]
+    only_b = sorted(set(cb) - set(ca), key=lambda f: (-cb[f], f))[:4]
+    return {"verdict": "COMPARISON", "core": a, "core_key": a,
+            "compare": [a, b],
+            "shared": shared, "only_a": only_a, "only_b": only_b,
+            "text": " ".join([a, b] + shared[:3]),
+            "note": "shared facets, then each side's own — all held, "
+                    "nothing inferred"}
+
+
 def intersect(store: Any, query: str) -> Optional[Dict[str, Any]]:
     """Three or more conditions: narrow, never chain.
 
@@ -514,6 +555,94 @@ def intersect(store: Any, query: str) -> Optional[Dict[str, Any]]:
                 "text": "", "conditions": sol.get("conditions"),
                 "trail": sol.get("trail")}
     return None
+
+
+def staged(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """Multi-step by staged intersection: 「条件… → 条件…」.
+
+    The chain that decays (41.5% -> 19.3%) walks facet edges; the stage
+    that holds re-INTERSECTS at every step. Stage one narrows as usual;
+    its SURVIVORS become a membership condition for stage two — a stage-2
+    candidate must hold its own conditions AND touch a survivor (hold it
+    as a facet, or be held on its cross). Both trails ride the answer, so
+    a reader can see where each stage cut.
+
+    The arrow is explicit on purpose. 背任罪の刑の上限を科された者の
+    再審請求先は hides its stage boundary in case grammar this reader
+    does not parse; guessing the boundary would stage the wrong cut and
+    answer a different chain. 「背任罪 刑 → 再審」 states it, and the
+    typed UNKNOWNs say which stage failed.
+    """
+    if "→" not in query and "->" not in query:
+        return None
+    from .lang import ja_content_runs
+    from .puzzle import Puzzle
+
+    parts = [p2.strip() for p2 in
+             query.replace("->", "→").split("→") if p2.strip()]
+    if len(parts) != 2:
+        return None
+    t1 = ja_content_runs(parts[0])
+    t2 = ja_content_runs(parts[1])
+    if not t1 or not t2:
+        return None
+    pz1 = Puzzle(store=store).narrow(*t1)
+    s1 = pz1.answer()
+    survivors = (set(pz1.candidates or ())
+                 if s1["verdict"] in ("ANSWER", "UNKNOWN_UNDERDETERMINED")
+                 else set())
+    if not survivors:
+        return {"verdict": "UNKNOWN_STAGE1_EMPTY", "core": None, "text": "",
+                "stage1": s1, "note": "the first stage left nothing to "
+                "hand the second; the chain stops where the evidence does"}
+    if len(survivors) > 40:
+        return {"verdict": "UNKNOWN_STAGE1_TOO_WIDE", "core": None,
+                "text": "", "remaining": len(survivors), "stage1": s1,
+                "note": "stage one narrowed too little to hand on; add a "
+                        "condition before the arrow"}
+    pz2 = Puzzle(store=store).narrow(*t2)
+    if not pz2.candidates:
+        return {"verdict": "UNKNOWN_STAGE2_EMPTY", "core": None, "text": "",
+                "stage1": s1, "note": "no core holds the second stage's "
+                "conditions at all"}
+    # Link STRENGTH, not link existence: touching one survivor out of
+    # thirty is background, touching five is the chain. Measured with
+    # existence alone, 時効 援用 → 期間 left 236 standing; counting
+    # touches and demanding a strict lead is the same abstention
+    # discipline every other tie in this engine obeys.
+    linked: Dict[str, int] = {}
+    for c in pz2.candidates:
+        cr = store.crosses.get(c) or {}
+        n = sum(1 for m in survivors
+                if m in cr or c in (store.crosses.get(m) or {}))
+        if n:
+            linked[c] = n
+    out = {"stage1": {"conditions": t1, "survivors": sorted(survivors)[:8],
+                      "remaining": len(survivors)},
+           "stage2": {"conditions": t2,
+                      "candidates": len(pz2.candidates)}}
+    if not linked:
+        return {**out, "verdict": "UNKNOWN_STAGES_DISCONNECTED",
+                "core": None, "text": "",
+                "note": "both stages hold, but no stage-2 core touches a "
+                        "stage-1 survivor — the chain the question asserts "
+                        "is not written in this corpus"}
+    ranked = sorted(linked.items(), key=lambda kv: (-kv[1], kv[0]))
+    strict = (len(ranked) == 1
+              or ranked[0][1] > ranked[1][1])
+    if strict:
+        core = ranked[0][0]
+        cross = store.crosses.get(core) or {}
+        shown = sorted(cross, key=lambda f: (-cross[f], f))[:4]
+        return {**out, "verdict": "ANSWER_BY_STAGES", "core": core,
+                "core_key": core, "links": ranked[0][1],
+                "text": " ".join([core] + shown)}
+    top = ranked[0][1]
+    tied = [c for c, n in ranked if n == top]
+    return {**out, "verdict": "UNKNOWN_UNDERDETERMINED", "core": None,
+            "text": "", "candidates": tied[:12], "remaining": len(tied),
+            "note": "the strongest stage-2 candidates touch the same "
+                    "number of stage-1 survivors; ties abstain"}
 
 
 def aspect_read(store: Any, out: Dict[str, Any],
@@ -577,6 +706,12 @@ def ask(
     # Yes/no questions never reach the census: the census answers "what",
     # and forcing 「〜できるか」 through it either refuses or answers about
     # the subject as if とは had been asked. Attestation is its own shape.
+    st_ = staged(store, query)
+    if st_ is not None:
+        return st_
+    cmp_ = compare_shape(store, query)
+    if cmp_ is not None:
+        return cmp_
     yn = yes_no(store, query)
     if yn is not None:
         return yn
