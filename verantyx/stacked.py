@@ -92,6 +92,20 @@ def in_words(
     if not text:
         return {"verdict": result.get("verdict"), "sentences": [],
                 "note": "no converged path to speak from"}
+    # A sentence asserts a RELATION between its words — 「時効は光州事件と
+    # 制定である」 claims a connection the way a path never does. When the
+    # facet order carries no evidence (all counts tied, sequence is a
+    # lexicographic accident), composing those facets into a copula is
+    # upgrading an artifact into an assertion. The path is still shown; it
+    # just is not spoken. Measured before this gate, the sampled sentence
+    # stream mixed real relations (地形図は地形断面図ではない) with accidents
+    # of the tie-break, and nothing marked which was which.
+    if result.get("order_evidence") == "arbitrary":
+        return {"verdict": result.get("verdict"), "sentences": [],
+                "path": [w for w in text.split() if w],
+                "note": "the facets are evidence-tied — an unordered set; "
+                        "composing them into a sentence would assert "
+                        "relations the corpus never ranked"}
     path = [w for w in text.split() if w]
     if not path:
         return {"verdict": result.get("verdict"), "sentences": []}

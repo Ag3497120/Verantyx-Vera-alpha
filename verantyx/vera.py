@@ -48,6 +48,21 @@ class Vera:
     models: Dict[str, Any] = field(default_factory=dict)
     writer: Optional[Any] = None
     built: Dict[str, Any] = field(default_factory=dict)
+    #: Data-varied witnesses: one merged store per SELECTION RULE (百科 is
+    #: "articles that cite statutes", 法学 is "articles in doctrine
+    #: categories", 多分野 is "sixteen named fields", 法令 is the statute
+    #: corpus). They never vote — the trajectory measured what pooling does
+    #: (out-of-corpus errors 0 -> 8 when cut-varied readings joined a
+    #: census, answered 284 -> 208 when domains were split INTO the vote).
+    #: They are read independently AFTER the verdict, and the answer carries
+    #: how many of them reached the same core. Data-varied agreement is
+    #: evidence; this is the place the trajectory said it belongs — beside
+    #: the verdict, never in it.
+    witnesses: Dict[str, Any] = field(default_factory=dict)
+    #: Optional provenance lookup (core, shown facets) -> source leaves.
+    #: Supplied by the sqlite path, absent on the pickle path — provenance
+    #: at facet grain lives in the published file's tables.
+    origin: Optional[Any] = None
 
     def add(self, lang: str, store: Any) -> "Vera":
         from .graded import GradedJudge, settings_for
@@ -105,8 +120,56 @@ class Vera:
                     landed.append(r)
             if landed:
                 out["reached"] = landed
+        if out.get("core_key") and lang == "ja" and self.witnesses:
+            out["witnesses"] = self.attest(out)
+        if out.get("core_key") and out.get("text") and self.origin is not None:
+            shown = str(out["text"]).split()[1:]
+            try:
+                out["facet_origin"] = self.origin(str(out["core_key"]), shown)
+            except Exception:
+                pass
         out["remedy"] = remedy(out)
         return out
+
+    def attest(self, out: Dict[str, Any]) -> Dict[str, Any]:
+        """How many independent corpora reach the same core, read separately.
+
+        Each witness is built from documents a DIFFERENT selection rule
+        chose, so two witnesses landing on the same core is two unrelated
+        document sets saying the same thing — the trajectory measured that
+        kind of agreement at 97.6% against 53.7% for structural agreement
+        on the same match count. The read is the seeded subject (the same
+        entry the main answer used), each witness runs its own full
+        consensus with its own gates, and an abstaining witness is not a
+        disagreement — it simply never read about the subject.
+
+        What this does NOT do — measured before shipping — is expose
+        sense pollution: 時効 attests 2/2 because a 労働基準法 article
+        (百科) also holds the core, even though the SHOWN facets all come
+        from one 法学 article about 法の不遡及. Core-name agreement cannot
+        see that, and per-facet witness attestation decided 0 of 1,776 tied
+        cores, so the pollution is surfaced by `facet_origin` (provenance
+        display) instead. The badge answers one question only: how many
+        unrelated document sets know this subject at all.
+        """
+        from .consensus_store import consensus_over_store
+
+        target = str(out.get("core_key") or "")
+        probe = (out.get("seeded_from") or {}).get("query") or target
+        by: Dict[str, Any] = {}
+        agree = answered = 0
+        for name in sorted(self.witnesses):
+            r = consensus_over_store(self.witnesses[name], probe)
+            wcore = r.get("core_key")
+            if r.get("verdict", "").startswith(("ANSWER", "SEEDED")) and wcore:
+                answered += 1
+                same = str(wcore) == target
+                agree += same
+                by[name] = {"core": r.get("core"), "same": same}
+            else:
+                by[name] = {"verdict": r.get("verdict")}
+        return {"agree": agree, "answered": answered,
+                "of": len(self.witnesses), "by": by}
 
     def report(self) -> Dict[str, Any]:
         return {"sovereigns": dict(self.built),
@@ -150,6 +213,20 @@ def load(root: Any = None) -> Vera:
             for c, n in getattr(s, "core_count", {}).items():
                 ja.core_count[c] = ja.core_count.get(c, 0) + n
     v.add("ja", ja)
+
+    # One witness per selection rule, merged the same way. The witnesses
+    # hold the same leaves the sovereign holds — partitioned, not copied —
+    # so nothing here can know something the sovereign does not.
+    for d in doms:
+        w = CrossStore()
+        for s in doms[d].values():
+            w.source_labels |= getattr(s, "source_labels", set())
+            for c, cr in s.crosses.items():
+                dst = w.crosses.setdefault(c, {})
+                for f, n in cr.items():
+                    dst[f] = dst.get(f, 0) + n
+        if w.crosses:
+            v.witnesses[d] = w
 
     en_path = root / "build" / "english.pkl"
     if en_path.is_file():

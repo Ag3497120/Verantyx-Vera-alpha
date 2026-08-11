@@ -278,15 +278,80 @@ def load(path: Path) -> Dict[str, Any]:
     return stores
 
 
+def witnesses(path: Path) -> Dict[str, Any]:
+    """One merged store per selection rule (the `domain` column), summed.
+
+    The same partition `vera.load` builds from the pickles, reconstructed
+    from the published file — the leaves table kept the domain of every
+    leaf precisely so that questions like this stay answerable after the
+    pickles are gone.
+    """
+    from .cross_store import CrossStore
+
+    con = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    dom_of = {i: d for i, l, d in con.execute(
+        "SELECT id, lang, domain FROM leaves WHERE lang='ja'")}
+    out: Dict[str, Any] = {}
+    for leaf, label in con.execute("SELECT leaf, label FROM labels"):
+        d = dom_of.get(leaf)
+        if d is not None:
+            out.setdefault(d, CrossStore()).source_labels.add(label)
+    for leaf, core, facet, n in con.execute(
+            "SELECT leaf, core, facet, count FROM facets"):
+        d = dom_of.get(leaf)
+        if d is None:
+            continue
+        cr = out.setdefault(d, CrossStore()).crosses.setdefault(core, {})
+        cr[facet] = cr.get(facet, 0) + n
+    for leaf, core, n in con.execute("SELECT leaf, core, count FROM cores"):
+        d = dom_of.get(leaf)
+        if d is None:
+            continue
+        st = out.setdefault(d, CrossStore())
+        st.crosses.setdefault(core, {})
+        st.core_count[core] = st.core_count.get(core, 0) + n
+    con.close()
+    return {d: s for d, s in out.items() if s.crosses}
+
+
+def origin_of(path: Path, core: str, facets: List[str]) -> Dict[str, List[str]]:
+    """Which leaves supplied these facets of this core. Provenance, on demand.
+
+    The sense-pollution fix that survived measurement. Per-facet witness
+    attestation was tried first and decided nothing (0 of 1,776 tied cores)
+    — two selection rules almost never write the same (core, facet) pair.
+    What the file DOES know is where each pair came from, and that is the
+    fact a reader needs: 時効's leading facets trace to 法学／法の不遡及.txt,
+    an article about non-retroactivity that cites the Korean special law —
+    visibly not an article about 時効. Nothing is reordered or suppressed;
+    the origin is shown and the reader does the discounting.
+    """
+    if not facets:
+        return {}
+    con = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    out: Dict[str, List[str]] = {}
+    q = ("SELECT l.domain, l.name FROM facets f JOIN leaves l ON l.id=f.leaf "
+         "WHERE f.core=? AND f.facet=?")
+    for f in facets:
+        rows = con.execute(q, (core, f)).fetchall()
+        out[f] = sorted({f"{d}／{n.split('／')[-1]}" if "／" not in n else n
+                         for d, n in rows})[:3]
+    con.close()
+    return out
+
+
 def vera(path: Path) -> Any:
     """A `Vera` built from the published file rather than from pickles."""
     from .vera import Vera
     from .writer import Writer
 
+    path = Path(path)
     v = Vera()
     for lang, st in sorted(load(path).items()):
         v.add(lang, st)
-    w = Path(path).parent / "writer.json"
+    v.witnesses = witnesses(path)
+    v.origin = lambda core, facets: origin_of(path, core, facets)
+    w = path.parent / "writer.json"
     if w.exists():
         v.writer = Writer.load(w)
     return v
