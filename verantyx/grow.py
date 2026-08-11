@@ -50,16 +50,36 @@ def log_refusal(result: Dict[str, Any], path: Optional[str] = None) -> bool:
     return True
 
 
-def pending(queue: Path, store: Any) -> List[str]:
-    """Deduplicated subjects the store still does not hold, oldest first."""
+def pending(queue: Path, store: Any,
+            witnesses: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Deduplicated subjects still missing, oldest first.
+
+    Missing WHERE depends on the entry's rule. A refusal entry is checked
+    against the merged sovereign — the question failed there. A peer-gap
+    entry (rule "peer_gap:W") is checked against witness W: the merged
+    store already holds the subject through some OTHER selection rule,
+    which is precisely why it is W's debt and not a refusal. Filtering
+    both against the merged store silently dropped every peer-gap the
+    moment it was enqueued — the loop closed on paper and never fetched.
+    """
     seen: List[str] = []
     for line in Path(queue).read_text(encoding="utf-8").splitlines():
         try:
-            s = json.loads(line).get("subject")
+            rec = json.loads(line)
         except Exception:
             continue
-        if s and s not in seen and s not in store.crosses:
-            seen.append(s)
+        subj = rec.get("subject")
+        if not subj or subj in seen:
+            continue
+        rule = str(rec.get("rule") or "")
+        if rule.startswith("peer_gap:") and witnesses:
+            w = rule.split(":", 1)[1]
+            held = subj in (witnesses.get(w).crosses
+                            if witnesses.get(w) else store.crosses)
+        else:
+            held = subj in store.crosses
+        if not held:
+            seen.append(subj)
     return seen
 
 
@@ -73,10 +93,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     a = ap.parse_args(argv)
     root = Path(a.root)
 
-    from .export_sqlite import load
+    from .export_sqlite import load, witnesses as load_witnesses
 
     store = load(root / "build" / "vera.db")["ja"]
-    subjects = pending(Path(a.queue), store)[:a.limit]
+    wits = load_witnesses(root / "build" / "vera.db")
+    subjects = pending(Path(a.queue), store, witnesses=wits)[:a.limit]
     if not subjects:
         print(json.dumps({"verdict": "ANSWER", "pending": 0,
                           "note": "every queued subject is now held"},
