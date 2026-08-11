@@ -277,10 +277,10 @@ print(v.ask('正当防衛とは'))"</pre>
 <script id="data" type="application/json">{
  "meta": {
   "artifact": "kofdai/vera-alpha :: vera.db",
-  "sha256": "b916c305add017c7",
-  "mb": 140.0,
+  "sha256": "3ce55582447c621f",
+  "mb": 142.2,
   "computed_at": "2026-08-11",
-  "ja_cores": 86992,
+  "ja_cores": 88081,
   "en_cores": 15268
  },
  "rows": [
@@ -288,18 +288,18 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "正当防衛とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 71.3,
+   "ms": 68.9,
    "core": "正当防衛",
    "path": [
     "正当防衛",
-    "成立",
     "行為",
     "防衛",
+    "成立",
     "他人"
    ],
    "sentences": [
-    "正当防衛は、行為と成立である。",
-    "正当防衛はしばしば行為の成立とみなされる。"
+    "正当防衛　- 行為が成立まれる。",
+    "正当防衛、行為、成立とよぶこともある。"
    ],
    "register": null,
    "closes": false,
@@ -308,10 +308,12 @@ print(v.ask('正当防衛とは'))"</pre>
    "subject": null,
    "nearest": null,
    "witness": {
-    "agree": 1,
-    "answered": 1
+    "agree": 2,
+    "answered": 2
    },
    "origin": [
+    "指名／正当防衛.txt",
+    "指名／緊急避難.txt",
     "法学／正当防衛.txt"
    ]
   },
@@ -319,18 +321,18 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "殺人罪の刑は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 53.7,
+   "ms": 55.9,
    "core": "殺人罪",
    "path": [
     "殺人罪",
     "法定刑加重",
     "罪刑法定主義違反",
-    "例",
+    "刑法219条",
     "人"
    ],
    "sentences": [
-    "殺人罪をやめるということは、法定刑加重をやめるということである。",
-    "殺人罪（きょくしょてきひほうわ）とも法定刑加重かれる。"
+    "殺人罪は法定刑加重ではありません。",
+    "殺人罪は法定刑加重ではないからです。"
    ],
    "register": null,
    "closes": false,
@@ -339,31 +341,64 @@ print(v.ask('正当防衛とは'))"</pre>
    "subject": null,
    "nearest": null,
    "witness": {
-    "agree": 2,
-    "answered": 2
+    "agree": 3,
+    "answered": 3
    },
    "origin": [
+    "指名／殺人罪.txt",
     "法学／不作為犯.txt",
-    "法学／刑法 (日本).txt",
-    "法学／刑法施行法.txt"
+    "法学／刑法 (日本).txt"
    ]
   },
   {
    "q": "契約の成立要件は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 73.4,
+   "ms": 70.0,
    "core": "契約",
    "path": [
     "契約",
-    "有効:無効",
-    "異な",
-    "禁止",
-    "結"
+    "成立要件",
+    "成立",
+    "有効",
+    "有効:有効"
    ],
    "sentences": [
-    "契約は、禁止とする。",
-    "契約について禁止とする。"
+    "契約の成立は、有効でしなければならない。",
+    "契約の成立は、有効をこえてはならない。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 4,
+    "answered": 4
+   },
+   "origin": [
+    "指名／債務不履行.txt",
+    "指名／契約.txt",
+    "指名／解除.txt"
+   ]
+  },
+  {
+   "q": "時効とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 80.2,
+   "core": "時効",
+   "path": [
+    "時効",
+    "援用",
+    "中断",
+    "成立",
+    "完成"
+   ],
+   "sentences": [
+    "時効と成立を完成してはならない。",
+    "時効と成立をとることもある。"
    ],
    "register": null,
    "closes": false,
@@ -376,51 +411,23 @@ print(v.ask('正当防衛とは'))"</pre>
     "answered": 3
    },
    "origin": [
-    "多分野／経済学上の未解決問題.txt",
-    "法学／AV出演被害防止・救済法.txt",
-    "法学／公共の福祉.txt"
-   ]
-  },
-  {
-   "q": "時効とは",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 77.7,
-   "core": "時効",
-   "path": [
-    "時効",
-    "18民主化運動等",
-    "光州事件",
-    "制定",
-    "前職大統領2人全斗煥"
-   ],
-   "sentences": [],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "arbitrary",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 2,
-    "answered": 2
-   },
-   "origin": [
-    "法学／法の不遡及.txt"
+    "指名／公訴時効.txt",
+    "指名／時効.txt",
+    "指名／消滅時効.txt"
    ]
   },
   {
    "q": "過失相殺とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 57.7,
-   "core": "民法第七百二十二条",
+   "ms": 64.5,
+   "core": "過失相殺",
    "path": [
-    "民法第七百二十二条",
-    "不法行為",
-    "中間利息",
-    "控除",
-    "損害賠償"
+    "過失相殺",
+    "主張",
+    "債務者",
+    "損益相殺",
+    "考慮"
    ],
    "sentences": [],
    "register": null,
@@ -434,25 +441,59 @@ print(v.ask('正当防衛とは'))"</pre>
     "answered": 1
    },
    "origin": [
-    "民法／第五章　不法行為"
+    "指名／損害賠償.txt",
+    "指名／過失相殺.txt"
    ]
   },
   {
    "q": "所有権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 68.0,
+   "ms": 67.7,
    "core": "所有権",
    "path": [
     "所有権",
+    "性質",
     "登記",
-    "人",
-    "及",
-    "景観"
+    "全面的支配",
+    "処分"
    ],
    "sentences": [
-    "所有権のみにみられる登記として、景観（にんにくせんてん）がある。",
-    "所有権のみの登記も景観します。"
+    "所有権に登記のそれは性質である。",
+    "所有権に登記（しきさい）がある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 4,
+    "answered": 4
+   },
+   "origin": [
+    "多分野／封建領主.txt",
+    "指名／所有権.txt",
+    "百科／不動産登記.txt"
+   ]
+  },
+  {
+   "q": "民法とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 81.7,
+   "core": "民法",
+   "path": [
+    "民法",
+    "記載",
+    "条数",
+    "日本",
+    "規定"
+   ],
+   "sentences": [
+    "民法の規定はまだ記載らかになっていない。",
+    "民法の規定は，すべて記載（ｐＹ）とする。"
    ],
    "register": null,
    "closes": false,
@@ -465,49 +506,16 @@ print(v.ask('正当防衛とは'))"</pre>
     "answered": 3
    },
    "origin": [
-    "多分野／インセンティブ (経済学).txt",
-    "多分野／所有権理論.txt",
-    "多分野／死体売買.txt"
-   ]
-  },
-  {
-   "q": "民法とは",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 83.8,
-   "core": "民法",
-   "path": [
-    "民法",
-    "日本",
-    "定",
-    "規定",
-    "6親等内"
-   ],
-   "sentences": [
-    "民法には規定をする。",
-    "民法には、規定のものがある。"
-   ],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "ranked",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 2,
-    "answered": 2
-   },
-   "origin": [
-    "法学／一般民法典 (オーストリア).txt",
-    "法学／物権.txt",
-    "法学／親族.txt"
+    "指名／不法行為.txt",
+    "指名／先取特権.txt",
+    "指名／取消権.txt"
    ]
   },
   {
    "q": "相続とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 91.4,
+   "ms": 89.9,
    "core": "相続",
    "path": [
     "相続",
@@ -517,8 +525,106 @@ print(v.ask('正当防衛とは'))"</pre>
     "効果"
    ],
    "sentences": [
-    "相続において承認とする。",
-    "相続によっては、承認に効果われることもある。"
+    "相続は、承認の効果とする。",
+    "相続は、承認のとおりとする。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／相続.txt",
+    "法学／家事事件手続法.txt",
+    "法学／相続.txt"
+   ]
+  },
+  {
+   "q": "抵当権とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 92.0,
+   "core": "抵当権",
+   "path": [
+    "抵当権",
+    "設定",
+    "実行",
+    "登記",
+    "債務"
+   ],
+   "sentences": [
+    "抵当権を登記とする。",
+    "抵当権し、その登記は、債務であつてはならない。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 2,
+    "answered": 3
+   },
+   "origin": [
+    "指名／抵当権.txt",
+    "百科／不動産登記.txt"
+   ]
+  },
+  {
+   "q": "不法行為とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 87.6,
+   "core": "不法行為",
+   "path": [
+    "不法行為",
+    "損害",
+    "成立",
+    "損害賠償請求権",
+    "時"
+   ],
+   "sentences": [
+    "不法行為は成立で損害している。",
+    "不法行為は成立で損害である。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 1
+   },
+   "origin": [
+    "指名／不法行為.txt",
+    "指名／名誉毀損.txt",
+    "指名／損害賠償.txt"
+   ]
+  },
+  {
+   "q": "詐欺罪とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 63.4,
+   "core": "詐欺罪",
+   "path": [
+    "詐欺罪",
+    "例",
+    "ケース",
+    "サービス",
+    "不法"
+   ],
+   "sentences": [
+    "詐欺罪でのサービスもケースである。",
+    "詐欺罪でのみサービスられる。"
    ],
    "register": null,
    "closes": false,
@@ -531,26 +637,54 @@ print(v.ask('正当防衛とは'))"</pre>
     "answered": 2
    },
    "origin": [
-    "法学／家事事件手続法.txt",
-    "法学／相続.txt"
+    "指名／詐欺罪.txt"
    ]
   },
   {
-   "q": "抵当権とは",
+   "q": "窃盗罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 93.0,
-   "core": "抵当権",
+   "ms": 65.9,
+   "core": "窃盗罪",
    "path": [
-    "抵当権",
-    "登記",
-    "処分",
-    "変更",
-    "民法376条"
+    "窃盗罪",
+    "クレプトマニア",
+    "不法領得",
+    "他人",
+    "使用"
+   ],
+   "sentences": [],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "arbitrary",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 2,
+    "answered": 3
+   },
+   "origin": [
+    "指名／窃盗罪.txt",
+    "法学／財産犯.txt"
+   ]
+  },
+  {
+   "q": "名誉毀損とは",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 72.7,
+   "core": "名誉毀損",
+   "path": [
+    "名誉毀損",
+    "成立",
+    "不法行為",
+    "法理",
+    "行為"
    ],
    "sentences": [
-    "抵当権かに変更しいようですね。",
-    "抵当権から変更にかけて登記がある。"
+    "名誉毀損の行為は、成立となる。",
+    "名誉毀損の行為は、成立にする。"
    ],
    "register": null,
    "closes": false,
@@ -560,118 +694,17 @@ print(v.ask('正当防衛とは'))"</pre>
    "nearest": null,
    "witness": {
     "agree": 1,
-    "answered": 2
-   },
-   "origin": [
-    "百科／不動産登記.txt"
-   ]
-  },
-  {
-   "q": "不法行為とは",
-   "verdict": "UNKNOWN_NOT_PRESENT",
-   "lang": "ja",
-   "ms": 29.3,
-   "core": null,
-   "path": [],
-   "sentences": [],
-   "register": "sentences about the subject, in the register the corpus is judged in",
-   "closes": true,
-   "why": null,
-   "order": null,
-   "subject": "不法行為",
-   "nearest": "不法",
-   "witness": null,
-   "origin": []
-  },
-  {
-   "q": "詐欺罪とは",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 65.6,
-   "core": "詐欺罪",
-   "path": [
-    "詐欺罪",
-    "使用",
-    "制限",
-    "名称等",
-    "業務妨害罪"
-   ],
-   "sentences": [],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "arbitrary",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 1,
     "answered": 1
    },
    "origin": [
-    "法学／軽犯罪法.txt"
-   ]
-  },
-  {
-   "q": "窃盗罪とは",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 66.4,
-   "core": "窃盗罪",
-   "path": [
-    "窃盗罪",
-    "不法領得",
-    "参照",
-    "意思"
-   ],
-   "sentences": [],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "arbitrary",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 1,
-    "answered": 2
-   },
-   "origin": [
-    "法学／財産犯.txt"
-   ]
-  },
-  {
-   "q": "名誉毀損とは",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 61.4,
-   "core": "名誉毀損罪",
-   "path": [
-    "名誉毀損罪",
-    "230条",
-    "免責規定",
-    "加重",
-    "新設"
-   ],
-   "sentences": [],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "arbitrary",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 1,
-    "answered": 1
-   },
-   "origin": [
-    "法学／刑法 (日本).txt",
-    "法学／刑法施行法.txt"
+    "指名／名誉毀損.txt"
    ]
   },
   {
    "q": "労働基準法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 88.3,
+   "ms": 87.7,
    "core": "労働基準法",
    "path": [
     "労働基準法",
@@ -689,7 +722,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "nearest": null,
    "witness": {
     "agree": 1,
-    "answered": 2
+    "answered": 3
    },
    "origin": [
     "百科／フレックスタイム制.txt",
@@ -700,7 +733,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "著作権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 56.8,
+   "ms": 53.9,
    "core": "著作権",
    "path": [
     "著作権",
@@ -710,8 +743,8 @@ print(v.ask('正当防衛とは'))"</pre>
     "存在"
    ],
    "sentences": [
-    "著作権は、存在が消滅になっている。",
-    "著作権は、存在ではありません。"
+    "著作権には存在さない。",
+    "著作権には存在で消滅かかっている。"
    ],
    "register": null,
    "closes": false,
@@ -720,20 +753,20 @@ print(v.ask('正当防衛とは'))"</pre>
    "subject": null,
    "nearest": null,
    "witness": {
-    "agree": 3,
-    "answered": 3
+    "agree": 4,
+    "answered": 4
    },
    "origin": [
     "多分野／Portal:建築／建築用語.txt",
     "多分野／人工知能.txt",
-    "法学／オイヤー・アンド・ターミナー.txt"
+    "指名／抵当権.txt"
    ]
   },
   {
    "q": "超伝導とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 49.4,
+   "ms": 50.9,
    "core": "超伝導",
    "path": [
     "超伝導",
@@ -743,8 +776,8 @@ print(v.ask('正当防衛とは'))"</pre>
     "カメルリング"
    ],
    "sentences": [
-    "超伝導は発見における現象ではありません。",
-    "超伝導は発見にならない。"
+    "超伝導についてはさらに発見られていない。",
+    "超伝導についても発見が現象となる。"
    ],
    "register": null,
    "closes": false,
@@ -766,7 +799,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "光合成とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 49.4,
+   "ms": 51.5,
    "core": "光合成",
    "path": [
     "光合成",
@@ -776,8 +809,8 @@ print(v.ask('正当防衛とは'))"</pre>
     "例"
    ],
    "sentences": [
-    "光合成は、栄養を休眠るものさしとなる。",
-    "光合成は、栄養（がいしょくほう）である。"
+    "光合成は、栄養ではありません。",
+    "光合成は、栄養ではない。"
    ],
    "register": null,
    "closes": false,
@@ -799,7 +832,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "量子力学とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 50.2,
+   "ms": 51.2,
    "core": "量子力学",
    "path": [
     "量子力学",
@@ -809,8 +842,8 @@ print(v.ask('正当防衛とは'))"</pre>
     "説明"
    ],
    "sentences": [
-    "量子力学についてはさらに説明られていない。",
-    "量子力学についても説明が記述となる。"
+    "量子力学は、説明を記述さない。",
+    "量子力学は、説明（がいしょくほう）である。"
    ],
    "register": null,
    "closes": false,
@@ -832,7 +865,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "民主主義とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 50.9,
+   "ms": 52.6,
    "core": "民主主義",
    "path": [
     "民主主義",
@@ -842,8 +875,8 @@ print(v.ask('正当防衛とは'))"</pre>
     "リベラル"
    ],
    "sentences": [
-    "民主主義のものに原則られる。",
-    "民主主義のような原則がアプリケーションである。"
+    "民主主義としては、原則のものがある。",
+    "民主主義とともに原則のアプリケーションつである。"
    ],
    "register": null,
    "closes": false,
@@ -865,7 +898,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "インフレとは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.8,
+   "ms": 30.8,
    "core": null,
    "path": [],
    "sentences": [],
@@ -882,115 +915,18 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "殺人罪の刑は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 54.4,
+   "ms": 55.8,
    "core": "殺人罪",
    "path": [
     "殺人罪",
     "法定刑加重",
     "罪刑法定主義違反",
-    "例",
+    "刑法219条",
     "人"
    ],
    "sentences": [
-    "殺人罪をやめるということは、法定刑加重をやめるということである。",
-    "殺人罪（きょくしょてきひほうわ）とも法定刑加重かれる。"
-   ],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "aspect",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 2,
-    "answered": 2
-   },
-   "origin": [
-    "法学／不作為犯.txt",
-    "法学／刑法 (日本).txt",
-    "法学／刑法施行法.txt"
-   ]
-  },
-  {
-   "q": "時効の期間は",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 80.8,
-   "core": "時効",
-   "path": [
-    "時効",
-    "除斥期間",
-    "18民主化運動等",
-    "光州事件",
-    "制定"
-   ],
-   "sentences": [
-    "時効としては、制定のものがある。",
-    "時効とは制定がある。"
-   ],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "aspect",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 2,
-    "answered": 2
-   },
-   "origin": [
-    "法学／法の不遡及.txt",
-    "百科／労働基準法.txt"
-   ]
-  },
-  {
-   "q": "相続の効果は",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 88.2,
-   "core": "相続",
-   "path": [
-    "相続",
-    "効果",
-    "一般的効果",
-    "放棄",
-    "承認"
-   ],
-   "sentences": [
-    "相続において承認とする。",
-    "相続によっては、承認に効果われることもある。"
-   ],
-   "register": null,
-   "closes": false,
-   "why": null,
-   "order": "aspect",
-   "subject": null,
-   "nearest": null,
-   "witness": {
-    "agree": 2,
-    "answered": 2
-   },
-   "origin": [
-    "法学／家事事件手続法.txt",
-    "法学／相続.txt"
-   ]
-  },
-  {
-   "q": "著作権の侵害は",
-   "verdict": "SEEDED",
-   "lang": "ja",
-   "ms": 55.2,
-   "core": "著作権",
-   "path": [
-    "著作権",
-    "侵害",
-    "著作権侵害罪",
-    "著作物",
-    "消滅"
-   ],
-   "sentences": [
-    "著作権は、消滅が侵害になっている。",
-    "著作権は、消滅ではありません。"
+    "殺人罪は法定刑加重ではありません。",
+    "殺人罪は法定刑加重ではないからです。"
    ],
    "register": null,
    "closes": false,
@@ -1003,16 +939,115 @@ print(v.ask('正当防衛とは'))"</pre>
     "answered": 3
    },
    "origin": [
+    "指名／殺人罪.txt",
+    "法学／不作為犯.txt",
+    "法学／刑法 (日本).txt"
+   ]
+  },
+  {
+   "q": "時効の期間は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 80.2,
+   "core": "時効",
+   "path": [
+    "時効",
+    "時効期間",
+    "期間",
+    "除斥期間",
+    "援用"
+   ],
+   "sentences": [
+    "時効と期間を援用してはならない。",
+    "時効と期間をとることもある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／時効.txt",
+    "指名／消滅時効.txt",
+    "百科／労働基準法.txt"
+   ]
+  },
+  {
+   "q": "相続の効果は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 89.5,
+   "core": "相続",
+   "path": [
+    "相続",
+    "効果",
+    "一般的効果",
+    "放棄",
+    "承認"
+   ],
+   "sentences": [
+    "相続は、承認の効果とする。",
+    "相続は、承認のとおりとする。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／相続.txt",
+    "法学／家事事件手続法.txt",
+    "法学／相続.txt"
+   ]
+  },
+  {
+   "q": "著作権の侵害は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 53.9,
+   "core": "著作権",
+   "path": [
+    "著作権",
+    "侵害",
+    "著作権侵害罪",
+    "著作物",
+    "消滅"
+   ],
+   "sentences": [
+    "著作権には消滅さない。",
+    "著作権には消滅で侵害かかっている。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 4,
+    "answered": 4
+   },
+   "origin": [
+    "指名／抵当権.txt",
     "法学／オイヤー・アンド・ターミナー.txt",
-    "法学／旧著作権法 (日本).txt",
-    "法学／映画の盗撮の防止に関する法律.txt"
+    "法学／旧著作権法 (日本).txt"
    ]
   },
   {
    "q": "negligence",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 1.4,
+   "ms": 0.7,
    "core": "negligence",
    "path": [
     "negligence",
@@ -1037,7 +1072,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "consideration",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 1.1,
+   "ms": 0.7,
    "core": "consideration",
    "path": [
     "consideration",
@@ -1062,7 +1097,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "jurisdiction",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 1.0,
+   "ms": 0.8,
    "core": "jurisdiction",
    "path": [
     "jurisdiction",
@@ -1087,7 +1122,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "estoppel",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.9,
+   "ms": 0.7,
    "core": "estoppel",
    "path": [
     "estoppel",
@@ -1112,7 +1147,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "tort",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.8,
+   "ms": 0.7,
    "core": "tort",
    "path": [
     "tort",
@@ -1154,7 +1189,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "habeas corpus",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.7,
+   "ms": 0.5,
    "core": "habeas",
    "path": [
     "habeas",
@@ -1210,7 +1245,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "こんにちは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.2,
+   "ms": 30.3,
    "core": null,
    "path": [],
    "sentences": [],
@@ -1227,7 +1262,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "ありがとう",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 30.3,
+   "ms": 30.0,
    "core": null,
    "path": [],
    "sentences": [],
@@ -1244,7 +1279,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "ヴォルフガング粒子とは",
    "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 29.8,
+   "ms": 30.8,
    "core": null,
    "path": [],
    "sentences": [],
@@ -1261,7 +1296,7 @@ print(v.ask('正当防衛とは'))"</pre>
    "q": "ズミルノフ環礁の面積は",
    "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 29.7,
+   "ms": 30.4,
    "core": null,
    "path": [],
    "sentences": [],

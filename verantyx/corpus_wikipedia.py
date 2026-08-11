@@ -233,6 +233,64 @@ def fetch_categories(
             "manifest": str(manifest_path)}
 
 
+def fetch_titles(
+    titles: List[str],
+    out: Path,
+    manifest_path: Path,
+    *,
+    label: str = "",
+    rule: str = "",
+    wiki: str = "ja",
+) -> Dict[str, Any]:
+    """Fetch the named articles and record WHY these names, in the manifest.
+
+    A hand-typed title list is exactly the selection this project refuses —
+    choosing the articles that make a demonstration work. The exception that
+    keeps it honest is a list produced by a rule stated before the result:
+    here, the refusal log. Every title below was a subject the engine
+    refused during operation (UNKNOWN_NOT_PRESENT with the subject named),
+    which is the trajectory's 「拒否のログがそのまま作業待ち行列」 carried
+    out. The rule goes INTO the manifest so a reader can check that the
+    list matches it and criticise the rule rather than the picks.
+    """
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    files: List[Dict[str, Any]] = []
+    missing: List[str] = []
+    for title in titles:
+        time.sleep(DELAY_SECONDS)
+        try:
+            text = extract(title, intro=False, wiki=wiki)
+        except Exception:
+            missing.append(title)
+            continue
+        if not text:
+            missing.append(title)
+            continue
+        name = title.replace("/", "／") + ".txt"
+        blob = text.encode("utf-8")
+        (out / name).write_bytes(blob)
+        files.append({"name": name,
+                      "url": url_for(title, intro=False, wiki=wiki),
+                      "sha256": hashlib.sha256(blob).hexdigest(),
+                      "bytes": len(blob)})
+    manifest = {
+        "label": label or "ja.wikipedia 指名収集",
+        "recorded": time.strftime("%Y-%m-%d"),
+        "selection_rule": {"wiki": wiki, "titles": titles,
+                           "rule": rule or "named explicitly"},
+        "files": files,
+        "reproducible": all(e.get("url") for e in files),
+        "note": "titles named by the recorded rule, not curated for effect; "
+                "the rule is stated so the list can be re-derived and "
+                "criticised independently of the articles it produced.",
+    }
+    Path(manifest_path).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"verdict": "ANSWER", "articles": len(files),
+            "missing": missing, "manifest": str(manifest_path)}
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--manifest", required=True)
@@ -243,10 +301,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="write reconstructed URLs into the manifest")
     ap.add_argument("--categories", nargs="+",
                     help="fetch every article in these categories instead")
+    ap.add_argument("--titles", nargs="+",
+                    help="fetch these named articles; state --rule")
+    ap.add_argument("--rule", default="",
+                    help="the rule that produced the title list")
     ap.add_argument("--label", default="")
     ap.add_argument("--per-category", type=int, default=500)
     ap.add_argument("--wiki", default="ja", help="wiki subdomain, e.g. en")
     a = ap.parse_args(argv)
+
+    if a.titles:
+        if not a.out:
+            print(json.dumps({"verdict": "UNKNOWN_NO_OUT"}, ensure_ascii=False))
+            return 1
+        print(json.dumps(
+            fetch_titles(a.titles, Path(a.out), Path(a.manifest),
+                         label=a.label, rule=a.rule, wiki=a.wiki),
+            ensure_ascii=False, indent=2))
+        return 0
 
     if a.categories:
         if not a.out:
