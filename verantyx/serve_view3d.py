@@ -58,6 +58,7 @@ def load(root: Path) -> None:
 
     v = load_vera(root)
     STATE["vera"] = v
+    STATE["root"] = root
     STATE["store"] = v.stores["ja"]
     STATE["judge"] = v.judges["ja"]
 
@@ -116,6 +117,9 @@ def run_query(query: str) -> Dict[str, Any]:
                   "item": r["item"]})
     sentences = [s["text"] for s in
                  (full.get("written") or {}).get("sentences", [])]
+    wt = full.get("witnesses") or {}
+    origin = sorted({x for vs in (full.get("facet_origin") or {}).values()
+                     for x in vs})[:3]
     emit({"type": "verdict", "verdict": full["verdict"],
           "item": full.get("core") or full.get("item"),
           "detail": detail, "readings": readings,
@@ -124,8 +128,105 @@ def run_query(query: str) -> Dict[str, Any]:
           "remedy": full.get("remedy"),
           "coverage": full.get("coverage"),
           "facet_only": full.get("as_facet_only"),
-          "missing": full.get("missing")})
+          "missing": full.get("missing"),
+          "witness": ({"agree": wt.get("agree"),
+                       "answered": wt.get("answered")} if wt else None),
+          "origin": origin,
+          "order": full.get("order_evidence"),
+          "grain": full.get("grain"),
+          "subject": full.get("subject"),
+          "nearest": full.get("nearest_held")})
+    # The structure evolves under the reader. A refused subject is fetched
+    # by name, ingested through the same front door every corpus uses, and
+    # the new cores stream to the page as they land — the evolution loop's
+    # single-question form. Session memory plus a durable queue entry: the
+    # in-process stores answer immediately, the article file and the queue
+    # line survive for the next grow run to make permanent.
+    # Both registration-closable refusals grow, because they are the same
+    # gap seen from two distances: NOT_PRESENT names its subject already;
+    # NO_EVIDENCE is the commoner shape (subject unheld, staircase
+    # abstains) and carries none — the subject is derived the same way the
+    # gate derives it, and only a clean single-phrase Japanese subject
+    # fires. 譲渡担保とは was measured NO_EVIDENCE with a live article
+    # waiting; greetings derive no subject and never fire.
+    if full.get("verdict") in ("UNKNOWN_NOT_PRESENT", "UNKNOWN_NO_EVIDENCE"):
+        subject = full.get("subject")
+        if not subject and lang == "ja":
+            from .stacked import subject_check
+            cov = subject_check(v.stores["ja"], query, "")
+            if cov.get("single") and cov.get("subject")                     and cov["subject"] not in v.stores["ja"].crosses:
+                subject = cov["subject"]
+        if subject:
+            # OFFERED, never taken. The automatic version ingested the
+            # moment it refused; the governed version follows the
+            # project's own quarantine rule — an AI may propose, only a
+            # human accepts. /preview shows WHAT would be ingested and
+            # /grow ingests only after the reader approves.
+            emit({"type": "grow_offer", "subject": subject})
     return full
+
+
+def preview_one(subject: str) -> Dict[str, Any]:
+    """Fetch and HOLD the article so the reader sees it before approving."""
+    from .corpus_wikipedia import extract
+
+    try:
+        text = extract(subject, intro=False)
+    except Exception as exc:
+        return {"ok": False, "why": type(exc).__name__}
+    if not text:
+        return {"ok": False, "why": "no_article"}
+    STATE.setdefault("pending", {})[subject] = text
+    return {"ok": True, "subject": subject, "chars": len(text),
+            "head": text[:220],
+            "url": "https://ja.wikipedia.org/wiki/" + subject}
+
+
+def grow_one(subject: str) -> None:
+    from .document_ingest import Document, ingest_documents
+    from .grow import log_refusal
+
+    emit({"type": "grow_start", "subject": subject})
+    # Only what the reader saw and approved is ingested — the text held by
+    # preview_one, never a fresh fetch that could differ from the preview.
+    text = (STATE.get("pending") or {}).pop(subject, None)
+    if not text:
+        emit({"type": "grow_missing", "subject": subject,
+              "why": "not_previewed"})
+        return
+
+    v = STATE["vera"]
+    st = v.stores["ja"]
+    before = set(st.crosses)
+    label = f"指名／{subject}.txt"
+    st.source_labels.add(label)
+    ingest_documents(st, [Document(source=label, text=text)])
+    wit = v.witnesses.get("指名")
+    if wit is not None:
+        wit.source_labels.add(label)
+        ingest_documents(wit, [Document(source=label, text=text)])
+    new = sorted(set(st.crosses) - before)
+
+    # Durable trail: the article file lands where build_ja reads, and the
+    # queue line lets the next `grow` run record it in a manifest properly.
+    root = STATE.get("root")
+    if root:
+        try:
+            (Path(root) / "wikipedia_named" / f"{subject}.txt").write_text(
+                text, encoding="utf-8")
+        except Exception:
+            pass
+        log_refusal({"verdict": "UNKNOWN_NOT_PRESENT", "subject": subject},
+                    path=str(Path(root) / "build" / "refusals.jsonl"))
+
+    emit({"type": "grown", "subject": subject, "count": len(new),
+          "cores": new[:60], "domain": "指名"})
+    # The judge must re-index or the staircase cannot see the new cores.
+    # Measured at 1.4s on 86,967 — done after the grown event so the page
+    # shows the structure first and the readiness second.
+    v.add("ja", st)
+    STATE["judge"] = v.judges["ja"]
+    emit({"type": "grow_ready", "subject": subject})
 
 
 class H(BaseHTTPRequestHandler):
@@ -165,6 +266,23 @@ class H(BaseHTTPRequestHandler):
             finally:
                 if q in CLIENTS:
                     CLIENTS.remove(q)
+            return
+
+        if u.path in ("/preview", "/grow"):
+            subj = parse_qs(u.query).get("s", [""])[0]
+            try:
+                subj = subj.encode("latin-1").decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+            if u.path == "/preview":
+                self._send(200, "application/json",
+                           json.dumps(preview_one(subj),
+                                      ensure_ascii=False).encode())
+            else:
+                threading.Thread(target=grow_one, args=(subj,),
+                                 daemon=True).start()
+                self._send(200, "application/json",
+                           json.dumps({"verdict": "ACCEPTED"}).encode())
             return
 
         if u.path == "/ask":

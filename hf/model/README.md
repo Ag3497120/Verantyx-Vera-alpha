@@ -58,20 +58,30 @@ Reproduce all of it with `python3 -m verantyx.card_numbers --db vera.db`.
 ## The limitation that matters
 
 Closure guarantees the store never emits a symbol it does not hold. It
-guarantees **nothing about the subject**. Asked about a compound that does
-not exist, the staircase seeds on whatever part of it is recognised and
-answers about that instead:
+guarantees **nothing about the subject**, and the first release showed it:
+on 200 invented compounds, 77% were answered about a recognised substring —
+ヒュペリオン数人 answered about 数人 — with the unknown element dropped
+without a word.
 
-    ヒュペリオン数人とは  →  SEEDED, core 数人
-    テオドール法則とは    →  SEEDED, core テオドール
+The current release gates the seed on the asked subject. A seed passes only
+when it is the subject, contains it, or holds it on its own cross's faces;
+a held subject the staircase overlooked replaces the seed; anything else
+refuses by name:
 
-On 200 invented compounds, **77% were answered rather than refused**, and in
-every one of those 154 cases the seed was a substring — the unknown element
-was dropped without a word. A reader is told about a different thing than
-the one they asked about, in the same shape as a real answer.
+    ヴォルフガング粒子とは → UNKNOWN_NOT_PRESENT
+                            subject: ヴォルフガング粒子, nearest held: ヴォルフガング
 
-This is the honest counterweight to the 60/60, it is measured rather than
-asserted, and it is not fixed in this release.
+Measured: invented compounds answered **77% → 4%** (the residue enters
+through direct Latin-substring retrieval, not the staircase); wrong-subject
+answers on suffixed questions (〜の要件は, 〜について教えて) **43–71% → 0–7%**;
+correct-subject answers *rose* at every suffix (57%→86% bare, 29%→36% worst
+case) because a held subject now displaces a worse seed. The gate is
+conservative and it does lose borderline coarsenings — 不法行為とは now
+refuses with a pointer to 不法 instead of answering from it.
+
+Still true and unchanged: it cannot explain a word it never read (0.0% —
+the same closure that produces the 60/60), summarise, or chain inferences
+past one step.
 
 Also absent: explaining a word it never read, summarising, chaining
 inferences past one step, and fluent prose. The first follows from the same
@@ -88,6 +98,13 @@ corpora with different terms:
 - **Wikipedia (ja, en)** — 1,827 Japanese leaves and 764 English articles,
   **CC BY-SA 4.0**. A derived structure inherits attribution and share-alike,
   so `vera.db` is offered under **CC BY-SA 4.0**, not MIT.
+
+`vera_edges.db` (87MB, optional) holds same-sentence facet pairs — the
+edges of the cross, where a face holds an item and an edge holds the
+relation one sentence actually wrote. The engine answers identically
+without it; with it, evidence-tied cores may speak the pairs a sentence
+attested (25 of 97 silenced cores recover speech). Same licence as
+vera.db.
 
 `corpora/*.json` pin name, url, sha256 and byte count for all 3,958
 documents, with the selection rule recorded beside them. That is what makes

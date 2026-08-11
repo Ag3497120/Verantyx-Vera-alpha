@@ -48,6 +48,26 @@ class Vera:
     models: Dict[str, Any] = field(default_factory=dict)
     writer: Optional[Any] = None
     built: Dict[str, Any] = field(default_factory=dict)
+    #: Data-varied witnesses: one merged store per SELECTION RULE (百科 is
+    #: "articles that cite statutes", 法学 is "articles in doctrine
+    #: categories", 多分野 is "sixteen named fields", 法令 is the statute
+    #: corpus). They never vote — the trajectory measured what pooling does
+    #: (out-of-corpus errors 0 -> 8 when cut-varied readings joined a
+    #: census, answered 284 -> 208 when domains were split INTO the vote).
+    #: They are read independently AFTER the verdict, and the answer carries
+    #: how many of them reached the same core. Data-varied agreement is
+    #: evidence; this is the place the trajectory said it belongs — beside
+    #: the verdict, never in it.
+    witnesses: Dict[str, Any] = field(default_factory=dict)
+    #: Optional provenance lookup (core, shown facets) -> source leaves.
+    #: Supplied by the sqlite path, absent on the pickle path — provenance
+    #: at facet grain lives in the published file's tables.
+    origin: Optional[Any] = None
+    #: Optional edge lookup (core, facets) -> same-sentence pairs, from the
+    #: vera_edges.db sidecar. Edges are the geometry's relation seats: a
+    #: face holds an item, an edge holds which two items one sentence wrote
+    #: together — the licence the sentence gate needs.
+    edges: Optional[Any] = None
 
     def add(self, lang: str, store: Any) -> "Vera":
         from .graded import GradedJudge, settings_for
@@ -69,6 +89,17 @@ class Vera:
         lang = detect(query)
         if lang == "latin" and "en" in self.stores:
             lang = "en"
+        # Kanji without kana detects as Chinese — the same shape
+        # `document_ingest._place` already handles for table rows: a
+        # kana-less segment inside a Japanese document is Japanese. A
+        # kana-less QUERY typed at a system holding a Japanese sovereign is
+        # the query-level case: 「過失 故意 責任」 is three Japanese law
+        # terms and no kana, and refusing it as an unheld language while
+        # holding all three terms is a routing failure, not honesty. A
+        # genuinely Chinese question still gets no false answer — the
+        # Japanese sovereign refuses on its own evidence.
+        if lang == "zh" and "zh" not in self.stores and "ja" in self.stores:
+            lang = "ja"
         store = self.stores.get(lang)
         if store is None:
             out = {"verdict": "UNKNOWN_LANGUAGE_NOT_HELD", "language": lang,
@@ -91,6 +122,12 @@ class Vera:
                                "missing": graded.get("missing")}
 
         if out.get("text") and self.writer is not None:
+            if self.edges is not None and out.get("core_key"):
+                shown = str(out["text"]).split()[1:]
+                try:
+                    out["edge_pairs"] = self.edges(str(out["core_key"]), shown)
+                except Exception:
+                    pass
             out["written"] = in_words(store, out, self.writer, limit=limit)
 
         # Nothing was held. Try to land NEAR the terms rather than refuse
@@ -105,8 +142,74 @@ class Vera:
                     landed.append(r)
             if landed:
                 out["reached"] = landed
+        # Grain agreement, beside the data-varied witnesses and never pooled
+        # with them: cut-varied readings agreeing is STRUCTURE, data-varied
+        # is EVIDENCE (measured: pooling the two let out-of-corpus terms
+        # reach quorum, 0 -> 8). Both are worth showing; they answer
+        # different questions, so they ride under different names. The
+        # number was always computed — the staircase's rungs vote every
+        # ask — and simply never surfaced, which is why a viewer watching
+        # the rungs saw only the abstainers and read failure into a 2/6.
+        if graded.get("agreeing") is not None:
+            out["grain"] = {"agree": graded.get("agreeing"),
+                            "of": len(self.judges[lang].settings)}
+        if out.get("core_key") and lang == "ja" and self.witnesses:
+            out["witnesses"] = self.attest(out)
+        if out.get("core_key") and out.get("text") and self.origin is not None:
+            shown = str(out["text"]).split()[1:]
+            try:
+                out["facet_origin"] = self.origin(str(out["core_key"]), shown)
+            except Exception:
+                pass
         out["remedy"] = remedy(out)
+        # Opt-in only: when $VERA_QUEUE names a file, queueable refusals
+        # are appended there and become the fetch list for `grow`. The
+        # answer itself is unchanged — the queue is how the corpus learns
+        # where the questions found it thin.
+        from .grow import log_refusal
+
+        log_refusal(out)
         return out
+
+    def attest(self, out: Dict[str, Any]) -> Dict[str, Any]:
+        """How many independent corpora reach the same core, read separately.
+
+        Each witness is built from documents a DIFFERENT selection rule
+        chose, so two witnesses landing on the same core is two unrelated
+        document sets saying the same thing — the trajectory measured that
+        kind of agreement at 97.6% against 53.7% for structural agreement
+        on the same match count. The read is the seeded subject (the same
+        entry the main answer used), each witness runs its own full
+        consensus with its own gates, and an abstaining witness is not a
+        disagreement — it simply never read about the subject.
+
+        What this does NOT do — measured before shipping — is expose
+        sense pollution: 時効 attests 2/2 because a 労働基準法 article
+        (百科) also holds the core, even though the SHOWN facets all come
+        from one 法学 article about 法の不遡及. Core-name agreement cannot
+        see that, and per-facet witness attestation decided 0 of 1,776 tied
+        cores, so the pollution is surfaced by `facet_origin` (provenance
+        display) instead. The badge answers one question only: how many
+        unrelated document sets know this subject at all.
+        """
+        from .consensus_store import consensus_over_store
+
+        target = str(out.get("core_key") or "")
+        probe = (out.get("seeded_from") or {}).get("query") or target
+        by: Dict[str, Any] = {}
+        agree = answered = 0
+        for name in sorted(self.witnesses):
+            r = consensus_over_store(self.witnesses[name], probe)
+            wcore = r.get("core_key")
+            if r.get("verdict", "").startswith(("ANSWER", "SEEDED")) and wcore:
+                answered += 1
+                same = str(wcore) == target
+                agree += same
+                by[name] = {"core": r.get("core"), "same": same}
+            else:
+                by[name] = {"verdict": r.get("verdict")}
+        return {"agree": agree, "answered": answered,
+                "of": len(self.witnesses), "by": by}
 
     def report(self) -> Dict[str, Any]:
         return {"sovereigns": dict(self.built),
@@ -129,9 +232,41 @@ def load(root: Any = None) -> Vera:
     for d in doms:
         for s in doms[d].values():
             ja.source_labels |= getattr(s, "source_labels", set())
+            # SUM across leaves, never overwrite. This line was
+            # `.update(cr)`, which kept the LAST leaf's count for any
+            # (core, facet) two leaves both attest — so cross-leaf
+            # corroboration, the one evidential signal a flat corpus has,
+            # was discarded at the door, and the merge result depended on
+            # leaf iteration order. Measured on the answered-core bank:
+            # summing decides the leading facet on 6/11 cores against 3/11,
+            # and 91% of facet counts are 1 in a single leaf, so within-leaf
+            # frequency alone cannot rank anything.
             for c, cr in s.crosses.items():
-                ja.crosses.setdefault(c, {}).update(cr)
+                dst = ja.crosses.setdefault(c, {})
+                for f, n in cr.items():
+                    dst[f] = dst.get(f, 0) + n
+            # core_count was never merged at all, which left the Japanese
+            # sovereign with an empty mass table while the English one had a
+            # real one — `mass()` returned 0 for every Japanese core, and
+            # `placement.derive_queries` found zero eligible cores because
+            # of it.
+            for c, n in getattr(s, "core_count", {}).items():
+                ja.core_count[c] = ja.core_count.get(c, 0) + n
     v.add("ja", ja)
+
+    # One witness per selection rule, merged the same way. The witnesses
+    # hold the same leaves the sovereign holds — partitioned, not copied —
+    # so nothing here can know something the sovereign does not.
+    for d in doms:
+        w = CrossStore()
+        for s in doms[d].values():
+            w.source_labels |= getattr(s, "source_labels", set())
+            for c, cr in s.crosses.items():
+                dst = w.crosses.setdefault(c, {})
+                for f, n in cr.items():
+                    dst[f] = dst.get(f, 0) + n
+        if w.crosses:
+            v.witnesses[d] = w
 
     en_path = root / "build" / "english.pkl"
     if en_path.is_file():

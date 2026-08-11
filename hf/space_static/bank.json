@@ -1,10 +1,10 @@
 {
  "meta": {
   "artifact": "kofdai/vera-alpha :: vera.db",
-  "sha256": "d1e988e282ccace8",
-  "mb": 140.0,
-  "computed_at": "2026-08-10",
-  "ja_cores": 86992,
+  "sha256": "ba64b4eb2e7af603",
+  "mb": 144.1,
+  "computed_at": "2026-08-11",
+  "ja_cores": 89273,
   "en_cores": 15268
  },
  "rows": [
@@ -12,145 +12,237 @@
    "q": "正当防衛とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 35.2,
+   "ms": 72.1,
    "core": "正当防衛",
    "path": [
     "正当防衛",
-    "成立",
     "行為",
     "防衛",
+    "成立",
     "他人"
    ],
    "sentences": [
-    "正当防衛は、行為と成立である。",
-    "正当防衛はしばしば行為の成立とみなされる。"
+    "正当防衛と行為をとることもある。",
+    "正当防衛というのは行為の成立まりでもある。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 2,
+    "answered": 2
+   },
+   "origin": [
+    "指名／正当防衛.txt",
+    "指名／緊急避難.txt",
+    "法学／正当防衛.txt"
+   ]
   },
   {
    "q": "殺人罪の刑は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 34.8,
+   "ms": 58.4,
    "core": "殺人罪",
    "path": [
     "殺人罪",
-    "一定",
-    "人",
-    "他人",
-    "例"
+    "法定刑加重",
+    "罪刑法定主義違反",
+    "刑法219条",
+    "人"
    ],
-   "sentences": [],
+   "sentences": [
+    "殺人罪にはいくつかの法定刑加重がある。",
+    "殺人罪にはこれに法定刑加重いものがある。"
+   ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／殺人罪.txt",
+    "法学／不作為犯.txt",
+    "法学／刑法 (日本).txt"
+   ]
   },
   {
    "q": "契約の成立要件は",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
-   "core": "犯罪成立要件",
+   "ms": 73.4,
+   "core": "契約",
    "path": [
-    "犯罪成立要件",
-    "38条1項",
-    "事前収賄罪",
-    "例",
-    "充足"
+    "契約",
+    "成立要件",
+    "成立",
+    "有効",
+    "有効:有効"
    ],
-   "sentences": [],
+   "sentences": [
+    "契約に成立、有効がある。",
+    "契約に成立、有効となる。"
+   ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 4,
+    "answered": 4
+   },
+   "origin": [
+    "指名／債務不履行.txt",
+    "指名／契約.txt",
+    "指名／解除.txt"
+   ]
   },
   {
    "q": "時効とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
+   "ms": 83.0,
    "core": "時効",
    "path": [
     "時効",
-    "18民主化運動等",
-    "光州事件",
-    "制定",
-    "前職大統領2人全斗煥"
+    "援用",
+    "中断",
+    "成立",
+    "完成"
    ],
    "sentences": [
-    "時効としては、制定のものがある。",
-    "時効とは制定がある。"
+    "時効に成立、完成がある。",
+    "時効に成立、完成となる。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／公訴時効.txt",
+    "指名／時効.txt",
+    "指名／消滅時効.txt"
+   ]
   },
   {
    "q": "過失相殺とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.4,
-   "core": "民法第七百二十二条",
+   "ms": 67.2,
+   "core": "過失相殺",
    "path": [
-    "民法第七百二十二条",
-    "不法行為",
-    "中間利息",
-    "控除",
-    "損害賠償"
+    "過失相殺",
+    "主張",
+    "債務者",
+    "損益相殺",
+    "考慮"
    ],
-   "sentences": [],
+   "sentences": [
+    "過失相殺に考慮されている。",
+    "過失相殺に考慮しい主張があります。"
+   ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 1
+   },
+   "origin": [
+    "指名／損害賠償.txt",
+    "指名／過失相殺.txt"
+   ]
   },
   {
    "q": "所有権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 69.7,
    "core": "所有権",
    "path": [
     "所有権",
+    "性質",
     "登記",
-    "景観",
-    "897条1項",
-    "empyreal"
+    "全面的支配",
+    "処分"
    ],
    "sentences": [
-    "所有権のみにみられる登記として、景観（にんにくせんてん）がある。",
-    "所有権のみの登記も景観します。"
+    "所有権は、登記により、性質とする。",
+    "所有権は、登記によるものとする。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 4,
+    "answered": 4
+   },
+   "origin": [
+    "多分野／封建領主.txt",
+    "指名／所有権.txt",
+    "百科／不動産登記.txt"
+   ]
   },
   {
    "q": "民法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.2,
+   "ms": 84.0,
    "core": "民法",
    "path": [
     "民法",
+    "記載",
+    "条数",
     "日本",
-    "定",
-    "6親等内",
-    "ローマ"
+    "規定"
    ],
    "sentences": [
-    "民法にはローマをする。",
-    "民法には、ローマのものがある。"
+    "民法の規定で記載されている。",
+    "民法の規定として、記載がある。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／不法行為.txt",
+    "指名／先取特権.txt",
+    "指名／取消権.txt"
+   ]
   },
   {
    "q": "相続とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 92.4,
    "core": "相続",
    "path": [
     "相続",
@@ -160,260 +252,647 @@
     "効果"
    ],
    "sentences": [
-    "相続において承認とする。",
-    "相続によっては、承認に効果われることもある。"
+    "相続の承認は，すべて効果（ｐＹ）とする。",
+    "相続の承認への効果である。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／相続.txt",
+    "法学／家事事件手続法.txt",
+    "法学／相続.txt"
+   ]
   },
   {
    "q": "抵当権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 32.1,
+   "ms": 94.8,
    "core": "抵当権",
    "path": [
     "抵当権",
+    "設定",
+    "実行",
     "登記",
-    "処分",
-    "変更",
-    "民法376条"
+    "債務"
    ],
    "sentences": [
-    "抵当権かに変更しいようですね。",
-    "抵当権から変更にかけて登記がある。"
+    "抵当権は、登記（がっきょうほう）である。",
+    "抵当権は、登記（けんぽほう）である。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 2,
+    "answered": 3
+   },
+   "origin": [
+    "指名／抵当権.txt",
+    "百科／不動産登記.txt"
+   ]
   },
   {
    "q": "不法行為とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.9,
-   "core": "不法",
+   "ms": 89.8,
+   "core": "不法行為",
    "path": [
-    "不法",
-    "cb",
-    "キャリア",
-    "スカイ",
-    "トラック"
+    "不法行為",
+    "損害",
+    "成立",
+    "損害賠償請求権",
+    "時"
    ],
    "sentences": [
-    "不法にはトラックさない。",
-    "不法にはトラックでキャリアかかっている。"
+    "不法行為は、成立（がっきょうほう）である。",
+    "不法行為は、成立（けんぽほう）である。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 1
+   },
+   "origin": [
+    "指名／不法行為.txt",
+    "指名／名誉毀損.txt",
+    "指名／損害賠償.txt"
+   ]
   },
   {
    "q": "詐欺罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 66.0,
    "core": "詐欺罪",
    "path": [
     "詐欺罪",
-    "使用",
-    "制限",
-    "名称等",
-    "業務妨害罪"
+    "例",
+    "ケース",
+    "サービス",
+    "不法"
    ],
    "sentences": [
-    "詐欺罪は、使用や制限となる。",
-    "詐欺罪は、使用を制限さない。"
+    "詐欺罪のサービスへのケースである。",
+    "詐欺罪のサービスみがケースされている。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 2,
+    "answered": 2
+   },
+   "origin": [
+    "指名／詐欺罪.txt"
+   ]
   },
   {
    "q": "窃盗罪とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.7,
+   "ms": 69.5,
    "core": "窃盗罪",
    "path": [
     "窃盗罪",
+    "クレプトマニア",
     "不法領得",
-    "参照",
-    "意思"
+    "他人",
+    "使用"
    ],
    "sentences": [
-    "窃盗罪（参照や、意思をあげている。",
-    "窃盗罪（ほうどういんてん）と参照とが意思にある。"
+    "窃盗罪には使用とされる。",
+    "窃盗罪には使用のものがある。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 2,
+    "answered": 3
+   },
+   "origin": [
+    "指名／窃盗罪.txt",
+    "法学／財産犯.txt"
+   ]
   },
   {
    "q": "名誉毀損とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
-   "core": "名誉毀損罪",
+   "ms": 75.7,
+   "core": "名誉毀損",
    "path": [
-    "名誉毀損罪",
-    "230条",
-    "免責規定",
-    "加重",
-    "新設"
+    "名誉毀損",
+    "成立",
+    "不法行為",
+    "法理",
+    "行為"
    ],
    "sentences": [
-    "名誉毀損罪も新設まれている。",
-    "名誉毀損罪も「新設」の加重はある。"
+    "名誉毀損での行為も成立である。",
+    "名誉毀損では行為が成立である。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 1
+   },
+   "origin": [
+    "指名／名誉毀損.txt"
+   ]
   },
   {
    "q": "労働基準法とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 33.0,
+   "ms": 92.8,
    "core": "労働基準法",
    "path": [
     "労働基準法",
+    "e-gov",
     "保護",
     "労働条件",
-    "原則",
-    "契約自由"
+    "原則"
    ],
    "sentences": [
-    "労働基準法にかかわらず保護となる原則である。",
-    "労働基準法にきみまち保護がある。"
+    "労働基準法と原則をとることもある。",
+    "労働基準法として原則がある。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "arbitrary",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 3
+   },
+   "origin": [
+    "百科／フレックスタイム制.txt",
+    "百科／労働基準法.txt"
+   ]
   },
   {
    "q": "著作権とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.8,
+   "ms": 56.6,
    "core": "著作権",
    "path": [
     "著作権",
+    "著作物",
+    "消滅",
     "公開",
-    "パブリックドメイン",
-    "dvdソフト",
-    "インターネット"
+    "存在"
    ],
    "sentences": [
-    "著作権は、インターネットが公開になっている。",
-    "著作権は、インターネットではありません。"
+    "著作権の存在のための消滅もある。",
+    "著作権の存在は消滅にもある。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 4,
+    "answered": 4
+   },
+   "origin": [
+    "多分野／Portal:建築／建築用語.txt",
+    "多分野／人工知能.txt",
+    "指名／抵当権.txt"
+   ]
   },
   {
    "q": "超伝導とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
+   "ms": 54.4,
    "core": "超伝導",
    "path": [
     "超伝導",
     "発見",
+    "現象",
     "オンネス",
-    "カメルリング",
-    "ジュール"
+    "カメルリング"
    ],
    "sentences": [
-    "超伝導は発見におけるジュールではありません。",
-    "超伝導は発見にならない。"
+    "超伝導が発見え現象です。",
+    "超伝導が発見して現象になる。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 1
+   },
+   "origin": [
+    "多分野／超伝導.txt",
+    "多分野／超電導.txt",
+    "多分野／量子力学.txt"
+   ]
   },
   {
    "q": "光合成とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.4,
+   "ms": 54.8,
    "core": "光合成",
    "path": [
     "光合成",
+    "栄養",
     "上",
     "休眠",
-    "例",
-    "光形態形成"
+    "例"
    ],
    "sentences": [
-    "光合成は、休眠（がいしょくほう）である。",
-    "光合成は、休眠（がっきょうほう）である。"
+    "光合成は、栄養の休眠をもたらした。",
+    "光合成は、栄養のとおりである。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 1
+   },
+   "origin": [
+    "多分野／化学反応.txt",
+    "多分野／固着性.txt",
+    "多分野／植物生理学.txt"
+   ]
   },
   {
    "q": "量子力学とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.6,
+   "ms": 53.4,
    "core": "量子力学",
    "path": [
     "量子力学",
     "得",
-    "ハイゼンベルク",
-    "分野",
-    "理論"
+    "理論",
+    "記述",
+    "説明"
    ],
    "sentences": [
-    "量子力学についても分野が理論となる。",
-    "量子力学についても、分野である。"
+    "量子力学 - 説明にある。",
+    "量子力学が説明である。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 1,
+    "answered": 1
+   },
+   "origin": [
+    "多分野／ヤン–ミルズ方程式と質量ギャップ問題.txt",
+    "多分野／化学.txt",
+    "多分野／場.txt"
+   ]
   },
   {
    "q": "民主主義とは",
    "verdict": "SEEDED",
    "lang": "ja",
-   "ms": 31.5,
+   "ms": 57.8,
    "core": "民主主義",
    "path": [
     "民主主義",
+    "原則",
     "アプリケーション",
     "ヒーロー",
-    "リベラル",
-    "人"
+    "リベラル"
    ],
    "sentences": [
-    "民主主義のものにアプリケーションられる。",
-    "民主主義のようなアプリケーションがヒーローである。"
+    "民主主義や原則はアプリケーションにします。",
+    "民主主義より原則である。"
    ],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 2,
+    "answered": 2
+   },
+   "origin": [
+    "多分野／クアドラティック・ボーティング.txt",
+    "多分野／ヒーロー.txt",
+    "多分野／プルラリティ.txt"
+   ]
   },
   {
    "q": "インフレとは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.9,
+   "ms": 32.2,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
+  },
+  {
+   "q": "時効は援用が必要か",
+   "verdict": "ATTESTED",
+   "lang": "ja",
+   "ms": 50.6,
+   "core": "時効",
+   "path": [
+    "時効",
+    "援用",
+    "援用権者",
+    "必要"
+   ],
+   "sentences": [
+    "時効に必要、援用がある。",
+    "時効に必要、援用となる。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": "時効",
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／時効.txt",
+    "指名／消滅時効.txt"
+   ]
+  },
+  {
+   "q": "相続は放棄できるか",
+   "verdict": "ATTESTED",
+   "lang": "ja",
+   "ms": 59.6,
+   "core": "相続",
+   "path": [
+    "相続",
+    "放棄"
+   ],
+   "sentences": [
+    "相続の放棄をあげておきます。",
+    "相続の「放棄」にならいます。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": "相続",
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／相続.txt",
+    "法学／家事事件手続法.txt",
+    "法学／相続.txt"
+   ]
+  },
+  {
+   "q": "殺人罪は死刑があるか",
+   "verdict": "NOT_ATTESTED",
+   "lang": "ja",
+   "ms": 0.2,
+   "core": "殺人罪",
+   "path": [],
+   "sentences": [],
+   "register": "sentences connecting the subject to the asked condition, if the connection is in fact true",
+   "closes": true,
+   "why": null,
+   "order": null,
+   "subject": "殺人罪",
+   "nearest": null,
+   "witness": null,
+   "origin": []
+  },
+  {
+   "q": "労働時間 休憩 休日",
+   "verdict": "UNKNOWN_UNDERDETERMINED",
+   "lang": "ja",
+   "ms": 29.0,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "nothing — supply another condition instead",
+   "closes": false,
+   "why": "the conditions given leave several cores standing and ties must abstain; a fourth condition narrows where registration would only thicken the tie",
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
+  },
+  {
+   "q": "時効 援用 中断",
+   "verdict": "UNKNOWN_UNDERDETERMINED",
+   "lang": "ja",
+   "ms": 29.4,
+   "core": null,
+   "path": [],
+   "sentences": [],
+   "register": "nothing — supply another condition instead",
+   "closes": false,
+   "why": "the conditions given leave several cores standing and ties must abstain; a fourth condition narrows where registration would only thicken the tie",
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
+  },
+  {
+   "q": "殺人罪の刑は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 58.8,
+   "core": "殺人罪",
+   "path": [
+    "殺人罪",
+    "法定刑加重",
+    "罪刑法定主義違反",
+    "刑法219条",
+    "人"
+   ],
+   "sentences": [
+    "殺人罪にはいくつかの法定刑加重がある。",
+    "殺人罪にはこれに法定刑加重いものがある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／殺人罪.txt",
+    "法学／不作為犯.txt",
+    "法学／刑法 (日本).txt"
+   ]
+  },
+  {
+   "q": "時効の期間は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 83.4,
+   "core": "時効",
+   "path": [
+    "時効",
+    "時効期間",
+    "期間",
+    "除斥期間",
+    "援用"
+   ],
+   "sentences": [
+    "時効に期間、援用がある。",
+    "時効に期間、援用となる。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／時効.txt",
+    "指名／消滅時効.txt",
+    "百科／労働基準法.txt"
+   ]
+  },
+  {
+   "q": "相続の効果は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 92.8,
+   "core": "相続",
+   "path": [
+    "相続",
+    "効果",
+    "一般的効果",
+    "放棄",
+    "承認"
+   ],
+   "sentences": [
+    "相続の承認は，すべて効果（ｐＹ）とする。",
+    "相続の承認への効果である。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 3,
+    "answered": 3
+   },
+   "origin": [
+    "指名／相続.txt",
+    "法学／家事事件手続法.txt",
+    "法学／相続.txt"
+   ]
+  },
+  {
+   "q": "著作権の侵害は",
+   "verdict": "SEEDED",
+   "lang": "ja",
+   "ms": 56.6,
+   "core": "著作権",
+   "path": [
+    "著作権",
+    "侵害",
+    "著作権侵害罪",
+    "著作物",
+    "消滅"
+   ],
+   "sentences": [
+    "著作権の消滅のための侵害もある。",
+    "著作権の消滅は侵害にもある。"
+   ],
+   "register": null,
+   "closes": false,
+   "why": null,
+   "order": "aspect",
+   "subject": null,
+   "nearest": null,
+   "witness": {
+    "agree": 4,
+    "answered": 4
+   },
+   "origin": [
+    "指名／抵当権.txt",
+    "法学／オイヤー・アンド・ターミナー.txt",
+    "法学／旧著作権法 (日本).txt"
+   ]
   },
   {
    "q": "negligence",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.6,
+   "ms": 1.0,
    "core": "negligence",
    "path": [
     "negligence",
@@ -425,13 +904,20 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": [
+    "en／english"
+   ]
   },
   {
    "q": "consideration",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.5,
+   "ms": 0.8,
    "core": "consideration",
    "path": [
     "consideration",
@@ -443,13 +929,20 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": [
+    "en／english"
+   ]
   },
   {
    "q": "jurisdiction",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.5,
+   "ms": 0.8,
    "core": "jurisdiction",
    "path": [
     "jurisdiction",
@@ -461,13 +954,20 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": [
+    "en／english"
+   ]
   },
   {
    "q": "estoppel",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.5,
+   "ms": 0.7,
    "core": "estoppel",
    "path": [
     "estoppel",
@@ -479,13 +979,20 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": [
+    "en／english"
+   ]
   },
   {
    "q": "tort",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.5,
+   "ms": 0.8,
    "core": "tort",
    "path": [
     "tort",
@@ -497,25 +1004,37 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": [
+    "en／english"
+   ]
   },
   {
    "q": "due process",
    "verdict": "UNKNOWN_INSUFFICIENT_EVIDENCE",
    "lang": "en",
-   "ms": 2.1,
+   "ms": 2.3,
    "core": null,
    "path": [],
    "sentences": [],
    "register": null,
    "closes": null,
-   "why": null
+   "why": null,
+   "order": "ranked",
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
   },
   {
    "q": "habeas corpus",
    "verdict": "ANSWER",
    "lang": "en",
-   "ms": 0.4,
+   "ms": 0.7,
    "core": "habeas",
    "path": [
     "habeas",
@@ -524,7 +1043,14 @@
    "sentences": [],
    "register": null,
    "closes": false,
-   "why": null
+   "why": null,
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": [
+    "en／english"
+   ]
   },
   {
    "q": "今日の天気は",
@@ -536,7 +1062,12 @@
    "sentences": [],
    "register": "nothing here — resolve the deictic first",
    "closes": false,
-   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable"
+   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable",
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
   },
   {
    "q": "明日の株価は",
@@ -548,79 +1079,97 @@
    "sentences": [],
    "register": "nothing here — resolve the deictic first",
    "closes": false,
-   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable"
+   "why": "今日 is a property of the question and the store has no clock. Registering the fact does not change the verdict; asking with the date does. Ingest the tool result with its timestamp as the source label to make the answer citable",
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
   },
   {
    "q": "こんにちは",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.6,
+   "ms": 31.2,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
   },
   {
    "q": "ありがとう",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "ja",
-   "ms": 29.3,
+   "ms": 31.0,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
   },
   {
    "q": "ヴォルフガング粒子とは",
-   "verdict": "SEEDED",
+   "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 34.5,
-   "core": "ヴォルフガング",
-   "path": [
-    "ヴォルフガング",
-    "c60",
-    "donald",
-    "fostiropoulos",
-    "huffman"
-   ],
+   "ms": 31.5,
+   "core": null,
+   "path": [],
    "sentences": [],
-   "register": null,
-   "closes": false,
-   "why": null
+   "register": "sentences about the subject, in the register the corpus is judged in",
+   "closes": true,
+   "why": null,
+   "order": null,
+   "subject": "ヴォルフガング粒子",
+   "nearest": "ヴォルフガング",
+   "witness": null,
+   "origin": []
   },
   {
    "q": "ズミルノフ環礁の面積は",
-   "verdict": "SEEDED",
+   "verdict": "UNKNOWN_NOT_PRESENT",
    "lang": "ja",
-   "ms": 34.7,
-   "core": "面積",
-   "path": [
-    "面積",
-    "俊敏性",
-    "2番目",
-    "2項道路",
-    "3辺"
-   ],
+   "ms": 36.5,
+   "core": null,
+   "path": [],
    "sentences": [],
-   "register": null,
-   "closes": false,
-   "why": null
+   "register": "sentences about the subject, in the register the corpus is judged in",
+   "closes": true,
+   "why": null,
+   "order": null,
+   "subject": "ズミルノフ環礁",
+   "nearest": "面積",
+   "witness": null,
+   "origin": []
   },
   {
    "q": "Wie geht es dir",
    "verdict": "UNKNOWN_NO_EVIDENCE",
    "lang": "en",
-   "ms": 9.7,
+   "ms": 10.9,
    "core": null,
    "path": [],
    "sentences": [],
    "register": "sentences about the subject — the census found nothing to count",
    "closes": true,
-   "why": null
+   "why": null,
+   "order": null,
+   "subject": null,
+   "nearest": null,
+   "witness": null,
+   "origin": []
   }
  ]
 }

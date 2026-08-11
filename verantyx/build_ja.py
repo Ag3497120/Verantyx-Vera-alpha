@@ -50,7 +50,8 @@ def prose_corpora(root: Path) -> List[Tuple[str, str]]:
     for label, folder in (("百科", "wikipedia_domains"),
                           ("引用", "wikipedia_cited"),
                           ("法学", "wikipedia_doctrine"),
-                          ("多分野", "wikipedia_fields")):
+                          ("多分野", "wikipedia_fields"),
+                          ("指名", "wikipedia_named")):
         d = root / folder
         if not d.is_dir():
             continue
@@ -134,9 +135,16 @@ def build_federation(root: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, A
     # nothing about the world and is read for FORMS only, in `writer`.
     # English is absent too: mixing languages in one store was measured to
     # answer superconductivity with contract.
+    # 指名 is its own domain for the same reason the others are: it was
+    # selected by a different rule — the refusal log. Subjects the engine
+    # named as missing during operation, fetched by name, with the rule in
+    # the manifest. This is the trajectory's 「拒否のログがそのまま作業
+    # 待ち行列」 executed: the corpus grows where the questions said it was
+    # thin, not where a curator thought it should.
     for folder, domain in (("wikipedia_cited", "百科"),
                            ("wikipedia_doctrine", "法学"),
-                           ("wikipedia_fields", "多分野")):
+                           ("wikipedia_fields", "多分野"),
+                           ("wikipedia_named", "指名")):
         for p in sorted((root / folder).rglob("*.txt")):
             label = f"{domain}／{p.name}"
             st = CrossStore()
@@ -167,7 +175,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     corpus_at = max(_newest(root / "bulk"), _newest(root / "wikipedia_cited"),
                     _newest(root / "wikipedia_domains"),
                     _newest(root / "wikipedia_doctrine"),
-                    _newest(root / "wikipedia_fields"))
+                    _newest(root / "wikipedia_fields"),
+                    _newest(root / "wikipedia_named"))
     fresh = (fed_path.exists() and writer_path.exists()
              and fed_path.stat().st_mtime > corpus_at
              and writer_path.stat().st_mtime > corpus_at)

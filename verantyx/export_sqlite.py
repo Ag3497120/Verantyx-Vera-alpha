@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS facets (
   PRIMARY KEY (leaf, core, facet)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS labels (leaf INTEGER NOT NULL, label TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS edges (
+  core TEXT NOT NULL, f1 TEXT NOT NULL, f2 TEXT NOT NULL,
+  PRIMARY KEY (core, f1, f2)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS caps (
   leaf INTEGER NOT NULL, word TEXT NOT NULL,
   cap INTEGER NOT NULL, low INTEGER NOT NULL,
@@ -76,6 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_cores_core ON cores(core);
 CREATE INDEX IF NOT EXISTS idx_facets_core ON facets(core);
 CREATE INDEX IF NOT EXISTS idx_facets_facet ON facets(facet);
 CREATE INDEX IF NOT EXISTS idx_labels_leaf ON labels(leaf);
+CREATE INDEX IF NOT EXISTS idx_edges_core ON edges(core);
 """
 
 
@@ -114,8 +119,9 @@ def export(root: Path, out: Path) -> Dict[str, Any]:
 
     n_cores = n_facets = 0
     by_lang: Dict[str, int] = {}
+    stores_list = _stores(root)
     with con:
-        for i, (lang, dom, name, st) in enumerate(_stores(root)):
+        for i, (lang, dom, name, st) in enumerate(stores_list):
             # `merged` records that this leaf was one of many folded into a
             # single sovereign, which is what decides whether its core_count
             # survives the load. See `load`.
@@ -159,6 +165,93 @@ def export(root: Path, out: Path) -> Dict[str, Any]:
             "seconds": round(time.time() - t0, 1)}
 
 
+def export_edges(root: Path, out: Path, *, top: int = 32,
+                 max_group: int = 12) -> Dict[str, Any]:
+    """The edge sidecar: same-sentence facet pairs, in their own file.
+
+    A face holds an item; an edge holds a RELATION, and the relation the
+    corpus attests is same-sentence co-occurrence — provenance stores the
+    originating sentence per (core, facet), so facets sharing a snippet
+    were written together in one sentence. Measured: 91% of cores carry an
+    edge, and every silenced evidence-tied core sampled (97/97) had an
+    edge-attested pair among its shown facets.
+
+    A separate file, not a table in vera.db: unrestricted the edges tripled
+    the artifact (142MB -> 405MB), and even capped they double it. The
+    sidecar is optional — the engine answers identically without it and
+    speaks more with it — which is exactly what optional means.
+    """
+    t0 = time.time()
+    out = Path(out)
+    if out.exists():
+        out.unlink()
+    merged: Dict[str, Dict[str, int]] = {}
+    stores_list = _stores(root)
+    for lang, _d, _n, st in stores_list:
+        if lang != "ja":
+            continue
+        for c, cr in st.crosses.items():
+            dst = merged.setdefault(c, {})
+            for f, n in cr.items():
+                dst[f] = dst.get(f, 0) + n
+    keep = {c: set(sorted(cr, key=lambda f: (-cr[f], f))[:top])
+            for c, cr in merged.items()}
+    del merged
+
+    con = sqlite3.connect(str(out))
+    con.executescript(
+        "PRAGMA journal_mode=OFF;"
+        "CREATE TABLE IF NOT EXISTS edges (core TEXT, f1 TEXT, f2 TEXT,"
+        " PRIMARY KEY (core, f1, f2)) WITHOUT ROWID;"
+        "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);")
+    n = 0
+    with con:
+        for lang, _d, _n2, st in stores_list:
+            if lang != "ja":
+                continue
+            for core, by_facet in (getattr(st, "provenance", None) or {}).items():
+                groups: Dict[str, List[str]] = {}
+                for f, rec in by_facet.items():
+                    snip = (rec[2] if isinstance(rec, (list, tuple))
+                            and len(rec) > 2 else None)
+                    if snip:
+                        groups.setdefault(snip, []).append(f)
+                kp = keep.get(core, set())
+                rows = []
+                for fs in groups.values():
+                    fs = sorted(set(fs) & kp)
+                    if len(fs) > max_group:
+                        continue
+                    rows += [(core, fs[x], fs[y])
+                             for x in range(len(fs))
+                             for y in range(x + 1, len(fs))]
+                con.executemany("INSERT OR IGNORE INTO edges VALUES (?,?,?)",
+                                rows)
+                n += len(rows)
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('format',"
+                    "'vera-edges-1')")
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('rule',"
+                    "'same-sentence co-occurrence, top-%d facets')" % top)
+    con.execute("VACUUM")
+    con.close()
+    return {"path": str(out), "mb": round(out.stat().st_size / 1048576, 1),
+            "edges": n, "seconds": round(time.time() - t0, 1)}
+
+
+def edge_pairs_of(path: Path, core: str,
+                  facets: List[str]) -> List[Tuple[str, str]]:
+    """Edges among these facets of this core, from the sidecar."""
+    if not facets or not Path(path).exists():
+        return []
+    con = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    marks = ",".join("?" * len(facets))
+    rows = con.execute(
+        "SELECT f1, f2 FROM edges WHERE core=? AND f1 IN (%s) AND f2 IN (%s)"
+        % (marks, marks), [core] + facets + facets).fetchall()
+    con.close()
+    return [(a, b) for a, b in rows]
+
+
 #: A cross has six arms times four faces. `export_web` keeps this many facets
 #: per core and no more, which is not a size compromise but the capacity the
 #: geometry already imposes — a 25th facet has nowhere to sit.
@@ -196,27 +289,62 @@ def export_web(root: Path, out: Path, *, cap: int = CROSS_CAPACITY) -> Dict[str,
     if stores is None:
         raise SystemExit("build/vera.db first: python3 -m verantyx.export_sqlite")
 
+    # One leaf per SELECTION RULE, not per language. The first version
+    # wrote a single ja-merged leaf, which quietly erased the domain
+    # column — and with it the witnesses: the browser build answered with
+    # 独立合議 1/1 on subjects the full store attests 3/3, because the
+    # partition the witnesses are built from no longer existed in the
+    # file. The cap still applies to the MERGED cross (the shown faces
+    # must match), and each kept facet is written back per domain with
+    # its domain-local count, so the summing load reassembles the same
+    # totals AND the same witnesses.
+    from .vera import load as _pickle_load  # noqa: F401  (doc anchor)
+
+    per_domain: Dict[str, Dict[str, Any]] = {}
+    if (root / "build" / "federation.pkl").exists():
+        doms = pickle.loads((root / "build" / "federation.pkl").read_bytes())
+        for d in doms:
+            agg: Dict[str, Dict[str, int]] = {}
+            for st0 in doms[d].values():
+                for c, cr in st0.crosses.items():
+                    dst = agg.setdefault(c, {})
+                    for f, n in cr.items():
+                        dst[f] = dst.get(f, 0) + n
+            per_domain[d] = agg
+
     con = sqlite3.connect(str(out))
     con.executescript(SCHEMA)
     n_f = 0
     with con:
-        for i, (lang, s) in enumerate(sorted(stores.items())):
-            con.execute("INSERT INTO leaves VALUES (?,?,?,?,?)",
-                        (i, lang, lang, f"{lang}-merged", 0))
-            con.executemany(
-                "INSERT INTO cores VALUES (?,?,?)",
-                ((i, c, int(s.core_count.get(c, 0))) for c in s.crosses))
-            rows = [(i, c, f, int(n))
-                    for c, cross in s.crosses.items()
-                    for f, n in sorted(cross.items(),
-                                       key=lambda kv: -kv[1])[:cap]]
-            con.executemany("INSERT INTO facets VALUES (?,?,?,?)", rows)
-            n_f += len(rows)
+        leaf_id = 0
+        for lang, s in sorted(stores.items()):
+            kept = {c: set(sorted(cross, key=lambda f: (-cross[f], f))[:cap])
+                    for c, cross in s.crosses.items()}
+            groups = (sorted(per_domain) if (lang == "ja" and per_domain)
+                      else [f"{lang}-merged"])
+            for d in groups:
+                agg = per_domain.get(d, s.crosses)
+                con.execute("INSERT INTO leaves VALUES (?,?,?,?,?)",
+                            (leaf_id, lang, d if lang == "ja" else lang,
+                             d, 0))
+                rows = [(leaf_id, c, f, int(n))
+                        for c, cross in agg.items()
+                        for f, n in cross.items()
+                        if f in kept.get(c, ())]
+                con.executemany("INSERT INTO facets VALUES (?,?,?,?)", rows)
+                n_f += len(rows)
+                con.executemany(
+                    "INSERT INTO cores VALUES (?,?,?)",
+                    ((leaf_id, c, 0) for c in agg))
+                leaf_id += 1
+            # Labels and caps ride on the first leaf of the language —
+            # load() unions labels per language and caps are global.
+            first = leaf_id - len(groups)
             con.executemany("INSERT INTO labels VALUES (?,?)",
-                            ((i, l) for l in sorted(s.source_labels)))
+                            ((first, l) for l in sorted(s.source_labels)))
             con.executemany(
                 "INSERT INTO caps VALUES (?,?,?,?)",
-                ((i, w, int(v[0]), int(v[1]))
+                ((first, w, int(v[0]), int(v[1]))
                  for w, v in (getattr(s, "cap_stats", {}) or {}).items()
                  if isinstance(v, (list, tuple)) and len(v) >= 2))
     con.executescript(INDEXES)
@@ -238,18 +366,14 @@ def export_web(root: Path, out: Path, *, cap: int = CROSS_CAPACITY) -> Dict[str,
 def load(path: Path) -> Dict[str, Any]:
     """Reconstruct one CrossStore per language. No code is executed.
 
-    Reproduces `vera.load` exactly, including the parts of it that are
-    arguably wrong, because this function changes the CONTAINER and must not
-    change the answers. Two behaviours are inherited on purpose:
-
-    * merging is `dict.update`, so a facet held by two leaves keeps the LAST
-      leaf's count rather than the sum. Duplicate attestation is discarded.
-    * `core_count` is not merged across a federation at all, so the Japanese
-      sovereign runs with an empty one.
-
-    Both are worth revisiting; neither may be revisited here, or the file
-    published as "the model" would answer differently from the model whose
-    numbers the card reports.
+    Mirrors `vera.load` exactly — the file published as "the model" must
+    answer as the model whose numbers the card reports, and `--verify`
+    checks that on every export. Both now SUM across leaves: a (core, facet)
+    pair two leaves attest keeps the sum, because cross-leaf corroboration
+    is the one evidential signal a flat corpus has, and the previous
+    `dict.update` overwrote it away and made the merge depend on leaf
+    order. `core_count` sums the same way, so `mass()` works on the
+    Japanese sovereign too.
     """
     from .cross_store import CrossStore
 
@@ -257,45 +381,91 @@ def load(path: Path) -> Dict[str, Any]:
     leaves = list(con.execute(
         "SELECT id, lang, merged FROM leaves ORDER BY id"))
     lang_of = {i: l for i, l, _m in leaves}
-    merged = {l: bool(m) for _i, l, m in leaves}
     stores: Dict[str, Any] = {l: CrossStore() for l in set(lang_of.values())}
 
     for leaf, label in con.execute("SELECT leaf, label FROM labels"):
         stores[lang_of[leaf]].source_labels.add(label)
 
-    # One leaf at a time, in id order, so `update` overwrites in the same
-    # sequence the pickle merge did.
-    for leaf, lang, _m in leaves:
-        dst = stores[lang].crosses
-        # Cores FIRST, and every one of them, including the ones holding no
-        # facets. Rebuilding `crosses` from the facets table alone dropped
-        # 1,828 of the English sovereign's 15,268 cores — and a facet-less
-        # core is not a nothing: it is the difference between
-        # UNKNOWN_NOT_PRESENT (the term is held, nothing supports an answer)
-        # and UNKNOWN_NO_EVIDENCE (the census found no such term). Losing it
-        # silently downgrades the more precise refusal into the vaguer one.
-        for (core,) in con.execute(
-                "SELECT core FROM cores WHERE leaf=?", (leaf,)):
-            dst.setdefault(core, {})
-        cross: Dict[str, Dict[str, int]] = {}
-        for core, facet, n in con.execute(
-                "SELECT core, facet, count FROM facets WHERE leaf=?", (leaf,)):
-            cross.setdefault(core, {})[facet] = n
-        for c, cr in cross.items():
-            dst.setdefault(c, {}).update(cr)
-
-    for leaf, lang, m in leaves:
-        if m:                       # merged federations carry neither
-            continue
-        st = stores[lang]
-        for core, n in con.execute(
-                "SELECT core, count FROM cores WHERE leaf=?", (leaf,)):
-            st.core_count[core] = n
-        for w, cap, low in con.execute(
-                "SELECT word, cap, low FROM caps WHERE leaf=?", (leaf,)):
-            st.cap_stats[w] = [cap, low]
+    # Every core, including the ones holding no facets. Rebuilding `crosses`
+    # from the facets table alone dropped 1,828 of the English sovereign's
+    # 15,268 cores — and a facet-less core is not a nothing: it is the
+    # difference between UNKNOWN_NOT_PRESENT (the term is held, nothing
+    # supports an answer) and UNKNOWN_NO_EVIDENCE (no such term at all).
+    for leaf, core, n in con.execute("SELECT leaf, core, count FROM cores"):
+        st = stores[lang_of[leaf]]
+        st.crosses.setdefault(core, {})
+        st.core_count[core] = st.core_count.get(core, 0) + n
+    for leaf, core, facet, n in con.execute(
+            "SELECT leaf, core, facet, count FROM facets"):
+        cr = stores[lang_of[leaf]].crosses.setdefault(core, {})
+        cr[facet] = cr.get(facet, 0) + n
+    for leaf, w, cap, low in con.execute(
+            "SELECT leaf, word, cap, low FROM caps"):
+        stores[lang_of[leaf]].cap_stats[w] = [cap, low]
     con.close()
     return stores
+
+
+def witnesses(path: Path) -> Dict[str, Any]:
+    """One merged store per selection rule (the `domain` column), summed.
+
+    The same partition `vera.load` builds from the pickles, reconstructed
+    from the published file — the leaves table kept the domain of every
+    leaf precisely so that questions like this stay answerable after the
+    pickles are gone.
+    """
+    from .cross_store import CrossStore
+
+    con = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    dom_of = {i: d for i, l, d in con.execute(
+        "SELECT id, lang, domain FROM leaves WHERE lang='ja'")}
+    out: Dict[str, Any] = {}
+    for leaf, label in con.execute("SELECT leaf, label FROM labels"):
+        d = dom_of.get(leaf)
+        if d is not None:
+            out.setdefault(d, CrossStore()).source_labels.add(label)
+    for leaf, core, facet, n in con.execute(
+            "SELECT leaf, core, facet, count FROM facets"):
+        d = dom_of.get(leaf)
+        if d is None:
+            continue
+        cr = out.setdefault(d, CrossStore()).crosses.setdefault(core, {})
+        cr[facet] = cr.get(facet, 0) + n
+    for leaf, core, n in con.execute("SELECT leaf, core, count FROM cores"):
+        d = dom_of.get(leaf)
+        if d is None:
+            continue
+        st = out.setdefault(d, CrossStore())
+        st.crosses.setdefault(core, {})
+        st.core_count[core] = st.core_count.get(core, 0) + n
+    con.close()
+    return {d: s for d, s in out.items() if s.crosses}
+
+
+def origin_of(path: Path, core: str, facets: List[str]) -> Dict[str, List[str]]:
+    """Which leaves supplied these facets of this core. Provenance, on demand.
+
+    The sense-pollution fix that survived measurement. Per-facet witness
+    attestation was tried first and decided nothing (0 of 1,776 tied cores)
+    — two selection rules almost never write the same (core, facet) pair.
+    What the file DOES know is where each pair came from, and that is the
+    fact a reader needs: 時効's leading facets trace to 法学／法の不遡及.txt,
+    an article about non-retroactivity that cites the Korean special law —
+    visibly not an article about 時効. Nothing is reordered or suppressed;
+    the origin is shown and the reader does the discounting.
+    """
+    if not facets:
+        return {}
+    con = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    out: Dict[str, List[str]] = {}
+    q = ("SELECT l.domain, l.name FROM facets f JOIN leaves l ON l.id=f.leaf "
+         "WHERE f.core=? AND f.facet=?")
+    for f in facets:
+        rows = con.execute(q, (core, f)).fetchall()
+        out[f] = sorted({f"{d}／{n.split('／')[-1]}" if "／" not in n else n
+                         for d, n in rows})[:3]
+    con.close()
+    return out
 
 
 def vera(path: Path) -> Any:
@@ -303,10 +473,16 @@ def vera(path: Path) -> Any:
     from .vera import Vera
     from .writer import Writer
 
+    path = Path(path)
     v = Vera()
     for lang, st in sorted(load(path).items()):
         v.add(lang, st)
-    w = Path(path).parent / "writer.json"
+    v.witnesses = witnesses(path)
+    v.origin = lambda core, facets: origin_of(path, core, facets)
+    epath = path.parent / "vera_edges.db"
+    if epath.exists():
+        v.edges = lambda core, facets: edge_pairs_of(epath, core, facets)
+    w = path.parent / "writer.json"
     if w.exists():
         v.writer = Writer.load(w)
     return v
@@ -362,6 +538,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--root", default=str(Path.home() / "Projects" / "vera-corpus"))
     ap.add_argument("--out")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--edges", metavar="OUT",
+                    help="write the same-sentence edge sidecar")
     ap.add_argument("--web", metavar="OUT",
                     help="also write the browser-sized structure")
     a = ap.parse_args(argv)
@@ -371,6 +549,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     rep: Dict[str, Any] = {"verdict": "ANSWER"}
     if not a.verify or not out.exists():
         rep["export"] = export(root, out)
+    if a.edges:
+        rep["edges"] = export_edges(root, Path(a.edges))
     if a.web:
         rep["web"] = export_web(root, Path(a.web))
     if a.verify:

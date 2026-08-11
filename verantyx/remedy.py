@@ -108,6 +108,24 @@ REMEDIES: Dict[str, Dict[str, Any]] = {
         "register": "nothing — the input was empty or unreadable",
         "not_a_gap": True,
     },
+    "NOT_ATTESTED": {
+        "register": "sentences connecting the subject to the asked "
+                    "condition, if the connection is in fact true",
+        "how": "remember / propose_ai_facts then accept_ai_fact",
+        "then": "the same question returns ATTESTED with the new facet "
+                "as the citation",
+        "minimum": 1,
+        "note": "this verdict is a coverage gap, not a denial — the "
+                "corpus never wrote the negative either, and closure "
+                "forbids inventing it",
+    },
+    "UNKNOWN_UNDERDETERMINED": {
+        "register": "nothing — supply another condition instead",
+        "not_a_gap": True,
+        "why": "the conditions given leave several cores standing and "
+               "ties must abstain; a fourth condition narrows where "
+               "registration would only thicken the tie",
+    },
     "UNKNOWN_CONDITIONS_CONFLICT": {
         "register": "nothing about the corpus — the conditions cannot all "
                     "hold together",
@@ -124,7 +142,8 @@ def remedy(result: Dict[str, Any]) -> Dict[str, Any]:
     is asked to fill in is already addressed to something.
     """
     verdict = str(result.get("verdict", ""))
-    if verdict.startswith("ANSWER") or verdict in ("SEEDED", "AGREED", "LEAD"):
+    if verdict.startswith("ANSWER") or verdict in ("SEEDED", "AGREED", "LEAD",
+                                                   "ATTESTED"):
         return {"verdict": verdict, "needs_registration": False}
     spec = REMEDIES.get(verdict)
     if spec is None:
