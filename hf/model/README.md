@@ -99,6 +99,13 @@ corpora with different terms:
   **CC BY-SA 4.0**. A derived structure inherits attribution and share-alike,
   so `vera.db` is offered under **CC BY-SA 4.0**, not MIT.
 
+`vera_edges.db` (87MB, optional) holds same-sentence facet pairs — the
+edges of the cross, where a face holds an item and an edge holds the
+relation one sentence actually wrote. The engine answers identically
+without it; with it, evidence-tied cores may speak the pairs a sentence
+attested (25 of 97 silenced cores recover speech). Same licence as
+vera.db.
+
 `corpora/*.json` pin name, url, sha256 and byte count for all 3,958
 documents, with the selection rule recorded beside them. That is what makes
 the figures above checkable rather than quotable:

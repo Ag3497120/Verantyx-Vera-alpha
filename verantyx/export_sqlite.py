@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS facets (
   PRIMARY KEY (leaf, core, facet)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS labels (leaf INTEGER NOT NULL, label TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS edges (
+  core TEXT NOT NULL, f1 TEXT NOT NULL, f2 TEXT NOT NULL,
+  PRIMARY KEY (core, f1, f2)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS caps (
   leaf INTEGER NOT NULL, word TEXT NOT NULL,
   cap INTEGER NOT NULL, low INTEGER NOT NULL,
@@ -76,6 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_cores_core ON cores(core);
 CREATE INDEX IF NOT EXISTS idx_facets_core ON facets(core);
 CREATE INDEX IF NOT EXISTS idx_facets_facet ON facets(facet);
 CREATE INDEX IF NOT EXISTS idx_labels_leaf ON labels(leaf);
+CREATE INDEX IF NOT EXISTS idx_edges_core ON edges(core);
 """
 
 
@@ -114,8 +119,9 @@ def export(root: Path, out: Path) -> Dict[str, Any]:
 
     n_cores = n_facets = 0
     by_lang: Dict[str, int] = {}
+    stores_list = _stores(root)
     with con:
-        for i, (lang, dom, name, st) in enumerate(_stores(root)):
+        for i, (lang, dom, name, st) in enumerate(stores_list):
             # `merged` records that this leaf was one of many folded into a
             # single sovereign, which is what decides whether its core_count
             # survives the load. See `load`.
@@ -157,6 +163,93 @@ def export(root: Path, out: Path) -> Dict[str, Any]:
             "leaves": sum(by_lang.values()), "cores": n_cores,
             "facets": n_facets, "by_language": by_lang,
             "seconds": round(time.time() - t0, 1)}
+
+
+def export_edges(root: Path, out: Path, *, top: int = 32,
+                 max_group: int = 12) -> Dict[str, Any]:
+    """The edge sidecar: same-sentence facet pairs, in their own file.
+
+    A face holds an item; an edge holds a RELATION, and the relation the
+    corpus attests is same-sentence co-occurrence — provenance stores the
+    originating sentence per (core, facet), so facets sharing a snippet
+    were written together in one sentence. Measured: 91% of cores carry an
+    edge, and every silenced evidence-tied core sampled (97/97) had an
+    edge-attested pair among its shown facets.
+
+    A separate file, not a table in vera.db: unrestricted the edges tripled
+    the artifact (142MB -> 405MB), and even capped they double it. The
+    sidecar is optional — the engine answers identically without it and
+    speaks more with it — which is exactly what optional means.
+    """
+    t0 = time.time()
+    out = Path(out)
+    if out.exists():
+        out.unlink()
+    merged: Dict[str, Dict[str, int]] = {}
+    stores_list = _stores(root)
+    for lang, _d, _n, st in stores_list:
+        if lang != "ja":
+            continue
+        for c, cr in st.crosses.items():
+            dst = merged.setdefault(c, {})
+            for f, n in cr.items():
+                dst[f] = dst.get(f, 0) + n
+    keep = {c: set(sorted(cr, key=lambda f: (-cr[f], f))[:top])
+            for c, cr in merged.items()}
+    del merged
+
+    con = sqlite3.connect(str(out))
+    con.executescript(
+        "PRAGMA journal_mode=OFF;"
+        "CREATE TABLE IF NOT EXISTS edges (core TEXT, f1 TEXT, f2 TEXT,"
+        " PRIMARY KEY (core, f1, f2)) WITHOUT ROWID;"
+        "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);")
+    n = 0
+    with con:
+        for lang, _d, _n2, st in stores_list:
+            if lang != "ja":
+                continue
+            for core, by_facet in (getattr(st, "provenance", None) or {}).items():
+                groups: Dict[str, List[str]] = {}
+                for f, rec in by_facet.items():
+                    snip = (rec[2] if isinstance(rec, (list, tuple))
+                            and len(rec) > 2 else None)
+                    if snip:
+                        groups.setdefault(snip, []).append(f)
+                kp = keep.get(core, set())
+                rows = []
+                for fs in groups.values():
+                    fs = sorted(set(fs) & kp)
+                    if len(fs) > max_group:
+                        continue
+                    rows += [(core, fs[x], fs[y])
+                             for x in range(len(fs))
+                             for y in range(x + 1, len(fs))]
+                con.executemany("INSERT OR IGNORE INTO edges VALUES (?,?,?)",
+                                rows)
+                n += len(rows)
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('format',"
+                    "'vera-edges-1')")
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('rule',"
+                    "'same-sentence co-occurrence, top-%d facets')" % top)
+    con.execute("VACUUM")
+    con.close()
+    return {"path": str(out), "mb": round(out.stat().st_size / 1048576, 1),
+            "edges": n, "seconds": round(time.time() - t0, 1)}
+
+
+def edge_pairs_of(path: Path, core: str,
+                  facets: List[str]) -> List[Tuple[str, str]]:
+    """Edges among these facets of this core, from the sidecar."""
+    if not facets or not Path(path).exists():
+        return []
+    con = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    marks = ",".join("?" * len(facets))
+    rows = con.execute(
+        "SELECT f1, f2 FROM edges WHERE core=? AND f1 IN (%s) AND f2 IN (%s)"
+        % (marks, marks), [core] + facets + facets).fetchall()
+    con.close()
+    return [(a, b) for a, b in rows]
 
 
 #: A cross has six arms times four faces. `export_web` keeps this many facets
@@ -351,6 +444,9 @@ def vera(path: Path) -> Any:
         v.add(lang, st)
     v.witnesses = witnesses(path)
     v.origin = lambda core, facets: origin_of(path, core, facets)
+    epath = path.parent / "vera_edges.db"
+    if epath.exists():
+        v.edges = lambda core, facets: edge_pairs_of(epath, core, facets)
     w = path.parent / "writer.json"
     if w.exists():
         v.writer = Writer.load(w)
@@ -407,6 +503,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--root", default=str(Path.home() / "Projects" / "vera-corpus"))
     ap.add_argument("--out")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--edges", metavar="OUT",
+                    help="write the same-sentence edge sidecar")
     ap.add_argument("--web", metavar="OUT",
                     help="also write the browser-sized structure")
     a = ap.parse_args(argv)
@@ -416,6 +514,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     rep: Dict[str, Any] = {"verdict": "ANSWER"}
     if not a.verify or not out.exists():
         rep["export"] = export(root, out)
+    if a.edges:
+        rep["edges"] = export_edges(root, Path(a.edges))
     if a.web:
         rep["web"] = export_web(root, Path(a.web))
     if a.verify:

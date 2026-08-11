@@ -101,11 +101,23 @@ def in_words(
     # stream mixed real relations (地形図は地形断面図ではない) with accidents
     # of the tie-break, and nothing marked which was which.
     if result.get("order_evidence") == "arbitrary":
-        return {"verdict": result.get("verdict"), "sentences": [],
-                "path": [w for w in text.split() if w],
-                "note": "the facets are evidence-tied — an unordered set; "
-                        "composing them into a sentence would assert "
-                        "relations the corpus never ranked"}
+        # An EDGE re-licences speech: two facets one sentence actually wrote
+        # together may be composed, because the relation asserted is one the
+        # corpus asserted first. Everything outside an edge stays silent —
+        # the order is still an accident, only the attested pairs speak.
+        pairs = result.get("edge_pairs") or []
+        if not pairs:
+            return {"verdict": result.get("verdict"), "sentences": [],
+                    "path": [w for w in text.split() if w],
+                    "note": "the facets are evidence-tied — an unordered "
+                            "set; composing them into a sentence would "
+                            "assert relations the corpus never ranked"}
+        licensed = sorted({f for pr in pairs for f in pr})
+        path0 = [w for w in text.split() if w]
+        result = dict(result)
+        result["text"] = " ".join(path0[:1] + [f for f in path0[1:]
+                                               if f in licensed])
+        text = result["text"]
     path = [w for w in text.split() if w]
     if not path:
         return {"verdict": result.get("verdict"), "sentences": []}

@@ -63,6 +63,11 @@ class Vera:
     #: Supplied by the sqlite path, absent on the pickle path — provenance
     #: at facet grain lives in the published file's tables.
     origin: Optional[Any] = None
+    #: Optional edge lookup (core, facets) -> same-sentence pairs, from the
+    #: vera_edges.db sidecar. Edges are the geometry's relation seats: a
+    #: face holds an item, an edge holds which two items one sentence wrote
+    #: together — the licence the sentence gate needs.
+    edges: Optional[Any] = None
 
     def add(self, lang: str, store: Any) -> "Vera":
         from .graded import GradedJudge, settings_for
@@ -117,6 +122,12 @@ class Vera:
                                "missing": graded.get("missing")}
 
         if out.get("text") and self.writer is not None:
+            if self.edges is not None and out.get("core_key"):
+                shown = str(out["text"]).split()[1:]
+                try:
+                    out["edge_pairs"] = self.edges(str(out["core_key"]), shown)
+                except Exception:
+                    pass
             out["written"] = in_words(store, out, self.writer, limit=limit)
 
         # Nothing was held. Try to land NEAR the terms rather than refuse
