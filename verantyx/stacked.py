@@ -130,7 +130,16 @@ def in_words(
                         "answer"}
     from .compose_ja import compose
 
-    drafts = compose(writer.forms, subject, rest, limit=limit,
+    # Path-driven speech carries PRESENCE evidence only — counts, edges,
+    # co-occurrence — and presence licenses neither negation nor a norm.
+    # The form supplies the shape, and the shape was quietly supplying a
+    # sign: 「殺人罪は法定刑加重ではありません」 negated an attested pair,
+    # 「時効と期間を援用してはならない」 prohibited what nobody prohibits.
+    # Same move as the modality licence (unlicensed norms 49 -> 0), one
+    # gate further in: descriptive, positive forms only.
+    speakable = {k: f for k, f in writer.forms.items()
+                 if f.modality == "none" and f.polarity == "positive"}
+    drafts = compose(speakable, subject, rest, limit=limit,
                      content_from=[subject], vocab=writer.vocab,
                      licence=writer.licence(subject))
     return {

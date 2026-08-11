@@ -404,6 +404,33 @@ class Form:
         return len(self.cases)
 
     @property
+    def polarity(self) -> str:
+        """positive / negative — the sign this SHAPE stamps on its content.
+
+        Found when edges fixed the content side: with every content word
+        attested and the pair sentence-licensed, the drafts still read
+        「殺人罪は法定刑加重ではありません」 — the negation came from the
+        TEMPLATE, not from any evidence. Presence evidence (counts, edges,
+        co-occurrence) can license at most "these were written together",
+        which is a positive-shaped claim; no amount of it licenses ない.
+        The norm double-negative (なければならない) is stripped first — that
+        is an obligation, the modality property's business, not a negation.
+        """
+        import re as _re
+
+        # Blunt on purpose. The first version enumerated negation endings
+        # and inflection walked straight past it — なれない, されていない,
+        # しかない, さない all slipped through, and てはなりません dodged the
+        # norm-strip because only てはならない was listed. Any ない/ません in
+        # the shape marks it negative; the obligation double-negative
+        # (なければならない) is marked negative too, which costs nothing —
+        # callers speaking from presence evidence exclude norm-modality
+        # forms before ever consulting polarity.
+        if _re.search(r"(ない|ません|ぬ。|ず、|ず。)", self.template):
+            return "negative"
+        return "positive"
+
+    @property
     def modality(self) -> str:
         """obligation / prohibition / permission / none — what this SHAPE
         asserts, before anything fills it.
