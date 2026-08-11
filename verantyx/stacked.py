@@ -280,6 +280,21 @@ def yes_no(store: Any, query: str) -> Optional[Dict[str, Any]]:
     for c in conditions:
         m = sorted((f for f in cross if c in f or f in c),
                    key=lambda f: (-cross[f], f))[:4]
+        if not m:
+            # The connection can be written from either side: 時効's cross
+            # holding 援用, or 援用's cross holding 時効. Both are the same
+            # sentence read from a different topic, and a store whose faces
+            # are capped at the cross capacity (the browser build) may keep
+            # one side and not the other. Checked second because the
+            # subject's own cross is the closer citation.
+            # Containment one way only: a facet CONTAINING the subject is
+            # the subject mentioned; a facet contained BY it is any shard —
+            # 登記's cross holds the one-character facet 効, and 効 ⊂ 時効
+            # turned 時効は登記が必要か into a false ATTESTED before this
+            # arm was tightened.
+            other = store.crosses.get(c) or {}
+            if any(subject in f for f in other):
+                m = [c]
         if m:
             hits[c] = m
         else:
