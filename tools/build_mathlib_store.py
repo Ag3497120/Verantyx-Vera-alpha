@@ -25,6 +25,20 @@ abstract-noun warning stands).
 
 At that rate the whole library is ~2 hours of compute — the verified
 share is a dial, not a design question.
+
+## Measured — full run (argv 0), 2026-08-14, across three launches
+
+    6,502 / 6,577 candidate files kernel-verified (98.9%)
+    75 files FAIL (Analysis 30, MeasureTheory 6, LinearAlgebra 6,
+    Algebra 5, ... — seconds-scale failures, environment/import
+    shaped, not timeouts)
+    75,919 / 77,242 theorems carry verified:lean4:4.34.0-rc1
+    ~4.6h of kernel compute wall-clock, ended 20:26 JST
+
+The run died twice (system sleep at 17:51; parent-shell teardown at
+18:08) and finished on resume-from-log: ok lines are this machine's
+kernel testimony and re-earn the facet without re-running. The store
+holds the largest kernel-verified witness layer in the project.
 """
 import json
 import re
