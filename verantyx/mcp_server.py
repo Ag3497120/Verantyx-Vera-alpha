@@ -571,6 +571,60 @@ def serve(store_path: str) -> int:
         return json.dumps(out, ensure_ascii=False, default=str)
 
     @mcp.tool()
+    def vera_diff(a: str, b: str) -> str:
+        """Structural difference of two subjects — shared / A-only / B-only.
+
+        The six-layer diff (type, predicate profile, kin family, shelf
+        mass, edge direction, definition tokens) with the two registered
+        guards: "A-only" always means "attested for A, no attestation
+        for B" — never a negative claim about B (that would be an
+        unlicensed polarity assertion); and every layer that cannot meet
+        the minimum profile on both sides abstains, with the imbalance
+        reported in `coverage`. This door loads no shelf (912MB stays on
+        disk), so the two shelf layers abstain here by design — the
+        coverage field says so rather than hiding it. Hand-off only;
+        nothing here votes."""
+        from . import meaning_assets as ma
+        from .structural_diff import diff as _diff
+
+        out = _diff(a, b, profiles=ma.profiles(), aliases=ma.aliases(),
+                    lattice=ma.lattice(), shelf=ma.empty_shelf(),
+                    senses=ma.senses())
+        out["extractor"] = ma.extractor()
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_intent(text: str) -> str:
+        """Frame an instruction structurally, or refuse with UNKNOWN_INTENT.
+
+        The measured share of instruction understanding: 47 verb lemmas
+        by 28 operations plus case-particle arms (「geminiを開いて」 →
+        開く(対象=gemini)). Anything outside the table refuses — the
+        refusal is the signal that the LLM should take the utterance,
+        so a caller wires this as: frame parsed -> verify/act on typed
+        intent; UNKNOWN_INTENT -> hand the text to the model. Never a
+        guessed intent."""
+        from .intent_frames import parse as _parse
+
+        return json.dumps(_parse(text), ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_typo(term: str) -> str:
+        """Typed hand-off for an out-of-vocabulary term. Never rewrites.
+
+        Recovery@5 84.8% with 0/500 false fires on in-vocabulary terms
+        (typo_recovery's docstring holds the protocol). The answer is
+        candidates with their evidence (shared positional units, edit
+        distance), or IN_VOCABULARY, or UNKNOWN_NO_CANDIDATE — the
+        caller decides; silent correction is the one thing this door
+        can never do."""
+        from . import meaning_assets as ma
+        from .typo_recovery import recover as _recover
+
+        out = _recover(term, lattice=ma.lattice(), vocab=ma.vocab())
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def how_to_resolve(verdict: str, subject: str = "") -> str:
         """What an expert should register so a refusal becomes an answer.
 
