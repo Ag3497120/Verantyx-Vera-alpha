@@ -438,6 +438,25 @@ def serve(store_path: str) -> int:
 
     _vera_cache: Dict[str, Any] = {}
 
+    def _vera() -> Any:
+        """The full stack, loaded the way the 3D viewer loads it.
+
+        Published sqlite first, pickle fallback — the published path is
+        the only one that carries the sidecars (edges, origin, gaps), so
+        loading the pickle here silently disarmed every organ that needs
+        an edge licence. One loader, same as `serve_view3d.load`, so the
+        MCP tools and the picture cannot answer from different builds.
+        """
+        if "v" not in _vera_cache:
+            from .export_sqlite import vera as load_published
+            from .vera import load as load_vera
+
+            root = Path.home() / "Projects" / "vera-corpus"
+            db = root / "build" / "vera.db"
+            _vera_cache["v"] = (load_published(db) if db.exists()
+                                else load_vera(root))
+        return _vera_cache["v"]
+
     @mcp.tool()
     def vera_ask(query: str, sentences: int = 3) -> str:
         """Ask the full stack: language, staircase, inference core, reach.
@@ -460,21 +479,40 @@ def serve(store_path: str) -> int:
         SEEDED needed the staircase to name the subject, UNITS and
         CONTAINMENT landed near a word the store never held. The path is the
         citation; any sentence is a draft."""
-        from .vera import load as load_vera
-
-        if "v" not in _vera_cache:
-            _vera_cache["v"] = load_vera()
-        return json.dumps(_vera_cache["v"].ask(query, limit=sentences),
+        return json.dumps(_vera().ask(query, limit=sentences),
                           ensure_ascii=False, default=str)
 
     @mcp.tool()
     def vera_sovereigns() -> str:
         """Which sovereigns are loaded, and how big each is."""
-        from .vera import load as load_vera
+        return json.dumps(_vera().report(), ensure_ascii=False)
 
-        if "v" not in _vera_cache:
-            _vera_cache["v"] = load_vera()
-        return json.dumps(_vera_cache["v"].report(), ensure_ascii=False)
+    @mcp.tool()
+    def vera_summarize(subjects: str, limit: int = 5) -> str:
+        """Edge-licensed compression over n held subjects (space-separated).
+
+        Each subject is a path; the crossing is every facet two or more
+        subjects' crosses hold; a claim is a pair some sentence actually
+        WROTE — the edge licence. No edges sidecar, or a crossing no
+        sentence ever wrote a pair of, is UNKNOWN_NO_EDGE_LICENSE, never
+        a co-presence claim. Drops at the limit fall in whole rank
+        groups (crossing width, then subject mass); a tie never decides
+        a drop, and dropped_at_cut says what the limit cost. Hand-over
+        only — nothing here enters a verdict, a census, or the concord
+        band. Measured numbers live in `summarize`'s docstring."""
+        from .summarize import summarize as _summarize
+
+        v = _vera()
+        store = v.stores.get("ja")
+        if store is None or v.writer is None:
+            return json.dumps(
+                {"verdict": "UNKNOWN_NOT_LOADED",
+                 "note": "no Japanese sovereign or no writer in this "
+                         "build; the word gate cannot open"},
+                ensure_ascii=False)
+        out = _summarize(store, subjects.split(), vocab=v.writer.vocab,
+                         edges=v.edges, limit=limit)
+        return json.dumps(out, ensure_ascii=False, default=str)
 
     @mcp.tool()
     def how_to_resolve(verdict: str, subject: str = "") -> str:
