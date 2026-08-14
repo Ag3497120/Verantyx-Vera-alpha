@@ -182,6 +182,48 @@ def tui_fallback_fork() -> Dict[str, Any]:
             "pass": bool(ok), "result": {"chosen": i}}
 
 
+def grain_band_annotation_fork() -> Dict[str, Any]:
+    """The grain band rides beside `ask`'s verdict and never changes it.
+
+    The MCP `ask` tool attaches `graded.band_annotation` to the consensus
+    verdict. Two invariants are load-bearing: annotating changes nothing
+    about the verdict (the band is structure, the verdict is evidence,
+    and pooling the two is the measured mistake), and the band's count is
+    bounded by its own denominator. A fabricated subject must read as
+    agree 0 or no band at all — never as a positive count.
+    """
+    from .consensus_store import consensus_over_store
+    from .graded import GradedJudge, band_annotation, settings_for
+
+    st = CrossStore()
+    for s in (
+        "The capital of France is Paris.",
+        "Paris is the largest city of France.",
+        "The capital of Japan is Tokyo.",
+    ):
+        st.ingest_sentence(s)
+    judge = GradedJudge(settings_for("This is English.")).build(st)
+
+    results: Dict[str, Any] = {}
+    ok = True
+    for q in ("capital of France", "capital of Japan",
+              "quantum chromodynamics"):
+        base = consensus_over_store(st, q)
+        band = band_annotation(judge, q)
+        annotated = dict(base)
+        if band is not None:
+            annotated["grain"] = band
+        never_votes = annotated["verdict"] == base["verdict"]
+        bounded = band is None or 0 <= band["agree"] <= band["of"]
+        results[q] = {"verdict": base["verdict"], "band": band}
+        ok = ok and never_votes and bounded
+    # The out-of-corpus subject must not collect a positive count.
+    fabricated = band_annotation(judge, "quantum chromodynamics")
+    ok = ok and (fabricated is None or fabricated["agree"] == 0)
+    return {"experiment": "agent", "fork": "GRAIN_BAND_ANNOTATES_NEVER_VOTES",
+            "pass": bool(ok), "result": results}
+
+
 def all_agent_forks() -> List[Dict[str, Any]]:
     return [
         agent_readonly_runs_fork(),
@@ -191,4 +233,5 @@ def all_agent_forks() -> List[Dict[str, Any]]:
         config_allocation_fork(),
         tui_fallback_fork(),
         multiline_paste_capture_fork(),
+        grain_band_annotation_fork(),
     ]

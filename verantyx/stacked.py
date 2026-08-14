@@ -178,6 +178,102 @@ def in_words(
     return out
 
 
+#: English stopwords for shape extraction only — not retrieval, which
+#: already handles English. Kept minimal and closed: shape rules should
+#: fail silent, never guess.
+_EN_STOP = frozenset(
+    "the a an of in on at for to with by is are was were be been does do "
+    "did can could may must have has had what which who whom whose how "
+    "why when where and or not no it its this that these those".split())
+
+
+def en_shape(query: str) -> Optional[Dict[str, Any]]:
+    """Subject / aspects / yes-no for an English question, by fixed rules.
+
+    The Japanese side earned its gates one measurement at a time; English
+    had none of them — not for lack of data but for lack of SHAPE
+    extraction, since 「XのY」 rules read kana. These rules are the English
+    mirror, additive and closed:
+
+        what is X            subject X
+        X of Y / Y's X       subject Y, aspect X
+        does/can/is Y X ?    yes-no: subject Y, conditions X
+
+    Anything that does not match returns None and the pipeline behaves
+    exactly as before — the second-class fix must not create new ways to
+    be wrong.
+    """
+    import re as _re
+
+    q = query.strip().rstrip("?？ ").lower()
+    if _re.search(r"[぀-ゟ゠-ヺ㐀-䶿一-鿿]", q):
+        return None
+    words = [w for w in _re.findall(r"[a-z][a-z0-9'-]*", q)]
+    content = [w for w in words if w not in _EN_STOP]
+    if not content:
+        return None
+    yn = bool(words) and words[0] in ("does", "can", "is", "are", "do",
+                                      "must", "may", "has", "have")
+    m = _re.match(r"^(?:what\s+is\s+|what\s+are\s+)(?:the\s+)?(.+)$", q)
+    if m and not yn:
+        rest = m.group(1)
+        mo = _re.match(r"^(?:the\s+)?([a-z0-9' -]+?)\s+of\s+(?:the\s+)?"
+                       r"([a-z0-9' -]+)$", rest)
+        if mo:
+            aspect = [w for w in mo.group(1).split() if w not in _EN_STOP]
+            subj = [w for w in mo.group(2).split() if w not in _EN_STOP]
+            if subj:
+                return {"kind": "aspect", "subject": " ".join(subj),
+                        "aspects": aspect}
+        subj = [w for w in rest.split() if w not in _EN_STOP]
+        return {"kind": "definition", "subject": " ".join(subj), "aspects": []}
+    mo = _re.match(r"^([a-z0-9' -]+?)'s\s+([a-z0-9' -]+)$", q)
+    if mo:
+        subj = [w for w in mo.group(1).split() if w not in _EN_STOP]
+        aspect = [w for w in mo.group(2).split() if w not in _EN_STOP]
+        if subj and aspect:
+            return {"kind": "aspect", "subject": " ".join(subj),
+                    "aspects": aspect}
+    if yn and len(content) >= 2:
+        return {"kind": "yesno", "subject": content[0],
+                "conditions": content[1:]}
+    return None
+
+
+def yes_no_en(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """English yes/no as attestation — same verdicts, same closure."""
+    sh = en_shape(query)
+    if not sh or sh["kind"] != "yesno":
+        return None
+    subject = sh["subject"]
+    if subject not in store.crosses:
+        return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None, "text": "",
+                "subject": subject}
+    cross = store.crosses.get(subject) or {}
+    hits: Dict[str, List[str]] = {}
+    gaps: List[str] = []
+    for c in sh["conditions"]:
+        m = sorted((f for f in cross if c in f or f in c),
+                   key=lambda f: (-cross[f], f))[:4]
+        if not m:
+            other = store.crosses.get(c) or {}
+            if any(subject in f for f in other):
+                m = [c]
+        if m:
+            hits[c] = m
+        else:
+            gaps.append(c)
+    if gaps:
+        return {"verdict": "NOT_ATTESTED", "core": subject, "text": "",
+                "subject": subject, "conditions": sh["conditions"],
+                "attested": hits, "unattested": gaps}
+    shown = [f for c in sh["conditions"] for f in hits[c][:2]]
+    return {"verdict": "ATTESTED", "core": subject, "core_key": subject,
+            "text": " ".join([subject] + shown[:4]),
+            "subject": subject, "conditions": sh["conditions"],
+            "attested": hits, "order_evidence": "aspect"}
+
+
 def subject_check(store: Any, query: str, seed: str) -> Dict[str, Any]:
     """Does the staircase's seed actually cover what the question asked about?
 
@@ -365,6 +461,47 @@ def yes_no(store: Any, query: str) -> Optional[Dict[str, Any]]:
                     "is attestation, not assent"}
 
 
+_COMPARE = None
+
+
+def compare_shape(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """「AとBの違いは」— the comparison the materials always allowed.
+
+    `eliminate` and `siblings` could compute facet differences for months;
+    no question SHAPE was wired to them. The verdict is COMPARISON, and it
+    only fires when BOTH subjects are held — comparing a held thing to an
+    unheld one would present absence as difference, which is the closure
+    violation wearing a table. Shared facets first (what the corpus says
+    they have in common), then each side's strongest own facets.
+    """
+    global _COMPARE
+    if _COMPARE is None:
+        import re as _re
+        _COMPARE = _re.compile(
+            r"^(.+?)と(.+?)の(?:違い|相違|差)(?:は|とは)?[?？]?$")
+    m = _COMPARE.match(query.strip())
+    if not m:
+        return None
+    a, b = m.group(1).strip(), m.group(2).strip()
+    ca, cb = store.crosses.get(a), store.crosses.get(b)
+    if ca is None or cb is None:
+        missing = [t for t, c in ((a, ca), (b, cb)) if c is None]
+        return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None, "text": "",
+                "subject": missing[0], "compare": [a, b],
+                "note": "comparison needs both subjects held; absence "
+                        "shown as difference would be fabrication"}
+    shared = sorted(set(ca) & set(cb),
+                    key=lambda f: (-(ca[f] + cb[f]), f))[:4]
+    only_a = sorted(set(ca) - set(cb), key=lambda f: (-ca[f], f))[:4]
+    only_b = sorted(set(cb) - set(ca), key=lambda f: (-cb[f], f))[:4]
+    return {"verdict": "COMPARISON", "core": a, "core_key": a,
+            "compare": [a, b],
+            "shared": shared, "only_a": only_a, "only_b": only_b,
+            "text": " ".join([a, b] + shared[:3]),
+            "note": "shared facets, then each side's own — all held, "
+                    "nothing inferred"}
+
+
 def intersect(store: Any, query: str) -> Optional[Dict[str, Any]]:
     """Three or more conditions: narrow, never chain.
 
@@ -417,6 +554,145 @@ def intersect(store: Any, query: str) -> Optional[Dict[str, Any]]:
         return {"verdict": "UNKNOWN_CONDITIONS_CONFLICT", "core": None,
                 "text": "", "conditions": sol.get("conditions"),
                 "trail": sol.get("trail")}
+    return None
+
+
+def staged(store: Any, query: str) -> Optional[Dict[str, Any]]:
+    """Multi-step by staged intersection: 「条件… → 条件… → 条件…」.
+
+    The chain that decays (41.5% -> 19.3%) walks facet edges; the stage
+    that holds re-INTERSECTS at every step. Stage one narrows as usual;
+    its SURVIVORS become a membership condition for the next stage — a
+    candidate there must hold its own conditions AND touch a survivor
+    (hold it as a facet, or be held on its cross). Any number of arrows
+    chains the same way: each intermediate stage hands its linked set
+    forward under the same width guard stage one always had (a stage
+    that narrows too little abstains rather than handing a crowd on),
+    and only the FINAL stage elects — link strength, strict lead, ties
+    abstain. Every stage's trail rides the answer, so a reader can see
+    where each cut.
+
+    The arrow is explicit on purpose. 背任罪の刑の上限を科された者の
+    再審請求先は hides its stage boundary in case grammar this reader
+    does not parse; guessing the boundary would stage the wrong cut and
+    answer a different chain. 「背任罪 刑 → 再審」 states it, and the
+    typed UNKNOWNs say which stage failed.
+
+    Measured on the 89,369-core federation: the recorded two-stage
+    example still answers (時効 援用 → 期間 -> 時効), and a three-stage
+    chain lands — 殺人罪 → 時効 期間 → 停止 answers 時効 at 26 links,
+    survivors 33 -> 27 across the hand-offs. The original target
+    背任罪 → 刑 上限 → 再審請求 ends UNKNOWN_UNDERDETERMINED: its
+    final-stage candidates tie, and ties abstain here like everywhere.
+    Broad middles die at the guard by name (時効 援用 → 期間 → 中断 is
+    UNKNOWN_STAGE2_TOO_WIDE with 624 linked) — the guard is the system
+    telling the asker which stage needs another condition, not a wall.
+    """
+    if "→" not in query and "->" not in query:
+        return None
+    from .lang import ja_content_runs
+    from .puzzle import Puzzle
+
+    parts = [p2.strip() for p2 in
+             query.replace("->", "→").split("→") if p2.strip()]
+    if len(parts) < 2:
+        return None
+    stage_terms = [ja_content_runs(p) for p in parts]
+    if not all(stage_terms):
+        return None
+
+    def _touches(candidate: str, members: set) -> int:
+        cr = store.crosses.get(candidate) or {}
+        return sum(1 for m in members
+                   if m in cr or candidate in (store.crosses.get(m) or {}))
+
+    pz1 = Puzzle(store=store).narrow(*stage_terms[0])
+    s1 = pz1.answer()
+    survivors = (set(pz1.candidates or ())
+                 if s1["verdict"] in ("ANSWER", "UNKNOWN_UNDERDETERMINED")
+                 else set())
+    if not survivors:
+        return {"verdict": "UNKNOWN_STAGE1_EMPTY", "core": None, "text": "",
+                "stage1": s1, "note": "the first stage left nothing to "
+                "hand the second; the chain stops where the evidence does"}
+    if len(survivors) > 40:
+        return {"verdict": "UNKNOWN_STAGE1_TOO_WIDE", "core": None,
+                "text": "", "remaining": len(survivors), "stage1": s1,
+                "note": "stage one narrowed too little to hand on; add a "
+                        "condition before the arrow"}
+
+    trail: List[Dict[str, Any]] = [
+        {"stage": 1, "conditions": stage_terms[0],
+         "survivors": sorted(survivors)[:8], "remaining": len(survivors)}]
+
+    for i in range(1, len(parts)):
+        n_stage = i + 1
+        final = i == len(parts) - 1
+        terms = stage_terms[i]
+        pz = Puzzle(store=store).narrow(*terms)
+        out: Dict[str, Any] = {"stages": trail + [
+            {"stage": n_stage, "conditions": terms,
+             "candidates": len(pz.candidates or ())}]}
+        if len(parts) == 2:
+            # The shape the two-stage reader always got.
+            out["stage1"] = trail[0]
+            out["stage2"] = {"conditions": terms,
+                             "candidates": len(pz.candidates or ())}
+        if not pz.candidates:
+            return {**out, "verdict": "UNKNOWN_STAGE%d_EMPTY" % n_stage,
+                    "core": None, "text": "", "stage1": s1,
+                    "note": "no core holds stage %d's conditions at all"
+                            % n_stage}
+        # Link STRENGTH, not link existence: touching one survivor out of
+        # thirty is background, touching five is the chain. Measured with
+        # existence alone, 時効 援用 → 期間 left 236 standing; counting
+        # touches and demanding a strict lead is the same abstention
+        # discipline every other tie in this engine obeys.
+        linked: Dict[str, int] = {}
+        for c in pz.candidates:
+            n = _touches(c, survivors)
+            if n:
+                linked[c] = n
+        if not linked:
+            return {**out, "verdict": "UNKNOWN_STAGES_DISCONNECTED",
+                    "core": None, "text": "", "at_stage": n_stage,
+                    "note": "both stages hold, but no stage-%d core "
+                            "touches a stage-%d survivor — the chain the "
+                            "question asserts is not written in this "
+                            "corpus" % (n_stage, n_stage - 1)}
+        if not final:
+            # Intermediate stages hand FORWARD, they do not elect: an
+            # election in the middle would discard chains the last stage
+            # could still tell apart. The width guard is the same one
+            # stage one obeys.
+            if len(linked) > 40:
+                return {**out,
+                        "verdict": "UNKNOWN_STAGE%d_TOO_WIDE" % n_stage,
+                        "core": None, "text": "",
+                        "remaining": len(linked),
+                        "note": "stage %d narrowed too little to hand "
+                                "on; add a condition" % n_stage}
+            survivors = set(linked)
+            trail.append({"stage": n_stage, "conditions": terms,
+                          "survivors": sorted(survivors)[:8],
+                          "remaining": len(survivors)})
+            continue
+        ranked = sorted(linked.items(), key=lambda kv: (-kv[1], kv[0]))
+        strict = (len(ranked) == 1
+                  or ranked[0][1] > ranked[1][1])
+        if strict:
+            core = ranked[0][0]
+            cross = store.crosses.get(core) or {}
+            shown = sorted(cross, key=lambda f: (-cross[f], f))[:4]
+            return {**out, "verdict": "ANSWER_BY_STAGES", "core": core,
+                    "core_key": core, "links": ranked[0][1],
+                    "text": " ".join([core] + shown)}
+        top = ranked[0][1]
+        tied = [c for c, n in ranked if n == top]
+        return {**out, "verdict": "UNKNOWN_UNDERDETERMINED", "core": None,
+                "text": "", "candidates": tied[:12], "remaining": len(tied),
+                "note": "the strongest final-stage candidates touch the "
+                        "same number of survivors; ties abstain"}
     return None
 
 
@@ -481,7 +757,16 @@ def ask(
     # Yes/no questions never reach the census: the census answers "what",
     # and forcing 「〜できるか」 through it either refuses or answers about
     # the subject as if とは had been asked. Attestation is its own shape.
+    st_ = staged(store, query)
+    if st_ is not None:
+        return st_
+    cmp_ = compare_shape(store, query)
+    if cmp_ is not None:
+        return cmp_
     yn = yes_no(store, query)
+    if yn is not None:
+        return yn
+    yn = yes_no_en(store, query)
     if yn is not None:
         return yn
 
@@ -498,6 +783,31 @@ def ask(
         cov0 = subject_check(store, query, seed0)
         if cov0.get("ok") and cov0.get("aspects"):
             direct = aspect_read(store, direct, cov0["aspects"])
+        else:
+            sh = en_shape(query)
+            if sh and sh.get("subject"):
+                # The English subject gate — found the same day the aspect
+                # rules landed: "what is the penalty of murder" answered
+                # about PENALTY, the exact theft the Japanese gate closed
+                # months of measurements ago. Same rules, mirrored: the
+                # core must be the subject, contain it, or hold it on its
+                # cross; a held subject displaces the wrong core; else
+                # refuse by name.
+                subj = sh["subject"]
+                core0 = str(direct.get("core_key") or "")
+                cross0 = store.crosses.get(core0) or {}
+                if not (subj == core0 or subj in core0 or subj in cross0):
+                    if subj in store.crosses:
+                        direct = consensus_over_store(store, subj, **kwargs)
+                        if str(direct.get("verdict", "")).startswith("ANSWER"):
+                            direct = dict(direct)
+                            direct["subject"] = subj
+                    else:
+                        return {"verdict": "UNKNOWN_NOT_PRESENT",
+                                "core": None, "text": "", "subject": subj,
+                                "nearest_held": direct.get("core")}
+            if sh and sh.get("aspects"):
+                direct = aspect_read(store, direct, sh["aspects"])
         if cov0.get("single") and not cov0["ok"]:
             return {
                 "verdict": "UNKNOWN_NOT_PRESENT",

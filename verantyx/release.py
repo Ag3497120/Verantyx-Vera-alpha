@@ -39,7 +39,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 SPACE = "kofdai/ask-vera"
-MODEL = "kofdai/vera-alpha"
+
+#: Distribution rule: a structure generation gets its own model repo, and
+#: knowledge-only (minor) releases UPDATE that repo in place. So vera-A-*
+#: keeps landing in kofdai/vera-alpha forever — its commit history is the
+#: checkpoint history — and the first B release creates kofdai/vera-b and
+#: accumulates there. Readers can then pin a structure by pinning a repo,
+#: while "latest of my structure" is just the repo head.
+def model_repo(gen: str) -> str:
+    return "kofdai/vera-alpha" if gen.upper() == "A" else f"kofdai/vera-{gen.lower()}"
 REPO_DIR = Path(__file__).resolve().parent.parent
 STATIC = REPO_DIR / "hf" / "space_static"
 
@@ -103,8 +111,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         out = vdir / f"{vid}.{name}.gz"
         _gz(src, out)
         files[name] = f"versions/{out.name}"
+    # Credit: everyone whose queued suggestion this release consumed. The
+    # names ride the version entry and the boot line — a contribution that
+    # becomes a permanent, named part of the structure is the reward this
+    # geometry can uniquely offer.
+    contributors: List[str] = []
+    try:
+        for line in Path(queue).read_text(encoding="utf-8").splitlines():
+            try:
+                by = json.loads(line).get("by")
+            except Exception:
+                continue
+            if by and by not in contributors:
+                contributors.append(by)
+    except Exception:
+        pass
     entry = {"id": vid, "gen": a.gen, "date": date, **files,
-             "notes": a.notes, "cores": web.get("facets") and None}
+             "repo": model_repo(a.gen),
+             "notes": a.notes, "contributors": contributors,
+             "cores": web.get("facets") and None}
     from .export_sqlite import load as _load
     entry["cores"] = len(_load(root / "build" / "vera.db")["ja"].crosses)
     index.append(entry)
@@ -115,12 +140,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not a.skip_upload:
         from huggingface_hub import HfApi
         api = HfApi()
+        repo = model_repo(a.gen)
+        # A structure release goes to a repo of its own; create on first use.
+        api.create_repo(repo_id=repo, repo_type="model", exist_ok=True)
         for src, name in ((root / "build" / "vera.db", "vera.db"),
                           (root / "build" / "vera_edges.db", "vera_edges.db"),
                           (root / "build" / "writer.json", "writer.json")):
             if src.exists():
                 api.upload_file(path_or_fileobj=str(src), path_in_repo=name,
-                                repo_id=MODEL, repo_type="model",
+                                repo_id=repo, repo_type="model",
                                 commit_message=f"{vid}: {a.notes or 'release'}")
         api.upload_folder(folder_path=str(STATIC), repo_id=SPACE,
                           repo_type="space",
@@ -128,6 +156,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                                           "vera_edges.db.gz", "writer.json.gz"],
                           commit_message=f"{vid} on the model toggle")
     print(json.dumps({"verdict": "ANSWER", "version": vid,
+                      "repo": model_repo(a.gen),
                       "cores": entry["cores"], "files": files,
                       "uploaded": not a.skip_upload}, ensure_ascii=False,
                      indent=1))

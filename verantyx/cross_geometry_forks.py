@@ -3861,6 +3861,260 @@ def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     }
 
 
+def explanation_constructed_and_typed_fork() -> Dict[str, Any]:
+    """A UNITS landing explains only through the vocabulary gate, typed.
+
+    The explanation layer is the minimal multi-stage crossing — two paths
+    (one per unit), one intersection — and its output must be legible as
+    CONSTRUCTION everywhere it travels: verdict EXPLAINED_BY_UNITS,
+    ``constructed: True``, and the reader-visible marker in the draft.
+    The crossing must be recountable: every shared facet it lists is in
+    both units' crosses. And with an empty vocabulary the same landing
+    must abstain as ABSTAIN_UNIT_NOT_A_WORD — reaching is not a licence
+    to speak.
+    """
+    from .explain import CONSTRUCTED_MARK, explain
+    from .reach import build_model
+    from .vocabulary import Vocabulary
+
+    # Same fixture discipline as the reach fork: 電荷密度 is NOT ingested;
+    # its units earn their slots from other compounds.
+    store = CrossStore()
+    for s in ["電荷は物理量である。", "電荷は保存する。", "電荷は素量である。",
+              "電荷量は単位である。", "電荷量は測定である。",
+              "質量密度は分布である。", "質量密度は物性である。",
+              "密度は質量である。", "密度は体積である。"]:
+        _ingest_ja(store, s)
+    model = build_model(store)
+
+    vocab = Vocabulary()
+    vocab.add("電荷", "fixture", 3)
+    vocab.add("密度", "fixture", 3)
+    ex = explain(store, "電荷密度", model=model, vocab=vocab)
+
+    crossing_recountable = all(
+        f in (store.crosses.get("電荷") or {})
+        and f in (store.crosses.get("密度") or {})
+        for f in ex.get("crossing", ()))
+
+    gated = explain(store, "電荷密度", model=model, vocab=Vocabulary())
+
+    ok = (ex["verdict"] == "EXPLAINED_BY_UNITS"
+          and ex.get("constructed") is True
+          and CONSTRUCTED_MARK in ex.get("text", "")
+          and ex.get("subject") in ("電荷", "密度")
+          and crossing_recountable
+          # the gate closed: same landing, no vocabulary, typed abstention
+          and gated["verdict"] == "ABSTAIN_UNIT_NOT_A_WORD"
+          and gated.get("constructed") is True)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EXPLANATION_CONSTRUCTED_AND_TYPED",
+        "pass": bool(ok),
+        "result": {"explained": [ex["verdict"], ex.get("subject")],
+                   "crossing": ex.get("crossing"),
+                   "gated": gated["verdict"]},
+    }
+
+
+def explanation_bare_suffix_abstains_at_the_split_fork() -> Dict[str, Any]:
+    """A one-character head abstains AT THE SPLIT, not at the gate.
+
+    発明者 -> 者 is what the head-final preference costs. The vocabulary
+    gate is deliberately NOT where this falls: both 発明 and 者 are in
+    the fixture vocabulary, and the abstention still fires, because the
+    judgment belongs to the split. Widening or narrowing the gate was
+    measured to be the wrong lever (MIN_ATTEST 3 -> 1: speakable 64% at
+    4% real words), so a bare suffix that ever passes means the SPLIT
+    side gets fixed.
+    """
+    from .explain import explain
+    from .reach import build_model, reach
+    from .vocabulary import Vocabulary
+
+    # 発明者 is NOT ingested. 発明品 puts 発明 in the left slot and 品 in
+    # the right; 学者 puts 者 in the one-character right slot; 発明 held
+    # as its own core is what lets reach land by UNITS at all.
+    store = CrossStore()
+    for s in ["発明は創作である。", "発明は行為である。", "発明は保護である。",
+              "発明品は道具である。", "発明品は製品である。",
+              "学者は職業である。", "学者は研究である。"]:
+        _ingest_ja(store, s)
+    model = build_model(store)
+
+    vocab = Vocabulary()
+    vocab.add("発明", "fixture", 3)
+    vocab.add("者", "fixture", 3)
+
+    landed = reach(store, "発明者", model=model)
+    ex = explain(store, "発明者", model=model, vocab=vocab)
+
+    ok = (landed["verdict"] == "UNITS"
+          and ex["verdict"] == "ABSTAIN_BARE_SUFFIX_SPLIT"
+          and ex.get("constructed") is True)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EXPLANATION_BARE_SUFFIX_ABSTAINS_AT_THE_SPLIT",
+        "pass": bool(ok),
+        "result": {"reach": [landed["verdict"], landed.get("item")],
+                   "explain": ex["verdict"]},
+    }
+
+
+def summary_edge_licence_and_group_drops_fork() -> Dict[str, Any]:
+    """A summary may only say what an edge licenses, and drops in groups.
+
+    Three lines pinned at once. (1) Without an edge lookup — or with one
+    that returns nothing — a crossing is NOT a licence: the verdict is
+    UNKNOWN_NO_EDGE_LICENSE, never a co-presence claim. (2) Compression
+    drops whole rank groups: two claims tied at the boundary with
+    limit 1 both fall, and with limit 2 both stand — no arbitrary single
+    survivor either way. (3) The word gate applies to subjects: a
+    subject outside the vocabulary contributes no claims and is listed
+    as unspoken.
+    """
+    from .summarize import summarize
+    from .vocabulary import Vocabulary
+
+    st = CrossStore()
+    st.add("甲権", ["設定", "効力"])
+    st.add("乙権", ["設定", "効力"])
+
+    vocab = Vocabulary()
+    for w in ("甲権", "乙権", "設定", "効力"):
+        vocab.add(w, "fixture", 3)
+
+    def edges_full(core: str, facets: Any) -> Any:
+        return [("設定", "効力")] if "設定" in facets and "効力" in facets else []
+
+    no_lookup = summarize(st, ["甲権", "乙権"], vocab=vocab, edges=None)
+    no_pairs = summarize(st, ["甲権", "乙権"], vocab=vocab,
+                         edges=lambda c, f: [])
+    tied_1 = summarize(st, ["甲権", "乙権"], vocab=vocab, edges=edges_full,
+                       limit=1)
+    tied_2 = summarize(st, ["甲権", "乙権"], vocab=vocab, edges=edges_full,
+                       limit=2)
+
+    gated_vocab = Vocabulary()
+    for w in ("甲権", "設定", "効力"):
+        gated_vocab.add(w, "fixture", 3)
+    gated = summarize(st, ["甲権", "乙権"], vocab=gated_vocab,
+                      edges=edges_full, limit=4)
+
+    ok = (no_lookup["verdict"] == "UNKNOWN_NO_EDGE_LICENSE"
+          and no_pairs["verdict"] == "UNKNOWN_NO_EDGE_LICENSE"
+          # the boundary tie falls whole: zero kept, both recorded
+          and tied_1["verdict"] == "SUMMARY"
+          and len(tied_1["kept"]) == 0 and tied_1["dropped_at_cut"] == 2
+          # and stands whole when the limit holds it
+          and len(tied_2["kept"]) == 2 and tied_2["dropped_at_cut"] == 0
+          # every kept claim is edge-licensed by construction
+          and all(tuple(c["pair"]) == ("設定", "効力")
+                  for c in tied_2["kept"])
+          # the unspoken subject contributed nothing and is named
+          and all(c["subject"] == "甲権" for c in gated["kept"])
+          and gated["unspoken_subjects"] == ["乙権"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "SUMMARY_EDGE_LICENCE_AND_GROUP_DROPS",
+        "pass": bool(ok),
+        "result": {"no_lookup": no_lookup["verdict"],
+                   "no_pairs": no_pairs["verdict"],
+                   "tied_limit1": [len(tied_1.get("kept") or []),
+                                   tied_1.get("dropped_at_cut")],
+                   "tied_limit2": [len(tied_2.get("kept") or []),
+                                   tied_2.get("dropped_at_cut")],
+                   "gated_unspoken": gated.get("unspoken_subjects")},
+    }
+
+
+def staged_intersection_chains_n_stages_fork() -> Dict[str, Any]:
+    """Any number of arrows chains; only the final stage elects.
+
+    Stage i's linked set becomes stage i+1's membership condition, under
+    the same width guard stage one always had. Intermediate stages hand
+    FORWARD and never elect — an election in the middle would discard
+    chains the last stage could still tell apart. The final stage keeps
+    the two-stage discipline exactly: link strength, strict lead, ties
+    abstain. And a chain that dies says at which stage: DISCONNECTED
+    carries at_stage.
+    """
+    from .stacked import staged
+
+    st = CrossStore()
+    # Stage 1 material: two crimes, one holds both conditions.
+    st.add("背任罪", ["背任", "上限"])
+    st.add("収賄罪", ["収賄", "上限"])
+    # Stage 2 material: two convicts, one touches the stage-1 survivor.
+    st.add("受刑者甲", ["服役", "背任罪"])
+    st.add("受刑者乙", ["服役", "収賄罪"])
+    # Stage 3 material: two courts, one touches the stage-2 survivor.
+    st.add("高等裁判所", ["再審", "受刑者甲"])
+    st.add("地方裁判所", ["再審"])
+
+    three = staged(st, "背任 上限 → 服役 → 再審")
+    two = staged(st, "背任 上限 → 服役")
+    dead = staged(st, "背任 上限 → 服役 → 抗告")
+
+    # A second court tying on link strength must turn the answer into an
+    # abstention — the tie rule survives the third stage.
+    st.add("最高裁判所", ["再審", "受刑者甲"])
+    tied = staged(st, "背任 上限 → 服役 → 再審")
+
+    ok = (three is not None
+          and three["verdict"] == "ANSWER_BY_STAGES"
+          and three["core"] == "高等裁判所"
+          and len(three.get("stages") or []) == 3
+          # two-stage callers see the shape they always saw
+          and two is not None
+          and two["verdict"] == "ANSWER_BY_STAGES"
+          and two["core"] == "受刑者甲"
+          and "stage1" in two and "stage2" in two
+          # a chain with no stage-3 material dies AT stage 3, typed
+          and dead is not None
+          and dead["verdict"] == "UNKNOWN_STAGE3_EMPTY"
+          # final-stage ties abstain at any depth
+          and tied is not None
+          and tied["verdict"] == "UNKNOWN_UNDERDETERMINED")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "STAGED_INTERSECTION_CHAINS_N_STAGES",
+        "pass": bool(ok),
+        "result": {
+            "three": [three and three["verdict"], three and three.get("core")],
+            "two": [two and two["verdict"], two and two.get("core")],
+            "dead": dead and dead["verdict"],
+            "tied": tied and tied["verdict"],
+        },
+    }
+
+
+def explanation_never_on_answer_path_fork() -> Dict[str, Any]:
+    """Constructed explanations must not be able to arrive at a verdict.
+
+    Same isolation `writer_never_reaches_the_answer_path_fork` pins for
+    the generator: nothing that produces a verdict, a census, or the
+    concord band may import the explanation layer. A constructed
+    explanation entering `graded`'s vocabulary would let construction
+    count as agreement — the exact pooling the band measurements forbid.
+    """
+    import inspect
+
+    from . import consensus_store, graded, hierarchy
+
+    leak = [m.__name__ for m in (consensus_store, graded, hierarchy)
+            if any(pat in inspect.getsource(m) for pat in
+                   ("from .explain", "import explain",
+                    "from .summarize", "import summarize"))]
+    ok = not leak
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EXPLANATION_NEVER_ON_ANSWER_PATH",
+        "pass": bool(ok),
+        "result": {"leaks": leak},
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -3922,6 +4176,11 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_polite_imperative_still_needs_a_licence_fork(),
         nothing_measured_moves_unknown_word_reach_fork(),
         unknown_word_reach_and_new_word_creation_are_one_operation_fork(),
+        explanation_constructed_and_typed_fork(),
+        explanation_bare_suffix_abstains_at_the_split_fork(),
+        explanation_never_on_answer_path_fork(),
+        staged_intersection_chains_n_stages_fork(),
+        summary_edge_licence_and_group_drops_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),

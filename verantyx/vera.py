@@ -68,6 +68,9 @@ class Vera:
     #: face holds an item, an edge holds which two items one sentence wrote
     #: together — the licence the sentence gate needs.
     edges: Optional[Any] = None
+    #: Optional gap store (vera_gaps.db) — refusals report already-mapped
+    #: holes instead of pretending each absence is news.
+    gaps: Optional[Any] = None
 
     def add(self, lang: str, store: Any) -> "Vera":
         from .graded import GradedJudge, settings_for
@@ -140,6 +143,27 @@ class Vera:
                 r = reach(store, t, model=self.models.get(lang), judge=judge)
                 if r["verdict"] in ("UNITS", "CONTAINMENT"):
                     landed.append(r)
+            # A UNITS landing may carry a constructed explanation — the
+            # minimal two-path crossing, typed EXPLAINED_BY_UNITS or a
+            # typed abstention, never folded into any verdict here.
+            # CONTAINMENT is handed back bare on purpose: locating is
+            # not explaining. Needs the writer's vocabulary as the word
+            # gate, so without a writer nothing is attached.
+            if landed and self.writer is not None:
+                from .explain import explain
+
+                for rr in landed:
+                    if rr.get("verdict") != "UNITS":
+                        continue
+                    try:
+                        ex = explain(store, rr["term"],
+                                     model=self.models.get(lang),
+                                     vocab=self.writer.vocab,
+                                     edges=self.edges, judge=judge)
+                        if ex.get("constructed"):
+                            rr["explained"] = ex
+                    except Exception:
+                        pass
             if landed:
                 out["reached"] = landed
         # Grain agreement, beside the data-varied witnesses and never pooled
@@ -161,6 +185,48 @@ class Vera:
                 out["facet_origin"] = self.origin(str(out["core_key"]), shown)
             except Exception:
                 pass
+        # CALIBRATED TIER — the four signals composed, not another signal.
+        # Every number below is measured elsewhere and only COMBINED here:
+        # grain bands (3+ rungs agreeing read 100% on the fixture bank,
+        # 2 read ~31%), data-varied witness pairs (97.6% vs 53.7%), and
+        # order evidence. The tier changes NOTHING about the verdict — it
+        # is the reader's discount rate, stated instead of implied.
+        if out.get("core_key"):
+            g = (out.get("grain") or {}).get("agree") or 0
+            wt = (out.get("witnesses") or {}).get("agree") or 0
+            why = []
+            score = 0
+            if g >= 3: score += 2; why.append("grain %d" % g)
+            elif g == 2: score += 1; why.append("grain 2")
+            if wt >= 2: score += 2; why.append("witnesses %d" % wt)
+            elif wt == 1: score += 1; why.append("witness 1")
+            if out.get("order_evidence") in ("ranked", "aspect"):
+                score += 1; why.append("order " + out["order_evidence"])
+            out["tier"] = {"label": ("strong" if score >= 4 else
+                                     "medium" if score >= 2 else "weak"),
+                           "score": score, "why": why}
+        # KNOWN GAP — a refusal checks the gap store: if this absence is
+        # already recorded (with which witnesses hold it), the reader sees
+        # a mapped hole, not a fresh one.
+        # NEAR TERMS — a refusal offers same-slot siblings as SUGGESTIONS,
+        # never as answers: 返済 refused suggests 弁済 because both fill
+        # the same slots under shared parents. Suggesting is not deciding;
+        # the reader picks, which is why ties are fine here.
+        if str(out.get("verdict", "")).startswith("UNKNOWN") and lang == "ja":
+            subj = out.get("subject")
+            if subj:
+                try:
+                    from .covenant import siblings
+                    near = siblings(store, subj, limit=6)
+                    if near:
+                        out["near_terms"] = near[:5]
+                except Exception:
+                    pass
+        if (str(out.get("verdict", "")).startswith("UNKNOWN")
+                and self.gaps is not None):
+            subj = out.get("subject")
+            if subj and subj in self.gaps.crosses:
+                out["known_gap"] = sorted(self.gaps.crosses[subj])[:6]
         out["remedy"] = remedy(out)
         # Opt-in only: when $VERA_QUEUE names a file, queueable refusals
         # are appended there and become the fetch list for `grow`. The

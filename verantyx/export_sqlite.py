@@ -482,6 +482,13 @@ def vera(path: Path) -> Any:
     epath = path.parent / "vera_edges.db"
     if epath.exists():
         v.edges = lambda core, facets: edge_pairs_of(epath, core, facets)
+    gpath = path.parent / "vera_gaps.db"
+    if gpath.exists():
+        from .cross_store import CrossStore
+        try:
+            v.gaps = CrossStore.load(gpath)
+        except Exception:
+            pass
     w = path.parent / "writer.json"
     if w.exists():
         v.writer = Writer.load(w)

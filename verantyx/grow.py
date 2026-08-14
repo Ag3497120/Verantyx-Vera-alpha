@@ -108,6 +108,7 @@ def github_suggestions(repo: str = "Ag3497120/Verantyx-Vera-alpha",
         subject = title.replace("[提案]", "").strip()
         if subject:
             out.append({"subject": subject, "issue": it.get("number"),
+                        "by": ((it.get("user") or {}).get("login")),
                         "rule": "community:issue#%s" % it.get("number")})
     return out
 
@@ -119,6 +120,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="show what would be fetched, fetch nothing")
     ap.add_argument("--limit", type=int, default=50)
+    ap.add_argument("--demand", action="store_true",
+                    help="pull the anonymous demand ranking from "
+                         "verantyx.ai into the queue")
     ap.add_argument("--github", action="store_true",
                     help="also pull open vera-suggest issues into the queue")
     a = ap.parse_args(argv)
@@ -126,6 +130,29 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     from .export_sqlite import load, witnesses as load_witnesses
 
+    Path(a.queue).touch()
+    if a.demand:
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                "https://verantyx.ai/api/vera/demand",
+                headers={"User-Agent": "verantyx-vera grow"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                d = json.loads(r.read().decode())
+            rows = d.get("demand") or []
+            with open(a.queue, "a", encoding="utf-8") as f:
+                for rec in rows:
+                    f.write(json.dumps({"subject": rec["subject"],
+                                        "count": rec["count"],
+                                        "rule": "demand",
+                                        "asked": time.strftime("%Y-%m-%d")},
+                                       ensure_ascii=False) + "\n")
+            print(json.dumps({"demand": len(rows),
+                              "top": [r0["subject"] for r0 in rows[:8]]},
+                             ensure_ascii=False))
+        except Exception as exc:
+            print(json.dumps({"demand": "unavailable",
+                              "why": type(exc).__name__}))
     if a.github:
         got = github_suggestions()
         with open(a.queue, "a", encoding="utf-8") as f:

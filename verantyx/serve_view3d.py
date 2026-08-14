@@ -54,9 +54,15 @@ def load(root: Path) -> None:
     picture and the tools cannot answer differently — a viewer watching a
     query resolve is watching the thing that actually resolved it.
     """
+    # Load the PUBLISHED artifact, not the pickles. Same answers (--verify
+    # pins that), and it is the only path that carries the sidecars — edges,
+    # gaps, facet provenance — so the viewer shows the structure the world
+    # downloads rather than a local variant of it.
+    from .export_sqlite import vera as load_published
     from .vera import load as load_vera
 
-    v = load_vera(root)
+    db = root / "build" / "vera.db"
+    v = load_published(db) if db.exists() else load_vera(root)
     STATE["vera"] = v
     STATE["root"] = root
     STATE["store"] = v.stores["ja"]
@@ -134,8 +140,31 @@ def run_query(query: str) -> Dict[str, Any]:
           "origin": origin,
           "order": full.get("order_evidence"),
           "grain": full.get("grain"),
+          "tier": full.get("tier"),
+          "known_gap": full.get("known_gap"),
           "subject": full.get("subject"),
           "nearest": full.get("nearest_held")})
+    # THE ANSWERING CORE'S ACTUAL CROSS. The picture drew leaves and cores
+    # and stopped there: facets — the things that occupy the four faces of
+    # an arm — were never nodes, so the geometry the whole engine is built
+    # on was the one thing the geometry viewer did not show. Nor were the
+    # sentence-edges, added later, anywhere in it. Both ride the answer now,
+    # so what lights up is the cross that produced it.
+    core_key = full.get("core_key") or full.get("core")
+    if core_key:
+        cross = st.crosses.get(str(core_key)) or {}
+        faces = sorted(cross, key=lambda f: (-cross[f], f))[:24]
+        pairs = []
+        if v.edges is not None:
+            try:
+                pairs = v.edges(str(core_key), faces)
+            except Exception:
+                pairs = []
+        emit({"type": "cross", "core": full.get("core"), "faces": faces,
+              "counts": [cross[f] for f in faces], "edges": pairs,
+              "capacity": 24,
+              "order": full.get("order_evidence")})
+
     # The structure evolves under the reader. A refused subject is fetched
     # by name, ingested through the same front door every corpus uses, and
     # the new cores stream to the page as they land — the evolution loop's
@@ -266,6 +295,26 @@ class H(BaseHTTPRequestHandler):
             finally:
                 if q in CLIENTS:
                     CLIENTS.remove(q)
+            return
+
+        if u.path == "/gaps":
+            # The mapped holes, as data the picture can place: subject, how
+            # many witnesses hold it, and which. A gap is structure too —
+            # leaving it out of the view left the reader with a map that
+            # showed only what exists.
+            v = STATE.get("vera")
+            out = []
+            g = getattr(v, "gaps", None) if v else None
+            if g is not None:
+                for core, cr in list(g.crosses.items())[:4000]:
+                    holders = sorted(f.split(":", 1)[1] for f in cr
+                                     if f.startswith("held_by:"))
+                    lacks = sorted(f.split(":", 1)[1] for f in cr
+                                   if f.startswith("gap:"))
+                    out.append({"subject": core, "held_by": holders,
+                                "lacked_by": lacks})
+            self._send(200, "application/json",
+                       json.dumps({"gaps": out}, ensure_ascii=False).encode())
             return
 
         if u.path in ("/preview", "/grow"):

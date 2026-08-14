@@ -20,6 +20,10 @@ every time — and every answer traces back to counted source sentences.
 > do: it does not write fluent prose, it does not chat casually, and it does
 > not invent anything it was never taught. That is the point.
 
+## Platform / 全体系
+
+Structure, verdicts, signals, governed evolution, versioning and every way to participate: **[docs/PLATFORM.md](docs/PLATFORM.md)**. Live: [verantyx.ai/vera3d](https://verantyx.ai/vera3d/) · [model repo](https://huggingface.co/kofdai/vera-alpha) · suggest via issues labeled `vera-suggest`.
+
 ## Where this works, and where it does not
 
 Measured, on real documents, before you spend an afternoon on it.

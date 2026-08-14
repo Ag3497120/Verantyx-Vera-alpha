@@ -107,8 +107,25 @@ def serve(store_path: str) -> int:
 
     mcp = FastMCP("verantyx-vera")
 
+    # Grain band for `ask` — a lazily built staircase over THIS store,
+    # invalidated on every mutation (every mutating tool funnels through
+    # `_save`, including the registry tools that receive it as their save
+    # hook). The band ANNOTATES the verdict and never votes: structure
+    # (cut-varied settings agreeing) and evidence (the store's own
+    # consensus) stay unpooled — see `graded.band_annotation`.
+    _grain: Dict[str, Any] = {}
+
+    def _grain_judge() -> Any:
+        if "judge" not in _grain:
+            from .graded import GradedJudge, settings_for
+
+            probe = " ".join(sorted(store.crosses)[:8]) or "This is English."
+            _grain["judge"] = GradedJudge(settings_for(probe)).build(store)
+        return _grain["judge"]
+
     def _save() -> None:
         store.save(path)
+        _grain.pop("judge", None)
 
     def _save_growth() -> None:
         growth.save(gpath)
@@ -123,8 +140,22 @@ def serve(store_path: str) -> int:
     @mcp.tool()
     def ask(query: str) -> str:
         """Ask the knowledge store. Returns a typed verdict — ANSWER with
-        provenance-backed facets, or UNKNOWN_* (never a guess)."""
+        provenance-backed facets, or UNKNOWN_* (never a guess). When the
+        staircase can count one, a `grain` band rides beside the verdict:
+        {"agree": n, "of": m, ...} — how many cut-varied settings agreed
+        on an item. The band annotates; it never votes (the verdict is
+        the same with or without it)."""
         out = consensus_over_store(store, query)
+        try:
+            from .graded import band_annotation
+
+            band = band_annotation(_grain_judge(), query)
+        except Exception:
+            # The band is an annotation — losing it must never cost the
+            # verdict itself.
+            band = None
+        if band is not None:
+            out["grain"] = band
         verdict = out.get("verdict")
         if isinstance(verdict, str) and verdict.startswith("UNKNOWN"):
             growth.record_unknown(query, verdict)
@@ -407,6 +438,25 @@ def serve(store_path: str) -> int:
 
     _vera_cache: Dict[str, Any] = {}
 
+    def _vera() -> Any:
+        """The full stack, loaded the way the 3D viewer loads it.
+
+        Published sqlite first, pickle fallback — the published path is
+        the only one that carries the sidecars (edges, origin, gaps), so
+        loading the pickle here silently disarmed every organ that needs
+        an edge licence. One loader, same as `serve_view3d.load`, so the
+        MCP tools and the picture cannot answer from different builds.
+        """
+        if "v" not in _vera_cache:
+            from .export_sqlite import vera as load_published
+            from .vera import load as load_vera
+
+            root = Path.home() / "Projects" / "vera-corpus"
+            db = root / "build" / "vera.db"
+            _vera_cache["v"] = (load_published(db) if db.exists()
+                                else load_vera(root))
+        return _vera_cache["v"]
+
     @mcp.tool()
     def vera_ask(query: str, sentences: int = 3) -> str:
         """Ask the full stack: language, staircase, inference core, reach.
@@ -429,21 +479,40 @@ def serve(store_path: str) -> int:
         SEEDED needed the staircase to name the subject, UNITS and
         CONTAINMENT landed near a word the store never held. The path is the
         citation; any sentence is a draft."""
-        from .vera import load as load_vera
-
-        if "v" not in _vera_cache:
-            _vera_cache["v"] = load_vera()
-        return json.dumps(_vera_cache["v"].ask(query, limit=sentences),
+        return json.dumps(_vera().ask(query, limit=sentences),
                           ensure_ascii=False, default=str)
 
     @mcp.tool()
     def vera_sovereigns() -> str:
         """Which sovereigns are loaded, and how big each is."""
-        from .vera import load as load_vera
+        return json.dumps(_vera().report(), ensure_ascii=False)
 
-        if "v" not in _vera_cache:
-            _vera_cache["v"] = load_vera()
-        return json.dumps(_vera_cache["v"].report(), ensure_ascii=False)
+    @mcp.tool()
+    def vera_summarize(subjects: str, limit: int = 5) -> str:
+        """Edge-licensed compression over n held subjects (space-separated).
+
+        Each subject is a path; the crossing is every facet two or more
+        subjects' crosses hold; a claim is a pair some sentence actually
+        WROTE — the edge licence. No edges sidecar, or a crossing no
+        sentence ever wrote a pair of, is UNKNOWN_NO_EDGE_LICENSE, never
+        a co-presence claim. Drops at the limit fall in whole rank
+        groups (crossing width, then subject mass); a tie never decides
+        a drop, and dropped_at_cut says what the limit cost. Hand-over
+        only — nothing here enters a verdict, a census, or the concord
+        band. Measured numbers live in `summarize`'s docstring."""
+        from .summarize import summarize as _summarize
+
+        v = _vera()
+        store = v.stores.get("ja")
+        if store is None or v.writer is None:
+            return json.dumps(
+                {"verdict": "UNKNOWN_NOT_LOADED",
+                 "note": "no Japanese sovereign or no writer in this "
+                         "build; the word gate cannot open"},
+                ensure_ascii=False)
+        out = _summarize(store, subjects.split(), vocab=v.writer.vocab,
+                         edges=v.edges, limit=limit)
+        return json.dumps(out, ensure_ascii=False, default=str)
 
     @mcp.tool()
     def how_to_resolve(verdict: str, subject: str = "") -> str:

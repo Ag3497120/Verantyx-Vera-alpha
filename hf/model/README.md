@@ -117,4 +117,6 @@ python3 -m verantyx.build_en --root .      # English sovereign
 python3 -m verantyx.export_sqlite --verify # vera.db, and that it answers the same
 ```
 
+Full platform document (structure, signals, governed evolution, versioning, participation): <https://github.com/Ag3497120/Verantyx-Vera-alpha/blob/main/docs/PLATFORM.md>
+
 Code: <https://github.com/Ag3497120/Verantyx-Vera-alpha>
