@@ -224,6 +224,122 @@ def grain_band_annotation_fork() -> Dict[str, Any]:
             "pass": bool(ok), "result": results}
 
 
+def refusal_ledger_keeps_resolved_fork() -> Dict[str, Any]:
+    """An auto-resolved refusal stays on the ledger, with its outcome.
+
+    Typed unknowns becoming control signals (refusal -> action branch)
+    creates the risk this fork closes: a branch that resolves a refusal
+    silently would make the demand ledger read as if the refusal never
+    happened — the invisible-ingestion lie in a new place. Recording an
+    outcome, resolved or not, must never touch the refusal's bucket, and
+    both must survive a save/load roundtrip.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from .growth_signals import GrowthSignals
+
+    gs = GrowthSignals()
+    gs.record_unknown("譲渡担保とは", "UNKNOWN_NOT_PRESENT")
+    before = len(gs.buckets)
+    gs.record_branch_outcome("譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                             "gather-evidence", resolved=False)
+    gs.record_branch_outcome("譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                             "gather-evidence", resolved=True)
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "growth.json"
+        gs.save(p)
+        back = GrowthSignals.load(p)
+    ok = (len(gs.buckets) == before
+          and len(back.buckets) == before
+          and len(back.branch_outcomes) == 2
+          and back.branch_outcomes[0]["resolved"] is False
+          and back.branch_outcomes[1]["resolved"] is True)
+    return {"experiment": "agent", "fork": "REFUSAL_LEDGER_KEEPS_RESOLVED",
+            "pass": bool(ok),
+            "result": {"buckets": len(back.buckets),
+                       "outcomes": len(back.branch_outcomes)}}
+
+
+def refusal_feeds_the_gap_graph_fork() -> Dict[str, Any]:
+    """Unresolved refusals become GapNodes; resolution moves, never deletes.
+
+    The frontier map must accumulate from operation, not by hand: an
+    unresolved refusal creates (or reuses — the double-call at hand-off
+    and close must be idempotent) a node under (agent_refusal, query),
+    and a later resolution moves THAT node to RESOLVED with the branch
+    named. Nothing is ever deleted — a resolved gap is history, and
+    history is what stops the same hole being re-detected from scratch.
+    """
+    from .gap_graph import GapGraph, refusal_to_gap
+
+    g = GapGraph()
+    a = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                       "gather-evidence", resolved=False)
+    b = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                       "gather-evidence", resolved=False)
+    none_yet = refusal_to_gap(g, "準委任とは", "UNKNOWN_NOT_PRESENT",
+                              "gather-evidence", resolved=True)
+    closed = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                            "gather-evidence", resolved=True)
+    node = g.get(a) if a else None
+    ok = (a is not None and a == b          # double-call is idempotent
+          and none_yet is None               # nothing to resolve, no node
+          and closed == a                    # resolution moves THAT node
+          and node is not None
+          and node.status == "RESOLVED"
+          and node.failure_type == "UNKNOWN_NOT_PRESENT"
+          and len(g.nodes) == 1)             # moved, never deleted or duped
+    return {"experiment": "agent", "fork": "REFUSAL_FEEDS_THE_GAP_GRAPH",
+            "pass": bool(ok),
+            "result": {"gap_id": a, "status": node.status if node else None,
+                       "nodes": len(g.nodes)}}
+
+
+def coverage_names_the_shelf_or_the_hole_fork() -> Dict[str, Any]:
+    """The atlas names a shelf it HAS, or the hole — never a wrong shelf.
+
+    A gap node telling a human "prepare a 法学 document" when no shelf
+    holds anything near the subject sends them after the wrong
+    document, which is worse than the honest hole. Proximity is
+    recountable presence only (held core / unit held), ties display
+    rather than break, and the ranked shelves ride the GapNode as
+    allowed_sources.
+    """
+    from .coverage import closing_domains, document_needed
+    from .gap_graph import GapGraph, refusal_to_gap
+
+    law = CrossStore()
+    law.add("譲渡", ["担保", "移転"])
+    law.add("担保", ["債権", "物権"])
+    wiki = CrossStore()
+    wiki.add("超新星", ["天文", "爆発"])
+
+    domains = {"法学": law, "百科": wiki}
+    near = closing_domains(domains, "譲渡担保")
+    hole = document_needed(domains, "量子縺れ")
+    named = document_needed(domains, "譲渡担保")
+
+    g = GapGraph()
+    gid = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                         "gather-evidence", resolved=False,
+                         sources=["法学"])
+    node = g.get(gid)
+
+    ok = (near["closest"] and near["closest"][0]["domain"] == "法学"
+          and not near["coverage_hole"]
+          and hole["coverage_hole"] is True
+          and "ジャンルごと不足" in hole["document"]
+          and "法学" in named["document"]
+          and node is not None and node.allowed_sources == ["法学"])
+    return {"experiment": "agent",
+            "fork": "COVERAGE_NAMES_THE_SHELF_OR_THE_HOLE",
+            "pass": bool(ok),
+            "result": {"near": near["closest"][:1],
+                       "hole": hole["coverage_hole"],
+                       "node_sources": node.allowed_sources if node else None}}
+
+
 def all_agent_forks() -> List[Dict[str, Any]]:
     return [
         agent_readonly_runs_fork(),
@@ -234,4 +350,7 @@ def all_agent_forks() -> List[Dict[str, Any]]:
         tui_fallback_fork(),
         multiline_paste_capture_fork(),
         grain_band_annotation_fork(),
+        refusal_ledger_keeps_resolved_fork(),
+        refusal_feeds_the_gap_graph_fork(),
+        coverage_names_the_shelf_or_the_hole_fork(),
     ]

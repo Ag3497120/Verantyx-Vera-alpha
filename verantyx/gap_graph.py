@@ -207,5 +207,34 @@ class GapGraph:
         return graph
 
 
+def refusal_to_gap(graph: "GapGraph", query: str, verdict: str,
+                   branch: str, resolved: bool,
+                   sources: Optional[List[str]] = None) -> Optional[str]:
+    """The refusal ledger's twin write into the frontier map.
+
+    Unresolved -> a GapNode exists for (agent_refusal, query), created
+    or reused (the create dedup makes the hand-off + close double-call
+    idempotent). Resolved -> that node, if any, moves to RESOLVED with
+    the branch named in the resolution. Returns the gap_id it touched,
+    None when there was nothing to touch. The caller's growth-ledger
+    entry never depends on this — the two records ride beside each
+    other.
+    """
+    if resolved:
+        node = graph.find_by_scope_subject("agent_refusal", query)
+        if node is not None and node.status != "RESOLVED":
+            graph.set_status(node.gap_id, "RESOLVED",
+                             resolution="re-asked after branch %r; store "
+                                        "answers" % branch)
+            return node.gap_id
+        return None
+    node = graph.create(
+        gap_type="unresolved_refusal", subject=query,
+        scope="agent_refusal", severity="QUALITY",
+        failure_type=verdict, acquisition_methods=[branch],
+        allowed_sources=sources)
+    return node.gap_id
+
+
 def gap_graph_path(store_path: Path) -> Path:
     return store_path.parent / "gap_graph.json"

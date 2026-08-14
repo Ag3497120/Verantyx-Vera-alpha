@@ -488,6 +488,24 @@ def serve(store_path: str) -> int:
         return json.dumps(_vera().report(), ensure_ascii=False)
 
     @mcp.tool()
+    def what_would_close(query: str, verdict: str = "UNKNOWN_NOT_PRESENT") -> str:
+        """Which document, from which shelf, would close this refusal.
+
+        The enterprise inversion of the growth loop: the system never
+        fetches, it NAMES the missing document and a human supplies it.
+        Ranks the federation's domains by recountable proximity (held as
+        core / units held as cores), combines the winner with the
+        refusal's own repair (how much to register), and when NO shelf
+        holds anything nearby says coverage_hole instead of naming a
+        wrong shelf — sending a human after the wrong document is worse
+        than the honest hole. Ties are displayed, never broken."""
+        from .coverage import document_needed
+
+        v = _vera()
+        return json.dumps(document_needed(v.witnesses, query, verdict),
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def vera_summarize(subjects: str, limit: int = 5) -> str:
         """Edge-licensed compression over n held subjects (space-separated).
 
@@ -542,6 +560,60 @@ def serve(store_path: str) -> int:
         if subject:
             r["subject"] = subject
         return json.dumps(remedy(r), ensure_ascii=False)
+
+    @mcp.tool()
+    def record_refusal_outcome(query: str, verdict: str, branch: str,
+                               resolved: bool = False) -> str:
+        """A typed refusal was handed to an action branch (gather-evidence,
+        ask-user, resolve-time, record-gap) and this is what happened.
+
+        The refusal's ledger entry is deliberately kept: a refusal an
+        agent auto-resolved is a SUCCESS, not a refusal that never
+        happened, and a ledger that loses auto-resolved entries tells the
+        same shape of lie as an ingest that hides its failures. Call once
+        with resolved=false at hand-off (so the hand-off itself can never
+        become invisible), and once more after the branch with the one
+        honest oracle for resolution: re-ask the same query, and resolved
+        is whether the store now answers — never the agent's say-so.
+
+        The gap graph rides the same call: an unresolved refusal creates
+        (or reuses — dedup by scope/subject) a GapNode, so the frontier
+        map accumulates from operation instead of by hand, and a later
+        resolved=true moves that node to RESOLVED. The flow the design
+        names — refusal -> gather -> evidence -> record -> gap ledger —
+        closes here without the agent having to remember to file it."""
+        growth.record_branch_outcome(query, verdict, branch, resolved)
+        _save_growth()
+        gap_id = None
+        try:
+            from .gap_graph import refusal_to_gap
+
+            sources = None
+            if not resolved:
+                # Which shelf would close this — ranked domains ride the
+                # node as allowed_sources so a human reading the gap map
+                # sees WHAT DOCUMENT to prepare, not just that a hole
+                # exists. Best-effort: the atlas needs the full stack.
+                try:
+                    from .coverage import closing_domains
+
+                    where = closing_domains(_vera().witnesses, query)
+                    if not where["coverage_hole"]:
+                        sources = [d["domain"] for d in where["closest"]]
+                except Exception:
+                    pass
+            gap_id = refusal_to_gap(gap_graph, query, verdict, branch,
+                                    resolved, sources=sources)
+            if gap_id is not None:
+                _save_gap_graph()
+        except Exception:
+            # The ledger entry must survive a gap-graph hiccup; the two
+            # records are beside each other, not dependent.
+            pass
+        return json.dumps(
+            {"recorded": True, "open_refusals": len(growth.buckets),
+             "outcomes": len(growth.branch_outcomes),
+             "gap_id": gap_id}, ensure_ascii=False)
 
     @mcp.tool()
     def attest_claim(subject: str, text: str) -> str:

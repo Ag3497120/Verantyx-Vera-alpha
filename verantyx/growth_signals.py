@@ -100,12 +100,33 @@ class GrowthSignals:
         self.buckets: Dict[str, UnknownBucket] = {}
         self.mass_snapshot: Dict[str, float] = {}
         self.drifted_cores: Dict[str, float] = {}  # core -> last observed |delta|
+        #: Refusals handed to an action branch, and what the branch did.
+        #: Append-only, beside the buckets — never instead of them.
+        self.branch_outcomes: List[Dict[str, Any]] = []
 
     def record_unknown(self, query: str, verdict: str, matched_domain: bool = False) -> UnknownBucket:
         key = normalize_query(query)
         bucket = self.buckets.setdefault(key, UnknownBucket(normalized=key))
         bucket.record(query, verdict, matched_domain=matched_domain)
         return bucket
+
+    def record_branch_outcome(self, query: str, verdict: str, branch: str,
+                              resolved: bool) -> None:
+        """A refusal was handed to an action branch; this is what happened.
+
+        The refusal's bucket is deliberately NOT touched: a refusal that
+        an agent auto-resolved is a success, not a refusal that never
+        happened, and a ledger that loses auto-resolved entries tells the
+        same shape of lie as an ingest that hides its failures. `resolved`
+        should come from the one honest oracle — re-asking after the
+        branch and the store now answering — not from the agent's say-so.
+        """
+        import time
+
+        self.branch_outcomes.append({
+            "query": normalize_query(query), "verdict": verdict,
+            "branch": branch, "resolved": bool(resolved),
+            "at": round(time.time(), 2)})
 
     def record_mass_snapshot(self, store: CrossStore, drift_threshold: float = 0.4) -> List[str]:
         """Compares each core's current `mass()` against the last snapshot;
@@ -128,6 +149,7 @@ class GrowthSignals:
             "buckets": {k: b.as_dict() for k, b in self.buckets.items()},
             "mass_snapshot": self.mass_snapshot,
             "drifted_cores": self.drifted_cores,
+            "branch_outcomes": self.branch_outcomes,
         }
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
@@ -145,6 +167,7 @@ class GrowthSignals:
         }
         gs.mass_snapshot = dict(data.get("mass_snapshot", {}))
         gs.drifted_cores = dict(data.get("drifted_cores", {}))
+        gs.branch_outcomes = list(data.get("branch_outcomes", []))
         return gs
 
 
