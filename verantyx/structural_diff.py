@@ -27,13 +27,26 @@ Layers
 Ties at a top-k cutoff abstain. Display order inside a bundle is
 layer, then ratio, then token length, then lex — a display order,
 not an election.
+
+## Measured — W2a sense wiring on, same 30-pair bank, seed 20260814
+
+    hits                         0 / 30     (was 11 / 30)
+    misses                       1
+    abstentions                  29
+    of which AMBIGUOUS_SENSE     29
+    oracle containment           0.9739     (was 0.9750)
+    馬/自転車                    AMBIGUOUS_SENSE (麻雀 gone from only_a)
+
+    See tools/measure_structural_diff.py. Old sections there stay.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .lattice import kin
 from .lex_filters import is_junk_facet
+from .sense_split import AMBIGUOUS_SENSE, resolve
 
 OBSERVED = "実測あり"
 UNOBSERVED = "実測なし"
@@ -98,6 +111,29 @@ def _canonical(term: str, aliases: Optional[Dict[str, str]]) -> str:
     return hit if hit else t
 
 
+def _context_tokens(term: str) -> List[str]:
+    from .lang import ja_content_runs
+    t = (term or "").strip()
+    toks = ja_content_runs(t)
+    if t and t not in toks:
+        toks = [t] + toks
+    return toks
+
+
+def _sense_subject(
+    term: str,
+    other: str,
+    aliases: Optional[Dict[str, str]],
+    senses: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Canonicalize through the sense sidecar (primary default).
+
+    The other term is the comparison partner, not a sense specifier.
+    Context-given resolve stays available on ``resolve`` itself.
+    """
+    return resolve(term, [], senses=senses, aliases=aliases)
+
+
 def _predicates(profiles: Dict[str, Any], subject: str) -> Dict[str, float]:
     rec = (profiles or {}).get(subject)
     if not isinstance(rec, dict):
@@ -150,7 +186,45 @@ def _orient_mass(norm: Dict[str, float]) -> Dict[str, float]:
     return out
 
 
-def _shelf_cross(shelf: Any, subject: str) -> Dict[str, float]:
+_PROV_SRC = re.compile(r"\(reported by (jawiki-lead:.+)\)\s*$")
+
+
+def _prov_source(slot: Any) -> Optional[str]:
+    snippet = ""
+    if isinstance(slot, (list, tuple)) and len(slot) > 2:
+        snippet = str(slot[2] or "")
+    elif isinstance(slot, str):
+        snippet = slot
+    m = _PROV_SRC.search(snippet)
+    return m.group(1) if m else None
+
+
+def _lead_mass(
+    tokens: Optional[List[str]],
+    subject: str,
+    *,
+    limit: Optional[int] = None,
+) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for tok in tokens or []:
+        if not tok or tok == subject:
+            continue
+        if tok in _INGEST_SKIP or tok.casefold() in _INGEST_SKIP:
+            continue
+        if is_junk_facet(tok):
+            continue
+        out[str(tok)] = 1.0
+        if limit is not None and len(out) >= limit:
+            break
+    return out
+
+
+def _shelf_cross(
+    shelf: Any,
+    subject: str,
+    *,
+    article: Optional[str] = None,
+) -> Dict[str, float]:
     if shelf is None:
         return {}
     crosses = getattr(shelf, "crosses", None) or {}
@@ -169,13 +243,30 @@ def _shelf_cross(shelf: Any, subject: str) -> Dict[str, float]:
         if is_junk_facet(str(facet)):
             continue
         out[str(facet)] = float(n)
-    return out
+    if not article:
+        return out
+    prov = getattr(shelf, "provenance", None) or {}
+    slots = prov.get(subject) or prov.get(subject.casefold()) or {}
+    if not slots:
+        return out
+    want = "jawiki-lead:%s" % article
+    return {
+        f: n for f, n in out.items()
+        if _prov_source(slots.get(f)) == want
+    }
 
 
-def _definition_tokens(shelf: Any, subject: str) -> Dict[str, float]:
+def _definition_tokens(
+    shelf: Any,
+    subject: str,
+    *,
+    article: Optional[str] = None,
+) -> Dict[str, float]:
     """Presence mass over tokens of the shelf definition, when held.
 
-    Provenance snippets are the lead sentences. When provenance is
+    Provenance snippets are the lead sentences. When ``article`` is
+    set, only snippets whose source is ``jawiki-lead:{article}`` are
+    read — parenthetical siblings stay out. When provenance is
     absent, the subject's own facet keys are the definition tokens
     (presence, not mass — layer ④ already carries mass).
     """
@@ -186,8 +277,11 @@ def _definition_tokens(shelf: Any, subject: str) -> Dict[str, float]:
     labels = getattr(shelf, "source_labels", None) or set()
     prov = getattr(shelf, "provenance", None) or {}
     slots = prov.get(subject) or prov.get(subject.casefold()) or {}
+    want = ("jawiki-lead:%s" % article) if article else None
     seen: Dict[str, float] = {}
     for _facet, slot in slots.items():
+        if want and _prov_source(slot) != want:
+            continue
         snippet = ""
         if isinstance(slot, (list, tuple)) and len(slot) > 2:
             snippet = str(slot[2] or "")
@@ -203,8 +297,10 @@ def _definition_tokens(shelf: Any, subject: str) -> Dict[str, float]:
             seen[tok] = seen.get(tok, 0.0) + 1.0
     if seen:
         return seen
+    if want and slots:
+        return {}
     # Presence-only fallback: one tick per held facet.
-    return {f: 1.0 for f in _shelf_cross(shelf, subject)}
+    return {f: 1.0 for f in _shelf_cross(shelf, subject, article=article)}
 
 
 def _kin_mass(lattice: Any, subject: str, k: int) -> Dict[str, float]:
@@ -336,20 +432,67 @@ def diff(
     shelf: Any,
     k: int = DEFAULT_K,
     min_profile: int = DEFAULT_MIN_PROFILE,
+    senses: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Compare ``a`` and ``b`` across the six layers.
 
-    Inputs are canonicalized through ``aliases`` (one hop). Each layer
-    that cannot meet ``min_profile`` on both sides abstains. The return
-    always carries ``coverage``.
+    Inputs are canonicalized through ``aliases`` (one hop). When
+    ``senses`` is supplied, canonicalization consults the W2a sidecar
+    (primary default, or a unique context hit). The pair abstains as
+    AMBIGUOUS_SENSE only when a side has no primary (a 曖昧さ回避
+    title). Shelf layers ④ and ⑥ keep only facets whose provenance
+    is ``jawiki-lead:{resolved}``. Each layer that cannot meet
+    ``min_profile`` on both sides abstains. The return always carries
+    ``coverage``.
     """
-    ca = _canonical(a, aliases)
-    cb = _canonical(b, aliases)
+    sense_hits: Optional[Dict[str, Any]] = None
+    article_a = article_b = None
+    leads_a: List[str] = []
+    leads_b: List[str] = []
+    if senses is not None:
+        ra = _sense_subject(a, b, aliases, senses)
+        rb = _sense_subject(b, a, aliases, senses)
+        sense_hits = {"a": ra, "b": rb}
+        if (ra.get("verdict") == AMBIGUOUS_SENSE
+                or rb.get("verdict") == AMBIGUOUS_SENSE):
+            return {
+                "a": a,
+                "b": b,
+                "canonical": {
+                    "a": ra.get("core") or _canonical(a, aliases),
+                    "b": rb.get("core") or _canonical(b, aliases),
+                },
+                "verdict": AMBIGUOUS_SENSE,
+                "senses": sense_hits,
+                "coverage": {
+                    "a": {"predicates": 0, "facets": 0},
+                    "b": {"predicates": 0, "facets": 0},
+                },
+                "confidence": {"predicates": 0, "facets": 0},
+                "k": k,
+                "min_profile": min_profile,
+                "shared": [],
+                "only_a": [],
+                "only_b": [],
+                "abstain": {"sense": AMBIGUOUS_SENSE},
+            }
+        ca = ra.get("core") or _canonical(a, aliases)
+        cb = rb.get("core") or _canonical(b, aliases)
+        article_a, article_b = ca, cb
+        leads_a = list(ra.get("lead_tokens") or [])
+        leads_b = list(rb.get("lead_tokens") or [])
+    else:
+        ca = _canonical(a, aliases)
+        cb = _canonical(b, aliases)
 
     preds_a = _predicates(profiles, ca)
     preds_b = _predicates(profiles, cb)
-    facets_a = _shelf_cross(shelf, ca)
-    facets_b = _shelf_cross(shelf, cb)
+    facets_a = _shelf_cross(shelf, ca, article=article_a)
+    facets_b = _shelf_cross(shelf, cb, article=article_b)
+    if article_a and not facets_a:
+        facets_a = _lead_mass(leads_a, ca, limit=k)
+    if article_b and not facets_b:
+        facets_b = _lead_mass(leads_b, cb, limit=k)
 
     coverage = {
         "a": {"predicates": len(preds_a), "facets": len(facets_a)},
@@ -411,8 +554,14 @@ def diff(
             abstain.pop(LAYER_ORIENT)
     else:
         abstain[LAYER_ORIENT] = "INSUFFICIENT_PROFILE"
+    defs_a = _definition_tokens(shelf, ca, article=article_a)
+    defs_b = _definition_tokens(shelf, cb, article=article_b)
+    if article_a and not defs_a:
+        defs_a = _lead_mass(leads_a, ca, limit=k)
+    if article_b and not defs_b:
+        defs_b = _lead_mass(leads_b, cb, limit=k)
     _take(*_run_layer(
-        _definition_tokens(shelf, ca), _definition_tokens(shelf, cb),
+        defs_a, defs_b,
         layer=LAYER_DEFINE, edge="definition", k=k,
         min_profile=min_profile, abstain=abstain,
     ))
@@ -421,12 +570,18 @@ def diff(
     only_a = _sort_bucket(only_a, "a")
     only_b = _sort_bucket(only_b, "b")
 
+    # Same primary article (河川→川, 海洋→海): the resolved core is
+    # the shared identity. Length-sort would bury the 1-char title.
+    if ca == cb:
+        core_item = _item(ca, LAYER_DEFINE, "definition", True, True, 1.0, 1.0)
+        shared = [core_item] + [it for it in shared if it["token"] != ca]
+
     if not shared and not only_a and not only_b and abstain:
         verdict = "INSUFFICIENT_PROFILE"
     else:
         verdict = "DIFF"
 
-    return {
+    out = {
         "a": a,
         "b": b,
         "canonical": {"a": ca, "b": cb},
@@ -440,6 +595,9 @@ def diff(
         "only_b": only_b,
         "abstain": abstain,
     }
+    if sense_hits is not None:
+        out["senses"] = sense_hits
+    return out
 
 
 def regression() -> Dict[str, Any]:
@@ -509,8 +667,48 @@ def regression() -> Dict[str, Any]:
     # 2/5 on 電気 and absent on リンゴ → only_b, independent of 2 vs 1.
     flow_ok = any(it["token"] == "流れる" for it in out["only_b"])
 
+    # W2a: primary default still DIFFs; sibling provenance is dropped.
+    toy_senses = {
+        "リンゴ": [
+            {"core": "リンゴ", "domain_tag": "", "lead_tokens": ["果実"]},
+            {"core": "リンゴ (アルバム)", "domain_tag": "アルバム",
+             "lead_tokens": ["音楽"]},
+        ],
+        "水 (曖昧さ回避)": [
+            {"core": "水 (曖昧さ回避)", "domain_tag": "曖昧さ回避",
+             "lead_tokens": []},
+        ],
+    }
+    prim = diff("りんご", "電気", profiles=profiles, aliases=aliases,
+                lattice=lat, shelf=shelf, k=8, min_profile=3,
+                senses=toy_senses)
+    prim_ok = (
+        prim.get("verdict") == "DIFF"
+        and prim.get("canonical", {}).get("a") == "リンゴ"
+        and any("果実" in it["token"] for it in prim["only_a"])
+    )
+    shelf.track_provenance = True
+    shelf.crosses["リンゴ"]["麻雀"] = 9
+    shelf.provenance["リンゴ"] = {
+        "果実": [0, 0, "x (reported by jawiki-lead:リンゴ)"],
+        "植物": [0, 0, "x (reported by jawiki-lead:リンゴ)"],
+        "食用": [0, 0, "x (reported by jawiki-lead:リンゴ)"],
+        "麻雀": [0, 0, "x (reported by jawiki-lead:リンゴ (麻雀))"],
+    }
+    filt = diff("りんご", "電気", profiles=profiles, aliases=aliases,
+                lattice=lat, shelf=shelf, k=8, min_profile=3,
+                senses=toy_senses)
+    filt_tokens = {it["token"] for it in
+                   filt["shared"] + filt["only_a"] + filt["only_b"]}
+    filter_ok = "麻雀" not in filt_tokens
+    dab = diff("水 (曖昧さ回避)", "電気", profiles=profiles, aliases=aliases,
+               lattice=lat, shelf=shelf, k=8, min_profile=3,
+               senses=toy_senses)
+    dab_ok = dab.get("verdict") == AMBIGUOUS_SENSE
+
     ok = all([status_ok, only_a_ok, only_b_ok, shared_ok, alias_ok,
-              fruit_ok, copula_ok, cov_ok, thin_ok, flow_ok])
+              fruit_ok, copula_ok, cov_ok, thin_ok, flow_ok,
+              prim_ok, filter_ok, dab_ok])
     return {
         "experiment": "structural_diff",
         "fork": "STRUCTURAL_DIFF_DEFENSE",
@@ -521,5 +719,8 @@ def regression() -> Dict[str, Any]:
             "coverage": out["coverage"],
             "only_a_tokens": sorted(tokens_a),
             "thin_abstain": thin["abstain"],
+            "sense_verdict": prim.get("verdict"),
+            "filter_ok": filter_ok,
+            "dab": dab.get("verdict"),
         },
     }

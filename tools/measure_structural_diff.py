@@ -63,6 +63,63 @@ The oracle stayed tight (0.9750; 14 of 560 leaked). The bank did
 not move: 11 / 30, same misses. リンゴ/電気 still hits on
 果実のことである. Fugashi cleaned verb lemmas; it did not lift
 the shelf-collision pairs that dominate the bank.
+
+## Measured — W2a sense wiring on, same bank, seed 20260814
+
+    subjects                         1,419,406
+    lattice                          527,175 words, 787,333 slots
+    shelf cores                      309,864
+    aliases                          941,604
+    sense surfaces                   122,988
+    fork STRUCTURAL_DIFF_DEFENSE     pass
+
+    machine oracle (200 subject pairs, remain profiles)
+        only_a predicate claims      537
+        contained                    523
+        leaked onto B                14
+        containment rate             0.9739
+
+    preregistered bank (30 pairs, unchanged file)
+        hits                         0 / 30     (was 11 / 30)
+        misses                       1
+        abstentions                  29
+        of which AMBIGUOUS_SENSE     29
+        (INSUFFICIENT_PROFILE pair   0)
+
+    馬/自転車 is now AMBIGUOUS_SENSE: named list is ウマ +
+    ウマ (麻雀) + 馬 (映画/姓/シャンチー/曖昧さ回避) vs 自転車 +
+    two song titles + 曖昧さ回避. only_a is empty — 麻雀 no
+    longer leaks. The 11 hits were short-title pairs that the
+    sidecar now refuses to merge. The remaining miss is
+    図書館/火災 (no parentheticals; still a DIFF, still off-axis).
+
+## Measured — W2a primary-sense default, same bank, seed 20260814
+
+    subjects                         1,419,406
+    lattice                          527,175 words, 787,333 slots
+    shelf cores                      309,864
+    aliases                          941,604
+    sense surfaces                   122,988
+    fork STRUCTURAL_DIFF_DEFENSE     pass
+
+    machine oracle (200 subject pairs, remain profiles)
+        only_a predicate claims      491
+        contained                    477
+        leaked onto B                14
+        containment rate             0.9715
+
+    preregistered bank (30 pairs, unchanged file)
+        hits                         11 / 30     (baseline 11 / 30; sense-abstain 0 / 30)
+        misses                       12
+        abstentions                  7
+        of which AMBIGUOUS_SENSE     0
+        (INSUFFICIENT_PROFILE pair   7)
+
+    馬/自転車 is DIFF: canonical ウマ vs 自転車. only_a is
+    哺乳綱奇蹄目ウマ / Horse / 家畜動物 (animal). only_b includes
+    車輪. Mahjong tokens in shared/only_a/only_b: 0. ウマ (麻雀)
+    is named on other_senses, not merged. 川/河川 and 海/海洋
+    share the primary core. No bank pair is AMBIGUOUS_SENSE.
 """
 from __future__ import annotations
 
@@ -77,6 +134,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from verantyx.cross_store import CrossStore
 from verantyx.lattice import build
 from verantyx.predicate_profile import OUT, load
+from verantyx.sense_split import AMBIGUOUS_SENSE, OUT as SENSES_OUT, load as load_senses
 from verantyx.structural_diff import LAYER_PROFILE, diff, regression
 
 SEED = 20260814
@@ -172,7 +230,7 @@ def _top_blob(items, n=3):
 
 
 def score_pair(pair, result):
-    if result.get("verdict") == "INSUFFICIENT_PROFILE":
+    if result.get("verdict") in ("INSUFFICIENT_PROFILE", AMBIGUOUS_SENSE):
         return "abstain"
     if pair.get("expect_bucket") == "shared":
         blob = _top_blob(result.get("shared") or [])
@@ -213,6 +271,12 @@ def main() -> None:
     print("loading aliases…", flush=True)
     aliases = json.loads(ALIASES.read_text(encoding="utf-8"))
     print("aliases", len(aliases), flush=True)
+
+    print("loading senses…", flush=True)
+    if not SENSES_OUT.is_file():
+        raise SystemExit("sense sidecar missing: %s" % SENSES_OUT)
+    senses = load_senses(SENSES_OUT)
+    print("senses", len(senses), flush=True)
 
     bank_subjects = []
     for p in pairs:
@@ -267,6 +331,7 @@ def main() -> None:
         result = _checked_diff(
             sa, sb, profiles=remain_profiles, aliases=aliases,
             lattice=lat, shelf=shelf, k=8, min_profile=MIN_PREDS,
+            senses=senses,
         )
         ca = result["canonical"]["a"]
         cb = result["canonical"]["b"]
@@ -287,16 +352,20 @@ def main() -> None:
     # --- preregistered bank --------------------------------------------
     bank_rows = []
     hits = misses = abstentions = 0
+    sense_abstentions = 0
     for pair in pairs:
         result = _checked_diff(
             pair["a"], pair["b"], profiles=profiles, aliases=aliases,
             lattice=lat, shelf=shelf, k=8, min_profile=MIN_PREDS,
+            senses=senses,
         )
         mark = score_pair(pair, result)
         if mark == "hit":
             hits += 1
         elif mark == "abstain":
             abstentions += 1
+            if result.get("verdict") == AMBIGUOUS_SENSE:
+                sense_abstentions += 1
         else:
             misses += 1
         bank_rows.append({
@@ -314,6 +383,12 @@ def main() -> None:
     example = _checked_diff(
         "リンゴ", "電気", profiles=profiles, aliases=aliases,
         lattice=lat, shelf=shelf, k=8, min_profile=MIN_PREDS,
+        senses=senses,
+    )
+    flagship = _checked_diff(
+        "馬", "自転車", profiles=profiles, aliases=aliases,
+        lattice=lat, shelf=shelf, k=8, min_profile=MIN_PREDS,
+        senses=senses,
     )
 
     out = {
@@ -337,10 +412,13 @@ def main() -> None:
             "hits": hits,
             "misses": misses,
             "abstentions": abstentions,
+            "sense_abstentions": sense_abstentions,
+            "baseline_hits": 11,
             "score": "%d/%d" % (hits, len(pairs)),
             "rows": bank_rows,
         },
         "example_apple_electricity": example,
+        "flagship_uma_bicycle": flagship,
         "seconds": round(time.time() - t0, 1),
     }
     print(json.dumps(out, ensure_ascii=False, indent=1), flush=True)
