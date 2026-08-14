@@ -73,6 +73,16 @@ Abstention is 41.1% of UNITS and is reported as a result, not a
 failure: the twenty bare-suffix terms are 〜者/〜法-shaped heads a
 reader must not be handed a meaning for, and the sixteen not-a-word
 terms landed on units the corpus never writes standalone.
+
+With the lattice wired (same 150, tools/measure_explain_funnel.py):
+
+    UNKNOWN_NO_REACH                       41 -> 3
+    KIN_NEIGHBOURHOOD                      38
+
+The 38 are neighbourhoods, not landings — 㭍月例祭 gets the 祭@R
+family (司祭、感謝祭、映画祭), which is the right room and no more.
+The three still refused (水戸芸術館, 準絶滅危惧, 話者指示性) have no
+two attested kin, and one relative is a point, not a family.
 """
 from __future__ import annotations
 
@@ -102,6 +112,49 @@ def _unit(store: Any, labels: Any, vocab: Any, part: str, pos: str) -> Dict[str,
             "word": part in vocab}
 
 
+def kin_neighbourhood(
+    lat: Any,
+    store: Any,
+    term: str,
+    vocab: Any,
+) -> Optional[Dict[str, Any]]:
+    """The term's lattice families, as a NEIGHBOURHOOD — never a meaning.
+
+    Measured ceiling (lattice.py): kin recovers 4% of a held-out word's
+    own facets — ten times chance and nowhere near comprehension. So
+    this hand-over claims exactly what the lattice attests: which
+    positional families the term's units belong to, and what those
+    FAMILIES talk about. The facets shown are the family's, labelled as
+    such; calling them the term's would be the overclaim the ceiling
+    forbids. Returns None below two distinct kin — one relative is a
+    point, not a family.
+    """
+    from .lattice import kin, predict_facets
+
+    fams = kin(lat, term, min_unit=1)
+    distinct = sorted({w for ws in fams.values() for w in ws})
+    if len(distinct) < 2:
+        return None
+    family_facets = [f for f in predict_facets(lat, store, term)
+                     if f in vocab][:6]
+    parts = []
+    for slot in sorted(fams):
+        parts.append("%s の家族（%s）" % (slot, "、".join(fams[slot][:4])))
+    text = "%sは未保持。%s に近い。" % (term, "；".join(parts))
+    if family_facets:
+        text += "家族が語る面: %s。" % "、".join(family_facets[:4])
+    return {
+        "verdict": "KIN_NEIGHBOURHOOD", "constructed": True,
+        "term": term, "families": {k: v for k, v in sorted(fams.items())},
+        "family_facets": family_facets,
+        "text": text + CONSTRUCTED_MARK,
+        "note": "a neighbourhood, not a meaning: the facets are what the "
+                "positional families talk about (measured recall of the "
+                "term's own facets: 4%), and every family member is an "
+                "attested word",
+    }
+
+
 def explain(
     store: Any,
     term: str,
@@ -110,19 +163,30 @@ def explain(
     vocab: Any,
     edges: Optional[Any] = None,
     judge: Optional[Any] = None,
+    lat: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """One constructed explanation, or a typed abstention — never a guess.
 
     ``vocab`` is the word gate (`vocabulary.Vocabulary`); only units that
     pass it are spoken. ``edges`` is the optional same-sentence pair
     lookup with `vera.Vera.edges`' shape: (core, shown) -> pairs.
+    ``lat`` is an optional `lattice.Lattice`; when the unit model cannot
+    reach the term at all, the lattice's positional families widen the
+    hand-over (measured: 86 -> 140 of 150 predictable) as a
+    KIN_NEIGHBOURHOOD — typed apart because it is a weaker claim.
     """
     from .reach import reach
 
     r = reach(store, term, model=model, judge=judge)
     if r["verdict"] != "UNITS":
         # HELD needs no construction, CONTAINMENT locates without
-        # explaining, NO_REACH refuses — all hand back unchanged.
+        # explaining. NO_REACH may still have lattice kin — a
+        # neighbourhood is less than an explanation and more than a
+        # bare refusal, and the type says which one the reader holds.
+        if r["verdict"] == "UNKNOWN_NO_REACH" and lat is not None:
+            nb = kin_neighbourhood(lat, store, term, vocab)
+            if nb is not None:
+                return nb
         return r
 
     labels = getattr(store, "source_labels", set()) or set()

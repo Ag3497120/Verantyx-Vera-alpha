@@ -139,17 +139,20 @@ class Vera:
             from .reach import reach
 
             landed = []
+            unreached = []
             for t in (graded.get("terms") or []):
                 r = reach(store, t, model=self.models.get(lang), judge=judge)
                 if r["verdict"] in ("UNITS", "CONTAINMENT"):
                     landed.append(r)
+                elif r["verdict"] == "UNKNOWN_NO_REACH":
+                    unreached.append(t)
             # A UNITS landing may carry a constructed explanation — the
             # minimal two-path crossing, typed EXPLAINED_BY_UNITS or a
             # typed abstention, never folded into any verdict here.
             # CONTAINMENT is handed back bare on purpose: locating is
             # not explaining. Needs the writer's vocabulary as the word
             # gate, so without a writer nothing is attached.
-            if landed and self.writer is not None:
+            if self.writer is not None and (landed or unreached):
                 from .explain import explain
 
                 for rr in landed:
@@ -162,6 +165,21 @@ class Vera:
                                      edges=self.edges, judge=judge)
                         if ex.get("constructed"):
                             rr["explained"] = ex
+                    except Exception:
+                        pass
+                # Terms the unit model cannot reach may still have
+                # lattice kin — a NEIGHBOURHOOD, typed apart because it
+                # is a weaker claim than a landing (measured: it widens
+                # 86 -> 140 of 150 at no precision gain).
+                for t in unreached:
+                    try:
+                        ex = explain(store, t,
+                                     model=self.models.get(lang),
+                                     vocab=self.writer.vocab,
+                                     edges=self.edges, judge=judge,
+                                     lat=self._kin_lattice())
+                        if ex.get("verdict") == "KIN_NEIGHBOURHOOD":
+                            landed.append(ex)
                     except Exception:
                         pass
             if landed:
@@ -236,6 +254,21 @@ class Vera:
 
         log_refusal(out)
         return out
+
+    def _kin_lattice(self) -> Optional[Any]:
+        """The lattice over the writer's vocabulary, built once per Vera.
+
+        Supplies kin hand-overs for terms the unit model cannot reach;
+        None without a writer, because lattice membership IS the
+        vocabulary sieve and there is no gate to build it behind.
+        """
+        if self.writer is None:
+            return None
+        if getattr(self, "_lat", None) is None:
+            from .lattice import build
+
+            self._lat = build(list(self.writer.vocab.attested))
+        return self._lat
 
     def attest(self, out: Dict[str, Any]) -> Dict[str, Any]:
         """How many independent corpora reach the same core, read separately.

@@ -3961,6 +3961,112 @@ def explanation_bare_suffix_abstains_at_the_split_fork() -> Dict[str, Any]:
     }
 
 
+def lattice_nodes_attested_and_kin_positional_fork() -> Dict[str, Any]:
+    """Every lattice node is an attested word or its atom; kin is positional.
+
+    A lattice admitting fragments would relate real words through a
+    string that is nobody's word, so membership IS the vocabulary sieve.
+    And kin under (unit, L) must not pool with (unit, R) — 賠償 earns its
+    right-hand slot from 損害賠償, not from any string ending in those
+    characters. Analysis shows every valid split (alternatives in an
+    analysis are information); prediction never reads the target's own
+    cross.
+    """
+    from .lattice import analyze, build, kin, predict_facets
+
+    words = ["損害賠償", "賠償", "損害", "賠償金",
+             "発電", "充電", "電気", "電荷"]
+    lat = build(words)
+
+    # 事訴 is a fragment of nothing here; it must not be a node.
+    tree = analyze(lat, "損害賠償")
+    split_terms = {b["left"]["term"] for b in tree.get("splits", ())} | \
+                  {b["right"]["term"] for b in tree.get("splits", ())}
+
+    # 電荷 OPENS with 電: its family is 電@L, and words that merely
+    # CLOSE with 電 (発電, 充電) must not be in it. 発電 closes with 電:
+    # its family is 電@R, and the openers must not be in that one.
+    opener = kin(lat, "電荷", min_unit=1).get("電@L") or []
+    closer = kin(lat, "発電", min_unit=1).get("電@R") or []
+
+    st = CrossStore()
+    st.add("電気", ["物理", "供給"])
+    st.add("発電", ["物理", "設備"])
+    pred = predict_facets(lat, st, "電荷")
+
+    ok = (tree["word"] is True
+          and "損害" in split_terms and "賠償" in split_terms
+          and "電気" in opener
+          and "発電" not in opener and "充電" not in opener
+          and "充電" in closer and "電気" not in closer
+          # prediction aggregates the family's facets, target unread
+          and "物理" in pred)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "LATTICE_NODES_ATTESTED_AND_KIN_POSITIONAL",
+        "pass": bool(ok),
+        "result": {"splits": sorted(split_terms),
+                   "opener_family": opener, "closer_family": closer,
+                   "pred_head": pred[:3]},
+    }
+
+
+def kin_neighbourhood_is_a_weaker_typed_claim_fork() -> Dict[str, Any]:
+    """NO_REACH with lattice kin becomes a NEIGHBOURHOOD, typed apart.
+
+    The lattice widens the hand-over (measured 86 -> 140 of 150) at no
+    precision gain, so what it returns must be legible as the weaker
+    claim it is: verdict KIN_NEIGHBOURHOOD, constructed: True, the
+    marker in the text, families positional, and the facets under the
+    key family_facets — the FAMILY's topics, never the term's. A term
+    with fewer than two kin stays UNKNOWN_NO_REACH: one relative is a
+    point, not a family.
+    """
+    from .explain import CONSTRUCTED_MARK, explain
+    from .lattice import build
+    from .reach import build_model
+    from .vocabulary import Vocabulary
+
+    # 電荷密度 is NOT held and its units are not cores, so the unit
+    # model cannot reach it; only the lattice families can speak.
+    store = CrossStore()
+    store.add("電荷量", ["物理", "測定"])
+    store.add("電荷計", ["物理", "計器"])
+    store.add("質量密度", ["物性", "分布"])
+    store.add("人口密度", ["統計", "分布"])
+    model = build_model(store)
+
+    vocab = Vocabulary()
+    for w in ("電荷量", "電荷計", "質量密度", "人口密度",
+              "物理", "物性", "分布"):
+        vocab.add(w, "fixture", 3)
+    lat = build(list(vocab.attested))
+
+    nb = explain(store, "電荷密度", model=model, vocab=vocab, lat=lat)
+    bare = explain(store, "超伝導", model=model, vocab=vocab, lat=lat)
+
+    fams = nb.get("families") or {}
+    ok = (nb["verdict"] == "KIN_NEIGHBOURHOOD"
+          and nb.get("constructed") is True
+          and CONSTRUCTED_MARK in nb.get("text", "")
+          # families are positional and every member is an attested word
+          and "電荷@L" in fams and "密度@R" in fams
+          and all(w in vocab for ws in fams.values() for w in ws)
+          # the facets are labelled as the family's, and gated
+          and "family_facets" in nb
+          and all(f in vocab for f in nb["family_facets"])
+          # no kin, no claim — the refusal stands
+          and bare["verdict"] == "UNKNOWN_NO_REACH")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "KIN_NEIGHBOURHOOD_IS_A_WEAKER_TYPED_CLAIM",
+        "pass": bool(ok),
+        "result": {"neighbourhood": [nb["verdict"], sorted(fams)],
+                   "family_facets": nb.get("family_facets"),
+                   "bare": bare["verdict"]},
+    }
+
+
 def summary_edge_licence_and_group_drops_fork() -> Dict[str, Any]:
     """A summary may only say what an edge licenses, and drops in groups.
 
@@ -4181,6 +4287,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         explanation_never_on_answer_path_fork(),
         staged_intersection_chains_n_stages_fork(),
         summary_edge_licence_and_group_drops_fork(),
+        lattice_nodes_attested_and_kin_positional_fork(),
+        kin_neighbourhood_is_a_weaker_typed_claim_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
