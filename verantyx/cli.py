@@ -374,6 +374,7 @@ def cmd_lab(args) -> int:
     from .cross_geometry_forks import all_cross_geometry_forks
     from .structure_forks import all_structure_forks
     from .kripke_rewrite_forks import all_kripke_rewrite_forks
+    from .lean_witness_forks import all_lean_witness_forks
     from .agent_forks import all_agent_forks
     from .ai_ingest_forks import all_ai_ingest_forks
     from .obfuscate_forks import all_obfuscate_forks
@@ -390,6 +391,7 @@ def cmd_lab(args) -> int:
         + all_pour_forks()
         + all_math_sim_forks()
         + all_kripke_rewrite_forks()
+        + all_lean_witness_forks()
         + all_lang_router_forks()
         + all_phase2_forks()
         + all_agent_forks()
