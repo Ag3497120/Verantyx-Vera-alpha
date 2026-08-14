@@ -320,6 +320,15 @@ def coverage_names_the_shelf_or_the_hole_fork() -> Dict[str, Any]:
     hole = document_needed(domains, "量子縺れ")
     named = document_needed(domains, "譲渡担保")
 
+    # The alias sidecar: パワハラ is nobody's core, but its canonical
+    # title is — the hop must be NAMED in the signal, and it must be
+    # exactly one hop (an alias of an alias is a chain nobody attested).
+    wiki.add("パワーハラスメント", ["職場", "行為"])
+    al = {"パワハラ": "パワーハラスメント",
+          "PH": "パワハラ"}
+    via_alias = closing_domains(domains, "パワハラ", aliases=al)
+    two_hops = closing_domains(domains, "PH", aliases=al)
+
     g = GapGraph()
     gid = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
                          "gather-evidence", resolved=False,
@@ -331,12 +340,19 @@ def coverage_names_the_shelf_or_the_hole_fork() -> Dict[str, Any]:
           and hole["coverage_hole"] is True
           and "ジャンルごと不足" in hole["document"]
           and "法学" in named["document"]
-          and node is not None and node.allowed_sources == ["法学"])
+          and node is not None and node.allowed_sources == ["法学"]
+          # one alias hop closes the hole, with the hop named
+          and via_alias["coverage_hole"] is False
+          and any("alias held: パワハラ → パワーハラスメント" in s
+                  for d in via_alias["closest"] for s in d["signals"])
+          # two hops stay a hole: nobody attested the chain
+          and two_hops["coverage_hole"] is True)
     return {"experiment": "agent",
             "fork": "COVERAGE_NAMES_THE_SHELF_OR_THE_HOLE",
             "pass": bool(ok),
             "result": {"near": near["closest"][:1],
                        "hole": hole["coverage_hole"],
+                       "via_alias": via_alias["closest"][:1],
                        "node_sources": node.allowed_sources if node else None}}
 
 
