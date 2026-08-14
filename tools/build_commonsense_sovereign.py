@@ -85,11 +85,24 @@ def main() -> int:
     for (s, facet), w in edges.items():
         by_core[s].append((facet, w))
 
+    # v2 (see commonsense_import_v2_preregistration_2026-08-16.json):
+    # the six arms are relation groups, each keeping its 4 heaviest —
+    # the capacity law used AS structure. AtLocation cannot crowd out
+    # properties any more.
+    ARMS = {"isa": "isa", "prop": "prop", "use": "act", "can": "act",
+            "loc": "loc", "part": "comp", "madeof": "comp", "has": "comp",
+            "causes": "ev", "sub": "ev", "needs": "ev", "want": "ev"}
     store = CrossStore()
     trimmed_edges = 0
     for core, facets in by_core.items():
-        facets.sort(key=lambda t: (-t[1], t[0]))
-        keep = facets[:24]
+        by_arm = {}
+        for facet, w in facets:
+            arm = ARMS.get(facet.partition(":")[0], "ev")
+            by_arm.setdefault(arm, []).append((facet, w))
+        keep = []
+        for arm_facets in by_arm.values():
+            arm_facets.sort(key=lambda t: (-t[1], t[0]))
+            keep.extend(arm_facets[:4])
         trimmed_edges += len(facets) - len(keep)
         feats = []
         for facet, w in keep:

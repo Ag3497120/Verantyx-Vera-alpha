@@ -39,11 +39,16 @@ REL_JA = {"isa": "とは", "prop": "性質", "use": "用途", "can": "できる"
 
 
 def render(cross) -> str:
+    # v2 question gate (pre-registered): a 「XはYですか」 property
+    # question reads every arm EXCEPT loc — a place answers where,
+    # never whether.
     parts = []
     for f in sorted(cross):
         if "|" in f:            # weight-bucket shadow facets are not text
             continue
         rel, _, obj = f.partition(":")
+        if rel == "loc":
+            continue
         parts.append("%s:%s" % (REL_JA.get(rel, rel), obj))
     return " ".join(parts)
 
