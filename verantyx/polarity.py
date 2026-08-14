@@ -27,7 +27,8 @@ a core and still answer questions the disputes do not touch.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from .cross_store import CrossStore
 
@@ -878,3 +879,894 @@ def apply_polarity_gate(store: CrossStore, out: Dict[str, Any], query: str) -> N
         out["reason"] = ("both poles of " +
                          ", ".join(sorted(d["key"] for d in disputes)) +
                          " hold evidence")
+
+
+# ---------------------------------------------------------------------------
+# W1a — typed observed negation (SPEC_2026-08-14_eight_gaps)
+#
+# Distinct from the antonym-axis detector above. A negation that was
+# written is testimony and may be stored as a mark on a dictionary-form
+# key (¬流れる). A negation inferred from absence is a different type
+# and is never stored — defense line 1 of the meaning-layers spec.
+# ---------------------------------------------------------------------------
+
+POLARITY_UNDECIDED = "POLARITY_UNDECIDED"
+POLARITY_MARK = "¬"
+POLARITY_POSITIVE = "positive"
+POLARITY_NEGATIVE = "negative"
+
+PREFIXES = frozenset("非不未無")
+
+# Unfoldable modality mixes. Parity does not license a pole.
+_UNDECIDED_PATS: Tuple[str, ...] = (
+    "ないとは言えない", "ないとはいえない",
+    "ないわけではない", "ないわけじゃない",
+    "ないこともない", "ないことはない",
+    "ざるを得ない", "ざるをえない",
+    "なければならない", "なければいけない", "なくてはならない",
+    "ないはずがない", "ないとは限らない", "ないでもない",
+    "かもしれない",
+)
+
+_COPULA_PATS: Tuple[str, ...] = (
+    "ではありません", "ではない", "でない",
+)
+
+# Closed lexicalized-ない adjectives. The ない is the word, not a
+# negator. Frozen: a match produces NO ObservedNegation.
+# Includes the られる-shaped family (つまらない/くだらない/たまらない)
+# that a tagger splits as verb+ない — fabricated testimony if stored.
+_NAI_LEX: Tuple[str, ...] = (
+    "つまらない", "くだらない", "たまらない",
+    "しょうがない", "しようがない", "仕方がない", "仕方ない",
+    "もったいない",
+    "とんでもない", "みっともない", "情けない", "なさけない",
+    "せわしない", "ぎこちない", "あどけない", "おぼつかない",
+    "やるせない", "なにげない", "何気ない", "さりげない",
+    "少ない", "すくない", "危ない", "あぶない", "汚い", "きたない",
+    "幼い", "おさない", "切ない", "せつない",
+)
+_NU_BLOCK: Tuple[str, ...] = ("死ぬ", "往ぬ")
+_ZU_BLOCK: Tuple[str, ...] = (
+    "まず", "必ず", "わずか", "ずつ", "ずっと", "ずいぶん",
+)
+
+_A_TO_U = {
+    "あ": "う", "か": "く", "が": "ぐ", "さ": "す", "ざ": "ず",
+    "た": "つ", "だ": "づ", "な": "ぬ", "は": "ふ", "ば": "ぶ",
+    "ぱ": "ぷ", "ま": "む", "や": "ゆ", "ら": "る", "わ": "う",
+}
+_I_TO_U = {
+    "い": "う", "き": "く", "ぎ": "ぐ", "し": "す", "じ": "ず",
+    "ち": "つ", "ぢ": "づ", "に": "ぬ", "ひ": "ふ", "び": "ぶ",
+    "ぴ": "ぷ", "み": "む", "り": "る",
+}
+_E_STEM = frozenset("えけげせぜてでねへべぺめれ")
+_LEMMA_SPECIAL = {
+    "でき": "できる", "出来": "できる",
+    "来": "来る", "こ": "来る",
+    "し": "する", "せ": "する",
+    "あり": "ある", "い": "いる",
+}
+_P_HIRA = re.compile(r"[ぁ-ん]")
+_P_KATA = re.compile(r"[ァ-ヺー]")
+_P_KANJI_RUN = re.compile(r"[㐀-䶿一-鿿々〆〇]+")
+
+
+@dataclass(frozen=True)
+class ObservedNegation:
+    """A negation that was written in the text. Testimony. May be stored."""
+
+    kind: str
+    surface: str
+    lemma: str
+    span: Tuple[int, int]
+    context: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class InferredNegation:
+    """Negation inferred from absence. Forbidden to store (defense line 1)."""
+
+    lemma: str
+    reason: str = "absence_is_not_negation"
+
+
+@dataclass(frozen=True)
+class PolarityReading:
+    """Sentence-level folded polarity, or a typed abstention."""
+
+    verdict: str
+    observed: Tuple[ObservedNegation, ...]
+    count: int
+    category: Optional[str]
+
+
+def inferred_from_absence(lemma: str) -> InferredNegation:
+    """The type that absence produces. It is never a storage key."""
+    return InferredNegation(lemma=lemma)
+
+
+def polarity_key(observation: object, lemma: Optional[str] = None) -> str:
+    """Dictionary form + ¬ mark. Only ObservedNegation is accepted.
+
+    The mark means a negation was written. It is not assembled into a
+    negative sentence about anything else.
+    """
+    if isinstance(observation, InferredNegation):
+        raise TypeError(
+            "InferredNegation is not testimony; inferring negation "
+            "from absence is forbidden (defense line 1)")
+    if not isinstance(observation, ObservedNegation):
+        raise TypeError("only ObservedNegation may be stored")
+    return POLARITY_MARK + (lemma or observation.lemma)
+
+
+def _overlaps_any(text: str, start: int, end: int, words: Tuple[str, ...]) -> bool:
+    for w in words:
+        i = 0
+        while True:
+            j = text.find(w, i)
+            if j < 0:
+                break
+            if j < end and j + len(w) > start:
+                return True
+            i = j + 1
+    return False
+
+
+def _content_stem(text: str, i: int) -> str:
+    j = i
+    n_hira = 0
+    while j > 0 and _P_HIRA.match(text[j - 1]) and n_hira < 4:
+        j -= 1
+        n_hira += 1
+    n_kan = 0
+    while j > 0 and (_KANJI.match(text[j - 1]) or _P_KATA.match(text[j - 1])):
+        j -= 1
+        n_kan += 1
+        if n_kan >= 4:
+            break
+    return text[j:i]
+
+
+def _bare_noun_before(text: str, i: int) -> Optional[str]:
+    """Kanji/kata noun immediately left of ない, optional は/が/も.
+
+    問題ない / 問題はない. A hiragana verb stem (流れ, 知ら) is not a noun.
+    """
+    j = i
+    if j >= 1 and text[j - 1] in "はがも":
+        j -= 1
+    k = j
+    while k > 0 and (_KANJI.match(text[k - 1]) or _P_KATA.match(text[k - 1])):
+        k -= 1
+    noun = text[k:j]
+    if len(noun) >= 2:
+        return noun
+    return None
+
+
+def _to_lemma(stem: str) -> str:
+    if not stem:
+        return ""
+    if stem in _LEMMA_SPECIAL:
+        return _LEMMA_SPECIAL[stem]
+    last = stem[-1]
+    if last in _A_TO_U:
+        return stem[:-1] + _A_TO_U[last]
+    if last in _E_STEM:
+        return stem + "る"
+    if last in _I_TO_U:
+        return stem[:-1] + _I_TO_U[last]
+    return stem
+
+
+# Light verbs / copula always real. _NAI_LEX members are い-adjectives
+# the tagger often splits (つまらない → つまる+ない).
+_LEMMA_ALWAYS = frozenset({
+    "ある", "いる", "する", "できる", "来る", "くる", "である",
+})
+_LEMMA_CACHE: Dict[str, bool] = {}
+_LEMMA_VOCAB: Optional[frozenset] = None
+
+
+def _lemma_vocab() -> frozenset:
+    """Closed lemma set for the raw path when a live tagger query is off.
+
+    Built once: always-real light verbs, the frozen い-adjective list,
+    plus every 動詞/形容詞 orthBase the fugashi tagger confirms on those
+    seeds. Live existence checks still ask the tagger per candidate.
+    """
+    global _LEMMA_VOCAB
+    if _LEMMA_VOCAB is not None:
+        return _LEMMA_VOCAB
+    vocab = set(_LEMMA_ALWAYS) | set(_NAI_LEX)
+    _LEMMA_VOCAB = frozenset(vocab)
+    return _LEMMA_VOCAB
+
+
+def _tagger_knows_pred(lemma: str) -> bool:
+    """True iff unidic emits ``lemma`` as a single 動詞 or 形容詞."""
+    toks = _try_fugashi_tokens(lemma)
+    if not toks or len(toks) != 1:
+        return False
+    pos1, _pos2, _lem, written = _tok_pos(toks[0])
+    if not (pos1.startswith("動詞") or pos1.startswith("形容詞")):
+        return False
+    return written == lemma or toks[0].surface == lemma
+
+
+def _lemma_is_real(lemma: str) -> bool:
+    """Existence gate: testimony only for a real verb or い-adjective.
+
+    Fugashi/unidic is the dictionary. The raw path uses the same check
+    when a tagger is importable; otherwise it falls back to ``_lemma_vocab``.
+    A failed gate means no ObservedNegation — the verdict must not
+    rely on a fabricated lemma (大人げる).
+    """
+    if not lemma or lemma in ("ない", "無い", "ます"):
+        return False
+    if lemma in _LEMMA_ALWAYS or lemma in _NAI_LEX:
+        return True
+    hit = _LEMMA_CACHE.get(lemma)
+    if hit is not None:
+        return hit
+    if len(lemma) < 2:
+        _LEMMA_CACHE[lemma] = False
+        return False
+    toks = _try_fugashi_tokens(lemma)
+    if toks is None:
+        ok = lemma in _lemma_vocab()
+    elif len(toks) != 1:
+        ok = False
+    else:
+        pos1, _pos2, _lem, written = _tok_pos(toks[0])
+        ok = (pos1.startswith("動詞") or pos1.startswith("形容詞")) and (
+            written == lemma or toks[0].surface == lemma)
+    _LEMMA_CACHE[lemma] = ok
+    return ok
+
+
+def _is_i_adjective(form: str) -> bool:
+    """Dictionary-backed い-adjective, including _NAI_LEX members."""
+    if not form or not form.endswith("い"):
+        return False
+    if form in _NAI_LEX:
+        return True
+    toks = _try_fugashi_tokens(form)
+    if not toks or len(toks) != 1:
+        return False
+    pos1, pos2, _lem, written = _tok_pos(toks[0])
+    return pos1.startswith("形容詞") and "非自立" not in pos2 and (
+        written == form or toks[0].surface == form
+    )
+
+
+def _kunai_observations(text: str) -> List[ObservedNegation]:
+    """X-くない → one ObservedNegation(lemma=Xい), never a double fold."""
+    out: List[ObservedNegation] = []
+    start = 0
+    while True:
+        i = text.find("くない", start)
+        if i < 0:
+            break
+        stem = _content_stem(text, i)
+        adj = stem + "い"
+        if stem and _is_i_adjective(adj):
+            a = i - len(stem)
+            out.append(ObservedNegation(
+                "ending", stem + "くない", adj, (a, i + 3)))
+        start = i + 1
+    return out
+
+
+def _span_final(text: str, end: int) -> bool:
+    return end >= _content_end(text)
+
+
+def prefix_split_ok(lattice: Any, surface: str) -> Optional[Tuple[str, str]]:
+    """Prefix|rest passes the lattice gate; a 1-char rest abstains.
+
+    Same judgment as 裸接尾辞棄権: a one-character remainder is not a
+    known unit. No lattice means the gate cannot open.
+    """
+    if lattice is None or not surface or surface[0] not in PREFIXES:
+        return None
+    from .lattice import splits_of
+
+    prefix = surface[0]
+    for left, right in splits_of(lattice, surface):
+        if left == prefix and len(right) > 1 and right in lattice.words:
+            return left, right
+    return None
+
+
+def _raw_undecided(text: str) -> bool:
+    return any(p in text for p in _UNDECIDED_PATS)
+
+
+def _claim(claimed: List[bool], a: int, b: int) -> None:
+    for k in range(a, min(b, len(claimed))):
+        claimed[k] = True
+
+
+def _free(claimed: List[bool], a: int, b: int) -> bool:
+    return not any(claimed[k] for k in range(a, min(b, len(claimed))))
+
+
+def _raw_observations(text: str, lattice: Any) -> List[ObservedNegation]:
+    claimed = [False] * len(text)
+    out: List[ObservedNegation] = []
+
+    for pat in _COPULA_PATS:
+        start = 0
+        while True:
+            i = text.find(pat, start)
+            if i < 0:
+                break
+            j = i + len(pat)
+            if _free(claimed, i, j):
+                out.append(ObservedNegation("copula", pat, "である", (i, j)))
+                _claim(claimed, i, j)
+            start = i + 1
+
+    for obs in _kunai_observations(text):
+        if _free(claimed, obs.span[0], obs.span[1]):
+            out.append(obs)
+            _claim(claimed, obs.span[0], obs.span[1])
+
+    start = 0
+    while True:
+        i = text.find("なくない", start)
+        if i < 0:
+            break
+        j = i + 4
+        if _free(claimed, i, j):
+            lemma = _to_lemma(_content_stem(text, i))
+            if _lemma_is_real(lemma):
+                out.append(ObservedNegation("ending", "なく", lemma, (i, i + 2)))
+                out.append(ObservedNegation("ending", "ない", lemma, (i + 2, j)))
+            _claim(claimed, i, j)
+        start = i + 1
+
+    for pat, kind in (("ません", "ending"), ("ない", "ending")):
+        start = 0
+        while True:
+            i = text.find(pat, start)
+            if i < 0:
+                break
+            j = i + len(pat)
+            if _free(claimed, i, j):
+                if pat == "ない" and _overlaps_any(text, i, j, _NAI_LEX):
+                    _claim(claimed, i, j)
+                    start = i + 1
+                    continue
+                noun = _bare_noun_before(text, i) if pat == "ない" else None
+                if noun:
+                    if _span_final(text, j) and _lemma_is_real("ある"):
+                        out.append(ObservedNegation(
+                            "ending", pat, "ある", (i, j), context=noun))
+                    _claim(claimed, i, j)
+                    start = i + 1
+                    continue
+                lemma = _to_lemma(_content_stem(text, i))
+                if _lemma_is_real(lemma):
+                    out.append(ObservedNegation(kind, pat, lemma, (i, j)))
+                _claim(claimed, i, j)
+            start = i + 1
+
+    start = 0
+    while True:
+        i = text.find("ぬ", start)
+        if i < 0:
+            break
+        if _free(claimed, i, i + 1) and not _overlaps_any(text, i, i + 1, _NU_BLOCK):
+            lemma = _to_lemma(_content_stem(text, i))
+            if _lemma_is_real(lemma):
+                out.append(ObservedNegation("ending", "ぬ", lemma, (i, i + 1)))
+            _claim(claimed, i, i + 1)
+        start = i + 1
+
+    start = 0
+    while True:
+        i = text.find("ず", start)
+        if i < 0:
+            break
+        if _free(claimed, i, i + 1) and not _overlaps_any(text, i, i + 1, _ZU_BLOCK):
+            lemma = _to_lemma(_content_stem(text, i))
+            if _lemma_is_real(lemma):
+                out.append(ObservedNegation("ending", "ず", lemma, (i, i + 1)))
+            _claim(claimed, i, i + 1)
+        start = i + 1
+
+    if lattice is not None:
+        for m in _P_KANJI_RUN.finditer(text):
+            run = m.group(0)
+            for off, ch in enumerate(run):
+                if ch not in PREFIXES:
+                    continue
+                a = m.start() + off
+                if a < len(claimed) and claimed[a]:
+                    continue
+                hit = None
+                surface = ""
+                for end in range(len(run), off + 2, -1):
+                    surface = run[off:end]
+                    hit = prefix_split_ok(lattice, surface)
+                    if hit:
+                        break
+                if hit is None:
+                    continue
+                b = a + len(surface)
+                if _free(claimed, a, b):
+                    out.append(ObservedNegation(
+                        "prefix", surface, hit[1], (a, b)))
+                    _claim(claimed, a, b)
+
+    return out
+
+
+def _token_spans(text: str, tokens: Iterable[Any]) -> List[Tuple[int, int, Any]]:
+    pos = 0
+    spans: List[Tuple[int, int, Any]] = []
+    for tok in tokens:
+        surface = getattr(tok, "surface", "") or ""
+        if not surface:
+            continue
+        j = text.find(surface, pos)
+        if j < 0:
+            continue
+        spans.append((j, j + len(surface), tok))
+        pos = j + len(surface)
+    return spans
+
+
+def _tok_pos(tok: Any) -> Tuple[str, str, str, str]:
+    feat = getattr(tok, "feature", None)
+    if feat is None:
+        return "", "", "", tok.surface
+    pos1 = getattr(feat, "pos1", "") or ""
+    pos2 = getattr(feat, "pos2", "") or ""
+    lemma = getattr(feat, "lemma", None) or ""
+    orth = getattr(feat, "orthBase", None) or ""
+    if lemma in ("", "*"):
+        lemma = ""
+    elif "-" in lemma:
+        lemma = lemma.split("-", 1)[0]
+    written = orth if orth not in ("", "*") else (lemma or tok.surface)
+    return pos1, pos2, lemma, written
+
+
+def _token_bare_noun(spans: List[Tuple[int, int, Any]], i: int) -> Optional[str]:
+    """Noun immediately left of ない, optional は/が/も, no verb stem."""
+    k = i - 1
+    if k < 0:
+        return None
+    pos1, _pos2, _lemma, written = _tok_pos(spans[k][2])
+    if pos1.startswith("助詞") and spans[k][2].surface in ("は", "が", "も"):
+        k -= 1
+        if k < 0:
+            return None
+        pos1, _pos2, _lemma, written = _tok_pos(spans[k][2])
+    if pos1.startswith("名詞") and len(written) >= 2:
+        return written
+    return None
+
+
+def _prev_verb_lemma(spans: List[Tuple[int, int, Any]], i: int) -> str:
+    for k in range(i - 1, -1, -1):
+        pos1, _pos2, lemma, written = _tok_pos(spans[k][2])
+        if pos1.startswith("動詞"):
+            if k > 0 and _tok_pos(spans[k - 1][2])[0].startswith("名詞"):
+                return ""
+            if written in ("為る", "有る", "居る"):
+                return {"為る": "する", "有る": "ある", "居る": "いる"}[written]
+            return written or lemma
+        if pos1.startswith("助詞") or pos1.startswith("助動詞"):
+            continue
+        break
+    return ""
+
+
+def _prev_i_adjective(spans: List[Tuple[int, int, Any]], i: int) -> Optional[str]:
+    """Lemma of a 一般 い-adjective immediately left of ない (the く form)."""
+    if i < 1:
+        return None
+    pos1, pos2, _lemma, written = _tok_pos(spans[i - 1][2])
+    if pos1.startswith("形容詞") and "非自立" not in pos2 and written.endswith("い"):
+        return written
+    return None
+
+
+def _token_observations(text: str, tokens: Iterable[Any],
+                        lattice: Any) -> List[ObservedNegation]:
+    spans = _token_spans(text, tokens)
+    out: List[ObservedNegation] = []
+    n = len(spans)
+    used = [False] * n
+
+    def add(kind: str, i0: int, i1: int, lemma: str, surface: str,
+            context: Optional[str] = None) -> None:
+        a, b = spans[i0][0], spans[i1][1]
+        out.append(ObservedNegation(kind, surface, lemma, (a, b),
+                                   context=context))
+        for k in range(i0, i1 + 1):
+            used[k] = True
+
+    for kobs in _kunai_observations(text):
+        out.append(kobs)
+        for ti, (a, b, _tok) in enumerate(spans):
+            if a < kobs.span[1] and kobs.span[0] < b:
+                used[ti] = True
+
+    for i, (_a, _b, tok) in enumerate(spans):
+        if used[i]:
+            continue
+        pos1, pos2, lemma, written = _tok_pos(tok)
+        surface = tok.surface
+
+        if (pos1.startswith("助動詞") and lemma in ("ず", "ぬ")
+                and surface in ("ん", "ぬ")
+                and i >= 1 and _tok_pos(spans[i - 1][2])[2] == "ます"):
+            # ません / ではありません
+            copula = False
+            j0 = i - 1
+            if i >= 2 and spans[i - 2][2].surface in ("あり", "ある"):
+                if (i >= 4 and spans[i - 4][2].surface == "で"
+                        and spans[i - 3][2].surface == "は"):
+                    copula = True
+                    j0 = i - 4
+                elif i >= 3 and spans[i - 3][2].surface == "で":
+                    copula = True
+                    j0 = i - 3
+            if copula:
+                add("copula", j0, i, "である", text[spans[j0][0]:spans[i][1]])
+            else:
+                add("ending", i - 1, i, _prev_verb_lemma(spans, i - 1) or "ます",
+                    "ません")
+            continue
+
+        is_nai = (
+            (pos1.startswith("助動詞") and lemma == "ない")
+            or (pos1.startswith("形容詞") and lemma in ("無い", "ない")
+                and "非自立" in pos2)
+        )
+        if is_nai:
+            a_ch, b_ch = spans[i][0], spans[i][1]
+            adj = _prev_i_adjective(spans, i)
+            if adj:
+                add("ending", i - 1, i, adj, text[spans[i - 1][0]:b_ch])
+                continue
+            if _overlaps_any(text, a_ch, b_ch, _NAI_LEX):
+                used[i] = True
+                continue
+            if (i >= 2 and spans[i - 1][2].surface == "は"
+                    and spans[i - 2][2].surface == "で"):
+                add("copula", i - 2, i, "である", "ではない")
+            elif i >= 1 and (
+                spans[i - 1][2].surface == "で"
+                or _tok_pos(spans[i - 1][2])[2] in ("だ", "です")
+            ):
+                add("copula", i - 1, i, "である", "でない")
+            else:
+                noun = _token_bare_noun(spans, i)
+                if noun:
+                    if _span_final(text, b_ch) and _lemma_is_real("ある"):
+                        add("ending", i, i, "ある", surface, context=noun)
+                    else:
+                        used[i] = True
+                else:
+                    lemma_v = _prev_verb_lemma(spans, i)
+                    if _lemma_is_real(lemma_v):
+                        add("ending", i, i, lemma_v, surface)
+                    else:
+                        used[i] = True
+            continue
+
+        if pos1.startswith("助動詞") and lemma in ("ず", "ぬ"):
+            lemma_v = _prev_verb_lemma(spans, i)
+            if _lemma_is_real(lemma_v):
+                add("ending", i, i, lemma_v, surface)
+            else:
+                used[i] = True
+            continue
+
+        if (pos1.startswith("接頭") and surface in PREFIXES
+                and i + 1 < n and lattice is not None):
+            nxt = spans[i + 1][2]
+            compound = surface + nxt.surface
+            hit = prefix_split_ok(lattice, compound)
+            if hit:
+                add("prefix", i, i + 1, hit[1], compound)
+
+    return out
+
+
+def _try_fugashi_tokens(text: str) -> Optional[List[Any]]:
+    try:
+        import fugashi  # type: ignore
+    except ImportError:
+        return None
+    tagger = getattr(_try_fugashi_tokens, "_tagger", None)
+    if tagger is None:
+        try:
+            tagger = fugashi.Tagger()
+        except Exception:
+            return None
+        _try_fugashi_tokens._tagger = tagger  # type: ignore[attr-defined]
+    try:
+        return list(tagger(text))
+    except Exception:
+        return None
+
+
+def _merge_observed(primary: List[ObservedNegation],
+                    extra: List[ObservedNegation]) -> List[ObservedNegation]:
+    out = list(primary)
+    for item in extra:
+        if any(item.span[0] < o.span[1] and o.span[0] < item.span[1]
+               for o in out):
+            continue
+        out.append(item)
+    out.sort(key=lambda o: (o.span[0], o.span[1], o.kind))
+    return out
+
+
+_TRAIL_COPULA: Tuple[str, ...] = (
+    "であります", "である", "でした", "でしょう", "だろう", "です", "だ",
+)
+_TRAIL_PART: Tuple[str, ...] = ("よ", "ね", "わ", "さ", "ぞ", "な")
+_TRAIL_PUNCT_END = re.compile(r"[。．.！!？?、,\s　]+$")
+
+
+def _content_end(text: str) -> int:
+    """Index after the last content, once です/だ/よ/ね/punct are stripped."""
+    rest = text
+    while rest:
+        m = _TRAIL_PUNCT_END.search(rest)
+        if m:
+            rest = rest[:m.start()]
+            continue
+        hit = next((t for t in _TRAIL_COPULA if rest.endswith(t)), None)
+        if hit is None:
+            hit = next((t for t in _TRAIL_PART if rest.endswith(t)), None)
+        if hit is None:
+            break
+        rest = rest[:-len(hit)]
+    return len(rest)
+
+
+def _counts_for_verdict(
+    text: str, observed: List[ObservedNegation],
+) -> List[ObservedNegation]:
+    """Observations that decide the sentence verdict.
+
+    A negation counts when it sits in the sentence-final cluster
+    (trailing punctuation / です / だ / よ / ね / である allowed).
+    Adjacent なく+ない at that cluster fold together. ず/ぬ as a
+    predicate ending still count (original-bank conjunctive ず).
+    Embedded ない (知らない人が来た) stays in ``observed`` but is
+    omitted here, so the sentence is not mislabeled.
+    """
+    if not observed:
+        return []
+    end = _content_end(text)
+    chosen: List[ObservedNegation] = []
+    for obs in sorted(observed, key=lambda o: o.span[0], reverse=True):
+        if obs.surface in ("ず", "ぬ"):
+            chosen.append(obs)
+            continue
+        if obs.span[1] >= end:
+            chosen.append(obs)
+            end = obs.span[0]
+            continue
+        if chosen and obs.span[1] == chosen[-1].span[0]:
+            chosen.append(obs)
+            end = obs.span[0]
+    return chosen
+
+
+def _category_of(observed: List[ObservedNegation], count: int) -> Optional[str]:
+    if count >= 2 and count % 2 == 0:
+        return "double"
+    kinds = [o.kind for o in observed]
+    if "prefix" in kinds and "ending" not in kinds and "copula" not in kinds:
+        return "prefix"
+    if "copula" in kinds:
+        return "copula"
+    if "ending" in kinds:
+        return "ending"
+    if "prefix" in kinds:
+        return "prefix"
+    return None
+
+
+def observe_negation(
+    text: str,
+    *,
+    lattice: Any = None,
+    tokens: Optional[Iterable[Any]] = None,
+) -> PolarityReading:
+    """Deterministic negation reading of one string.
+
+    Runs the raw-text detector always, and the fugashi-token detector
+    when tokens are supplied or a tagger is importable. Overlapping
+    hits are merged so the same written ない is not counted twice.
+    Double negation folds by parity. Unfoldable modality mixes abstain
+    as POLARITY_UNDECIDED. Prefix hits require a lattice split whose
+    remainder is an attested word (len > 1); a bare prefix abstains.
+
+    Sentence verdict is negative only when the parity-folded negation
+    is sentence-final (trailing punctuation / です / だ / よ / ね /
+    である / だろう / でしょう). An embedded negation (知らない人が来た)
+    is kept in ``observed`` as testimony; the sentence stays positive.
+    Lexicalized ない adjectives on ``_NAI_LEX`` produce no
+    ObservedNegation when bare; their くない form is a single
+    negation of that adjective (危なくない → ¬危ない), never a double
+    fold. Noun+ない (問題ない) stores lemma ある, never lemma ない,
+    and only when sentence-final. An ObservedNegation is stored only
+    when the folded lemma exists as a real 動詞/形容詞 (unidic via
+    fugashi; raw path uses the same check or ``_lemma_vocab``).
+    """
+    text = text or ""
+    if _raw_undecided(text):
+        return PolarityReading(
+            verdict=POLARITY_UNDECIDED, observed=(), count=0,
+            category=POLARITY_UNDECIDED)
+
+    raw = _raw_observations(text, lattice)
+    tok_list: Optional[List[Any]]
+    if tokens is not None:
+        tok_list = list(tokens)
+    else:
+        tok_list = _try_fugashi_tokens(text)
+    if tok_list:
+        # Tokens win on lemma quality; raw fills spans the tagger missed.
+        merged = _merge_observed(
+            _token_observations(text, tok_list, lattice), raw)
+    else:
+        merged = raw
+
+    count = len(merged)
+    for_verdict = _counts_for_verdict(text, merged)
+    if len(for_verdict) % 2 == 1:
+        verdict = POLARITY_NEGATIVE
+    else:
+        verdict = POLARITY_POSITIVE
+    return PolarityReading(
+        verdict=verdict,
+        observed=tuple(merged),
+        count=count,
+        category=_category_of(for_verdict or merged, len(for_verdict)),
+    )
+
+
+def fold_polarity(
+    predicates: Iterable[str],
+    text: str,
+    *,
+    lattice: Any = None,
+    tokens: Optional[Iterable[Any]] = None,
+) -> List[str]:
+    """Mark extracted predicates with ¬ when an observed negation attaches.
+
+    UNDECIDED leaves the list unmarked. Even parity on a lemma cancels.
+    A prefix observation whose lemma was not extracted is appended as
+    ¬rest — the mark is testimony that the prefix was written.
+    """
+    preds = list(predicates)
+    reading = observe_negation(text, lattice=lattice, tokens=tokens)
+    if reading.verdict == POLARITY_UNDECIDED:
+        return preds
+    counts: Dict[str, int] = {}
+    first: Dict[str, ObservedNegation] = {}
+    for obs in reading.observed:
+        if not obs.lemma:
+            continue
+        counts[obs.lemma] = counts.get(obs.lemma, 0) + 1
+        first.setdefault(obs.lemma, obs)
+    out: List[str] = []
+    seen = set()
+    for p in preds:
+        n = counts.get(p, 0)
+        if n % 2 == 1:
+            out.append(polarity_key(first[p], p))
+            seen.add(p)
+        else:
+            out.append(p)
+    for lemma, n in counts.items():
+        if n % 2 == 1 and lemma not in seen:
+            out.append(polarity_key(first[lemma], lemma))
+    return out
+
+
+def regression() -> Dict[str, Any]:
+    """Fork-equivalent: observed vs inferred, parity, prefix gate, abstention."""
+    from .lattice import build
+
+    lat = build([
+        "可能", "不可能", "公開", "非公開", "非常", "非常口",
+        "未来", "不足", "完成", "未完成",
+    ])
+    ending = observe_negation("水が流れない。", lattice=lat)
+    prefix = observe_negation("不可能である。", lattice=lat)
+    undec = observe_negation("彼が来ないとは言えない。", lattice=lat)
+    double = observe_negation("彼は行かなくない。", lattice=lat)
+    bare = observe_negation("非常口がある。", lattice=lat)
+    shinu = observe_negation("人が死ぬ。", lattice=lat)
+    copula = observe_negation("彼は学生ではない。", lattice=lat)
+    future = observe_negation("未来を語る。", lattice=lat)
+    lex = observe_negation("この映画はつまらない。", lattice=lat)
+    exist = observe_negation("問題ない。", lattice=lat)
+    embed = observe_negation("知らない人が来た。", lattice=lat)
+    otona = observe_negation("大人げない態度だ。", lattice=lat)
+    abuna = observe_negation("危なくない。", lattice=lat)
+    darou = observe_negation("彼は来ないだろう。", lattice=lat)
+
+    inferred = inferred_from_absence("流れる")
+    inferred_blocked = False
+    try:
+        polarity_key(inferred)
+    except TypeError:
+        inferred_blocked = True
+
+    prefix_key = (
+        polarity_key(prefix.observed[0])
+        if prefix.observed and prefix.observed[0].kind == "prefix"
+        else "")
+    ending_lemmas = {o.lemma for o in ending.observed}
+
+    ok = all([
+        ending.verdict == POLARITY_NEGATIVE,
+        ending.category == "ending",
+        "流れる" in ending_lemmas,
+        prefix.verdict == POLARITY_NEGATIVE,
+        prefix.category == "prefix",
+        prefix_key == "¬可能",
+        undec.verdict == POLARITY_UNDECIDED,
+        double.verdict == POLARITY_POSITIVE,
+        double.category == "double",
+        bare.verdict == POLARITY_POSITIVE,
+        not any(o.kind == "prefix" for o in bare.observed),
+        shinu.verdict == POLARITY_POSITIVE,
+        copula.verdict == POLARITY_NEGATIVE,
+        copula.category == "copula",
+        future.verdict == POLARITY_POSITIVE,
+        inferred_blocked,
+        isinstance(inferred, InferredNegation),
+        all(isinstance(o, ObservedNegation) for o in ending.observed),
+        lex.verdict == POLARITY_POSITIVE and not lex.observed,
+        exist.verdict == POLARITY_NEGATIVE
+        and any(o.lemma == "ある" and o.context == "問題" for o in exist.observed)
+        and not any(o.lemma == "ない" for o in exist.observed),
+        embed.verdict == POLARITY_POSITIVE and len(embed.observed) > 0,
+        otona.verdict == POLARITY_POSITIVE and not otona.observed,
+        abuna.verdict == POLARITY_NEGATIVE
+        and len(abuna.observed) == 1
+        and abuna.observed[0].lemma == "危ない",
+        darou.verdict == POLARITY_NEGATIVE,
+    ])
+    return {
+        "experiment": "polarity",
+        "fork": "POLARITY_TYPED_NEGATION",
+        "pass": bool(ok),
+        "result": {
+            "ending": ending.verdict,
+            "prefix_key": prefix_key,
+            "undecided": undec.verdict,
+            "double": double.verdict,
+            "bare_prefix": bare.verdict,
+            "shinu": shinu.verdict,
+            "copula": copula.verdict,
+            "inferred_blocked": inferred_blocked,
+            "lexical_nai": (lex.verdict, len(lex.observed)),
+            "noun_nai": (exist.verdict,
+                         [o.lemma for o in exist.observed]),
+            "embedded": (embed.verdict, len(embed.observed)),
+            "open_lexical": (otona.verdict, len(otona.observed)),
+            "kunai": (abuna.verdict,
+                      [o.lemma for o in abuna.observed]),
+            "darou": darou.verdict,
+        },
+    }

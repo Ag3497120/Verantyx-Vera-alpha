@@ -402,11 +402,17 @@ def predicates_of(lead: str) -> List[str]:
     return _heuristic_predicates(lead)
 
 
-def extract(pages: Iterable[Tuple[str, str]]) -> Dict[str, Dict[str, Any]]:
+def extract(pages: Iterable[Tuple[str, str]], *,
+            polarity: bool = False,
+            lattice: Any = None) -> Dict[str, Dict[str, Any]]:
     """``{subject: {"predicates": {pred: count}, "total": N}}``.
 
     ``subject`` is the page title. Empty profiles are kept so coverage
     (subjects with ≥3 predicates / all subjects) is an honest fraction.
+
+    ``polarity`` is an optional fold (default off). When on, observed
+    negation marks dictionary-form keys (¬流れる). Default extract is
+    unchanged so burned measurements stay valid.
     """
     profiles: Dict[str, Dict[str, Any]] = {}
     for title, lead in pages:
@@ -417,10 +423,29 @@ def extract(pages: Iterable[Tuple[str, str]]) -> Dict[str, Dict[str, Any]]:
             rec = {"predicates": {}, "total": 0}
             profiles[title] = rec
         preds = rec["predicates"]
-        for p in predicates_of(lead):
+        found = predicates_of(lead)
+        if polarity:
+            from .polarity import fold_polarity
+            toks = None
+            if EXTRACTOR == "fugashi":
+                try:
+                    toks = list(_tagger()(_strip_noise(lead)))
+                except Exception:
+                    toks = None
+            found = fold_polarity(found, lead, lattice=lattice, tokens=toks)
+        for p in found:
             preds[p] = preds.get(p, 0) + 1
             rec["total"] += 1
     return profiles
+
+
+def extract_with_polarity(
+    pages: Iterable[Tuple[str, str]],
+    *,
+    lattice: Any = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Wrapper for the optional polarity fold. Default extract is untouched."""
+    return extract(pages, polarity=True, lattice=lattice)
 
 
 def save(profiles: Dict[str, Dict[str, Any]], path: Path = OUT) -> Path:
