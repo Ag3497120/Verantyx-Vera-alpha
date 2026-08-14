@@ -224,6 +224,43 @@ def grain_band_annotation_fork() -> Dict[str, Any]:
             "pass": bool(ok), "result": results}
 
 
+def refusal_ledger_keeps_resolved_fork() -> Dict[str, Any]:
+    """An auto-resolved refusal stays on the ledger, with its outcome.
+
+    Typed unknowns becoming control signals (refusal -> action branch)
+    creates the risk this fork closes: a branch that resolves a refusal
+    silently would make the demand ledger read as if the refusal never
+    happened — the invisible-ingestion lie in a new place. Recording an
+    outcome, resolved or not, must never touch the refusal's bucket, and
+    both must survive a save/load roundtrip.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from .growth_signals import GrowthSignals
+
+    gs = GrowthSignals()
+    gs.record_unknown("譲渡担保とは", "UNKNOWN_NOT_PRESENT")
+    before = len(gs.buckets)
+    gs.record_branch_outcome("譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                             "gather-evidence", resolved=False)
+    gs.record_branch_outcome("譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                             "gather-evidence", resolved=True)
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "growth.json"
+        gs.save(p)
+        back = GrowthSignals.load(p)
+    ok = (len(gs.buckets) == before
+          and len(back.buckets) == before
+          and len(back.branch_outcomes) == 2
+          and back.branch_outcomes[0]["resolved"] is False
+          and back.branch_outcomes[1]["resolved"] is True)
+    return {"experiment": "agent", "fork": "REFUSAL_LEDGER_KEEPS_RESOLVED",
+            "pass": bool(ok),
+            "result": {"buckets": len(back.buckets),
+                       "outcomes": len(back.branch_outcomes)}}
+
+
 def all_agent_forks() -> List[Dict[str, Any]]:
     return [
         agent_readonly_runs_fork(),
@@ -234,4 +271,5 @@ def all_agent_forks() -> List[Dict[str, Any]]:
         tui_fallback_fork(),
         multiline_paste_capture_fork(),
         grain_band_annotation_fork(),
+        refusal_ledger_keeps_resolved_fork(),
     ]

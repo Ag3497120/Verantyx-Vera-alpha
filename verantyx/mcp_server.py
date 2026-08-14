@@ -544,6 +544,26 @@ def serve(store_path: str) -> int:
         return json.dumps(remedy(r), ensure_ascii=False)
 
     @mcp.tool()
+    def record_refusal_outcome(query: str, verdict: str, branch: str,
+                               resolved: bool = False) -> str:
+        """A typed refusal was handed to an action branch (gather-evidence,
+        ask-user, resolve-time, record-gap) and this is what happened.
+
+        The refusal's ledger entry is deliberately kept: a refusal an
+        agent auto-resolved is a SUCCESS, not a refusal that never
+        happened, and a ledger that loses auto-resolved entries tells the
+        same shape of lie as an ingest that hides its failures. Call once
+        with resolved=false at hand-off (so the hand-off itself can never
+        become invisible), and once more after the branch with the one
+        honest oracle for resolution: re-ask the same query, and resolved
+        is whether the store now answers — never the agent's say-so."""
+        growth.record_branch_outcome(query, verdict, branch, resolved)
+        _save_growth()
+        return json.dumps(
+            {"recorded": True, "open_refusals": len(growth.buckets),
+             "outcomes": len(growth.branch_outcomes)}, ensure_ascii=False)
+
+    @mcp.tool()
     def attest_claim(subject: str, text: str) -> str:
         """Judge whether THIS store supports what a claim says about a
         subject. Built for grading an LLM's output: paste the assistant's
