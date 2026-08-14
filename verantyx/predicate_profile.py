@@ -278,17 +278,46 @@ def _mecab_predicates(lead: str, tagger: Any) -> List[str]:
     return out
 
 
+# UniDic-lite writes the same light verbs as _STOP in kanji (為る/有る).
+# Adapter-local only; the heuristic path is untouched.
+_UNIDIC_LIGHT = frozenset({
+    "為る", "有る", "居る", "成る", "出来る", "因る", "置く",
+})
+
+
+def _fugashi_written(tok: Any) -> Tuple[str, str]:
+    """Modern written form plus stripped UniDic lemma.
+
+    ``tok.feature.lemma`` is the UniDic lemma, but unidic-lite often
+    stores the historical kanji (有る, 為る) or a hyphenated note
+    (差す-他動詞). ``orthBase`` is the modern written dictionary form
+    (ある, する, 指す) that matches _STOP and reads clean.
+    """
+    feat = tok.feature
+    lemma = getattr(feat, "lemma", None) or ""
+    orth_base = getattr(feat, "orthBase", None) or ""
+    if lemma in ("", "*"):
+        lemma = ""
+    elif "-" in lemma:
+        lemma = lemma.split("-", 1)[0]
+    if orth_base in ("", "*"):
+        orth_base = ""
+    written = orth_base or lemma or tok.surface
+    return written, lemma
+
+
 def _fugashi_predicates(lead: str, tagger: Any) -> List[str]:
     text = _strip_noise(lead)
     out: List[str] = []
     for tok in tagger(text):
         pos = (tok.feature.pos1 if hasattr(tok.feature, "pos1")
                else str(tok.feature).split(",")[0])
-        lemma = getattr(tok.feature, "lemma", None) or tok.surface
-        if lemma == "*" or not lemma:
-            lemma = tok.surface
-        if pos.startswith("動詞") and lemma not in _STOP:
-            out.append(lemma)
+        written, lemma = _fugashi_written(tok)
+        if pos.startswith("動詞"):
+            if (written in _STOP or lemma in _STOP
+                    or written in _UNIDIC_LIGHT or lemma in _UNIDIC_LIGHT):
+                continue
+            out.append(written)
         elif pos.startswith("助動詞") and lemma in ("だ", "です", "である"):
             out.append("である")
     for fr in _FRAMES:

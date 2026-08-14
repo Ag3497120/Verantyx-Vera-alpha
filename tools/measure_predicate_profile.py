@@ -33,6 +33,32 @@ have no lattice kin (titles outside length 2–5, or no shared-unit
 family), and another 165,508 hit a tied cutoff. The profile carries
 type structure where kin can be drawn; it does not cover the long
 tail of titles the lattice cannot split.
+
+## Measured — jawiki leads, fugashi extractor, seed 20260814
+
+    subjects                         1,419,406
+    subjects with ≥3 predicates      340,486   coverage 0.2399
+    (subject, predicate) pairs       1,500,191  (eligible) / 2,248,356 (all)
+    held-out                         300,038
+    lattice                          527,175 words, 787,333 slots
+
+    kin family average
+        hit@5    0.3155     7,396 / 23,440 answered
+        hit@10   0.3297     3,810 / 11,556 answered
+        abstain  NO_KIN 196,749   TIE 99,774   INSUFFICIENT_PROFILE 126
+    global-frequency baseline (all held-out; never abstains)
+        hit@5    0.2667    80,022 / 300,038
+        hit@10   0.3270    98,100 / 300,038
+    same-pool baseline (only the pairs kin answered)
+        hit@5    0.2430    on 23,440
+        hit@10   0.3113    on 11,556
+
+Kin still beats the same-pool baseline (+30% relative at hit@5).
+Absolute hit@5 rose against the heuristic run (0.2052 → 0.3155);
+coverage fell (0.3859 → 0.2399) and the answered pool shrank
+(35,716 → 23,440). The global baseline also rose (0.1621 → 0.2667)
+— cleaner lemmas concentrate mass on frequent predicates. Silence
+is still most of the mass: 196,749 NO_KIN, 99,774 TIE.
 """
 import json
 import random

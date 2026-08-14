@@ -50,6 +50,44 @@ Examples at the default (swap protocol):
     元町映画館 ← 宮代町議会     0.760  COHERENCE_ANOMALY
     新表現主義 ← 角頭歩戦法     1.000  COHERENCE_ANOMALY
     上雄信内駅 ← 読売教育賞     0.673  COHERENT (miss)
+
+## Measured — jawiki leads, fugashi extractor, seed 20260814
+
+    subjects                         1,419,406
+    extractor                        fugashi
+    lattice                          527,175 words, 787,333 slots
+    eligible (≥3 preds + kin family) 108,474
+    sampled                          800 clean + 800 swapped
+    skipped (no disjoint donor)      0
+    fork INGEST_COHERENCE_LEDGER     pass
+
+    deviation (1−cosine)
+        clean    mean 0.3611  median 0.2622  min 0.0090  max 1.0000
+        anomaly  mean 0.3952  median 0.2823  min 0.0464  max 1.0000
+
+    preregistered default threshold 0.70
+        detection rate     0.1575    126 / 800
+        false-positive     0.1425    114 / 800
+        abstain            0
+
+    threshold curve
+        0.50   det 0.2525   fp 0.2188
+        0.60   det 0.1875   fp 0.1688
+        0.70   det 0.1575   fp 0.1425   ← default, not moved
+        0.80   det 0.1487   fp 0.1288
+
+The default still does not separate. Clean and swapped sit 0.03
+apart in mean 1−cosine (0.3611 vs 0.3952); every threshold on the
+curve has detection only about two to three points above the
+false-positive rate. Both means dropped versus the heuristic run
+(0.75/0.80 → 0.36/0.40) — profiles sit closer to the family, and
+である takes more of the mass — but the diagnostic gap did not
+open. The registered 0.70 is not moved.
+
+Examples at the default (swap protocol):
+    橋本恵子 ← 再生産労働       1.000  COHERENCE_ANOMALY
+    永井博弌 ← 岩崎吉太郎       0.986  COHERENCE_ANOMALY
+    中部大学校 ← 認定専攻科     0.191  COHERENT (miss)
 """
 from __future__ import annotations
 

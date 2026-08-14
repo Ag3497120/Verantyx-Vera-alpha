@@ -36,6 +36,33 @@ shelf cores (水, 馬, 町) are collision dumps, so the expected axis
 often sits below markup-free but off-topic high-mass facets. リンゴ/
 電気 hits on 果実のことである; 馬/自転車 returns 麻雀. Both numbers
 stay visible.
+
+## Measured — jawiki leads, fugashi extractor, seed 20260814
+
+    subjects                         1,419,406
+    lattice                          527,175 words, 787,333 slots
+    shelf cores                      309,864
+    aliases                          941,604
+    fork STRUCTURAL_DIFF_DEFENSE     pass
+
+    machine oracle (200 subject pairs, remain profiles)
+        only_a predicate claims      560
+        contained                    546
+        leaked onto B                14
+        containment rate             0.9750
+
+    preregistered bank (30 pairs, written before first diff)
+        hits                         11 / 30
+        misses                       19
+        abstentions                  0
+        (INSUFFICIENT_PROFILE is per-layer; a pair still
+         emits a DIFF when any layer survives, so thin
+         short-title cores count as misses, not silence)
+
+The oracle stayed tight (0.9750; 14 of 560 leaked). The bank did
+not move: 11 / 30, same misses. リンゴ/電気 still hits on
+果実のことである. Fugashi cleaned verb lemmas; it did not lift
+the shelf-collision pairs that dominate the bank.
 """
 from __future__ import annotations
 
