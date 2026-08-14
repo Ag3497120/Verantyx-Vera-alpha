@@ -43,7 +43,10 @@ MATHLIB = ROOT / "corpora" / "mathlib4"
 OUT = ROOT / "build" / "mathlib_store.json"
 #: Stride sample size; pass an integer argv[1] to widen (0 = all files).
 N_VERIFY_FILES = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+#: Optional prior-run log (argv[2]); ok/FAIL lines are resumed, not re-run.
+RESUME_LOG = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 TIMEOUT_S = 240
+CHECKPOINT_EVERY = 200
 
 DECL = re.compile(
     r"^(?:@\[[^\]]*\]\s*)?(?:protected\s+|private\s+|noncomputable\s+)*"
@@ -91,6 +94,29 @@ def theorems_of(path: Path):
         i = j if j > i + 1 else i + 1
 
 
+def parse_witness_log(log_path: Path):
+    """Read prior `ok  ` / `FAIL ` lines into relative-path sets."""
+    ok_rels = set()
+    fail_rels = set()
+    for raw in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if raw.startswith("ok  "):
+            rest, kind = raw[4:], "ok"
+        elif raw.startswith("FAIL "):
+            rest, kind = raw[5:], "fail"
+        else:
+            continue
+        rel, _, tail = rest.rpartition(" ")
+        if not rel or not tail.endswith("s"):
+            continue
+        if kind == "ok":
+            ok_rels.add(rel)
+            fail_rels.discard(rel)
+        else:
+            fail_rels.add(rel)
+            ok_rels.discard(rel)
+    return ok_rels, fail_rels
+
+
 t0 = time.time()
 files = sorted((MATHLIB / "Mathlib").rglob("*.lean"))
 store = CrossStore()
@@ -120,8 +146,33 @@ else:
     sample = candidates[::stride][:N_VERIFY_FILES]
 
 verified_files = failed_files = witnessed = 0
+resumed_ok = resumed_fail = 0
 failures = []
-for path in sample:
+ok_rels = fail_rels = set()
+if RESUME_LOG is not None:
+    ok_rels, fail_rels = parse_witness_log(RESUME_LOG)
+    for path in sample:
+        rel = str(path.relative_to(MATHLIB))
+        if rel in ok_rels:
+            verified_files += 1
+            resumed_ok += 1
+            for name in by_file[path]:
+                store.add(name, [facet])
+                witnessed += 1
+        elif rel in fail_rels:
+            failed_files += 1
+            resumed_fail += 1
+            failures.append({"file": rel, "why": "from log"})
+    to_run = [p for p in sample
+              if str(p.relative_to(MATHLIB)) not in ok_rels
+              and str(p.relative_to(MATHLIB)) not in fail_rels]
+    print("resumed: %d ok + %d FAIL from log, %d to verify"
+          % (resumed_ok, resumed_fail, len(to_run)), flush=True)
+else:
+    to_run = sample
+
+newly_done = 0
+for path in to_run:
     t1 = time.time()
     try:
         run = subprocess.run(
@@ -145,6 +196,11 @@ for path in sample:
                          (run.stdout + run.stderr).strip()[:120]})
     print("%s %s %.1fs" % ("ok " if ok else "FAIL", rel, time.time() - t1),
           flush=True)
+    newly_done += 1
+    if newly_done % CHECKPOINT_EVERY == 0:
+        OUT.parent.mkdir(parents=True, exist_ok=True)
+        store.save(OUT)
+        print("checkpoint: %d files done" % newly_done, flush=True)
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 store.save(OUT)
@@ -153,6 +209,8 @@ print(json.dumps({
     "cores": len(store.crosses),
     "files_verified": verified_files, "files_failed": failed_files,
     "witnessed_theorems": witnessed,
+    "resumed_ok": resumed_ok,
+    "resumed_fail": resumed_fail,
     "failures": failures[:5],
     "store": str(OUT),
     "seconds": round(time.time() - t0, 1),
