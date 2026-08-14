@@ -107,8 +107,25 @@ def serve(store_path: str) -> int:
 
     mcp = FastMCP("verantyx-vera")
 
+    # Grain band for `ask` — a lazily built staircase over THIS store,
+    # invalidated on every mutation (every mutating tool funnels through
+    # `_save`, including the registry tools that receive it as their save
+    # hook). The band ANNOTATES the verdict and never votes: structure
+    # (cut-varied settings agreeing) and evidence (the store's own
+    # consensus) stay unpooled — see `graded.band_annotation`.
+    _grain: Dict[str, Any] = {}
+
+    def _grain_judge() -> Any:
+        if "judge" not in _grain:
+            from .graded import GradedJudge, settings_for
+
+            probe = " ".join(sorted(store.crosses)[:8]) or "This is English."
+            _grain["judge"] = GradedJudge(settings_for(probe)).build(store)
+        return _grain["judge"]
+
     def _save() -> None:
         store.save(path)
+        _grain.pop("judge", None)
 
     def _save_growth() -> None:
         growth.save(gpath)
@@ -123,8 +140,22 @@ def serve(store_path: str) -> int:
     @mcp.tool()
     def ask(query: str) -> str:
         """Ask the knowledge store. Returns a typed verdict — ANSWER with
-        provenance-backed facets, or UNKNOWN_* (never a guess)."""
+        provenance-backed facets, or UNKNOWN_* (never a guess). When the
+        staircase can count one, a `grain` band rides beside the verdict:
+        {"agree": n, "of": m, ...} — how many cut-varied settings agreed
+        on an item. The band annotates; it never votes (the verdict is
+        the same with or without it)."""
         out = consensus_over_store(store, query)
+        try:
+            from .graded import band_annotation
+
+            band = band_annotation(_grain_judge(), query)
+        except Exception:
+            # The band is an annotation — losing it must never cost the
+            # verdict itself.
+            band = None
+        if band is not None:
+            out["grain"] = band
         verdict = out.get("verdict")
         if isinstance(verdict, str) and verdict.startswith("UNKNOWN"):
             growth.record_unknown(query, verdict)

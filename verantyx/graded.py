@@ -331,3 +331,31 @@ class GradedJudge:
             "note": "a coarser setting may add a reading and may never "
                     "overturn a finer one",
         }
+
+
+def band_annotation(judge: "GradedJudge", query: str) -> Optional[Dict[str, Any]]:
+    """The staircase's reading of a query, shaped as an ANNOTATION.
+
+    Rides BESIDE a store-level verdict, never inside it. The band counts
+    how many cut-varied settings agreed on an item — that is STRUCTURE,
+    while the verdict it annotates comes from its own consensus over the
+    store — EVIDENCE. Pooling the two is the measured mistake (`vera.Vera
+    .ask` documents it: summed, out-of-corpus terms reached quorum), so
+    this function only ever returns something to display next to a
+    verdict, and a caller that folds it into the verdict is wrong by
+    construction.
+
+    Returns None when the staircase has nothing to count: no content word,
+    a time-dependent question, or an unreadable query. ``agree`` of 0 is
+    NOT None — "no setting spoke" is a reading, and the one a fabricated
+    subject should get.
+    """
+    g = judge.ask(query)
+    if g.get("agreeing") is None:
+        return None
+    band: Dict[str, Any] = {"agree": g["agreeing"], "of": g["of"]}
+    if g.get("item") is not None:
+        band["item"] = g["item"]
+    if g.get("concord") is not None:
+        band["concord"] = g["concord"]
+    return band
