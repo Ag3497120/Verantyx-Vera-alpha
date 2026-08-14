@@ -449,11 +449,18 @@ def serve(store_path: str) -> int:
         MCP tools and the picture cannot answer from different builds.
         """
         if "v" not in _vera_cache:
+            import os
+
             from .export_sqlite import vera as load_published
             from .vera import load as load_vera
 
             root = Path.home() / "Projects" / "vera-corpus"
-            db = root / "build" / "vera.db"
+            # VERA_PUBLISHED_DB lets a host pin WHICH stamped release
+            # answers (the IDE's model picker sets it and restarts this
+            # process). Sidecars are discovered beside the db by
+            # filename, so a version directory carries its whole world.
+            env_db = os.environ.get("VERA_PUBLISHED_DB", "")
+            db = Path(env_db) if env_db else root / "build" / "vera.db"
             _vera_cache["v"] = (load_published(db) if db.exists()
                                 else load_vera(root))
         return _vera_cache["v"]
