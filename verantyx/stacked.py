@@ -412,7 +412,22 @@ def yes_no(store: Any, query: str) -> Optional[Dict[str, Any]]:
                                     else None)
     conditions = [c for c in (cov.get("aspects") or [])]
     if not conditions:
-        return None
+        # 「塩はしょっぱいですか」 yields only [塩]: しょっぱい is hiragana
+        # and never a content run. Falling through used to dump the
+        # subject's census (SEEDED) and assert クロイツ/タウブ — or, after
+        # those were removed, アンモニア/イオン — as if they answered the
+        # property. A yes/no with no extractable property is a gap.
+        if subject is None:
+            return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None,
+                    "text": "", "subject": cov.get("subject"),
+                    "note": "a yes/no question about a subject the store "
+                            "does not hold cannot be attested either way"}
+        return {"verdict": "NOT_ATTESTED", "core": subject, "text": "",
+                "subject": subject, "conditions": [], "unattested": [],
+                "note": "the question is yes/no and no content-run "
+                        "property was extracted; answering with the "
+                        "subject's census would answer a different "
+                        "question"}
     if subject is None:
         return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None, "text": "",
                 "subject": cov.get("subject"),

@@ -857,6 +857,25 @@ def main() -> int:
     print(f"[{'ok  ' if ok else 'FAIL'}] a fragment with no subject stores nothing")
     if not ok:
         failures.append("subjectless fragment stored")
+    # A run stolen from a compound is not a topic. クロイツ-タウブ塩 is one
+    # name; レモン果汁 is one noun; ウマ (麻雀) is a sense. Filing them
+    # under 塩 / レモン / ウマ manufactured the federation's two W3b lies.
+    for sentence, forbidden in [
+        ("クロイツ-タウブ塩が代表例。", "塩"),
+        ("レモン果汁20%使用し、クエン酸を機能性表示成分として配合した"
+         "155ml瓶入り（炭酸ガス入り）。", "レモン"),
+        ("ウマ (麻雀)は、麻雀の牌の一つである。", "ウマ"),
+    ]:
+        got = ja_ingest_sentence(CrossStore(), sentence)
+        ok = got != forbidden
+        print(f"[{'ok  ' if ok else 'FAIL'}] compound/paren is not a stolen run: "
+              f"{sentence[:22]:24s} -> {got}")
+        if not ok:
+            failures.append(f"stolen run: {sentence[:18]}")
+    ok = ja_ingest_sentence(CrossStore(), "本町の避難所は開設されました。") == "避難所"
+    print(f"[{'ok  ' if ok else 'FAIL'}] の-headed topic still files under the head")
+    if not ok:
+        failures.append("head-final の-phrase")
 
     # A date the LAYOUT broke apart. 「７月 30 日」 spaces the digits from their
     # unit, so 日 survived alone and became the CORE — 内閣府's ferry table
