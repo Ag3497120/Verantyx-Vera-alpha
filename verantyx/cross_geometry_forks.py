@@ -3961,6 +3961,73 @@ def explanation_bare_suffix_abstains_at_the_split_fork() -> Dict[str, Any]:
     }
 
 
+def summary_edge_licence_and_group_drops_fork() -> Dict[str, Any]:
+    """A summary may only say what an edge licenses, and drops in groups.
+
+    Three lines pinned at once. (1) Without an edge lookup — or with one
+    that returns nothing — a crossing is NOT a licence: the verdict is
+    UNKNOWN_NO_EDGE_LICENSE, never a co-presence claim. (2) Compression
+    drops whole rank groups: two claims tied at the boundary with
+    limit 1 both fall, and with limit 2 both stand — no arbitrary single
+    survivor either way. (3) The word gate applies to subjects: a
+    subject outside the vocabulary contributes no claims and is listed
+    as unspoken.
+    """
+    from .summarize import summarize
+    from .vocabulary import Vocabulary
+
+    st = CrossStore()
+    st.add("甲権", ["設定", "効力"])
+    st.add("乙権", ["設定", "効力"])
+
+    vocab = Vocabulary()
+    for w in ("甲権", "乙権", "設定", "効力"):
+        vocab.add(w, "fixture", 3)
+
+    def edges_full(core: str, facets: Any) -> Any:
+        return [("設定", "効力")] if "設定" in facets and "効力" in facets else []
+
+    no_lookup = summarize(st, ["甲権", "乙権"], vocab=vocab, edges=None)
+    no_pairs = summarize(st, ["甲権", "乙権"], vocab=vocab,
+                         edges=lambda c, f: [])
+    tied_1 = summarize(st, ["甲権", "乙権"], vocab=vocab, edges=edges_full,
+                       limit=1)
+    tied_2 = summarize(st, ["甲権", "乙権"], vocab=vocab, edges=edges_full,
+                       limit=2)
+
+    gated_vocab = Vocabulary()
+    for w in ("甲権", "設定", "効力"):
+        gated_vocab.add(w, "fixture", 3)
+    gated = summarize(st, ["甲権", "乙権"], vocab=gated_vocab,
+                      edges=edges_full, limit=4)
+
+    ok = (no_lookup["verdict"] == "UNKNOWN_NO_EDGE_LICENSE"
+          and no_pairs["verdict"] == "UNKNOWN_NO_EDGE_LICENSE"
+          # the boundary tie falls whole: zero kept, both recorded
+          and tied_1["verdict"] == "SUMMARY"
+          and len(tied_1["kept"]) == 0 and tied_1["dropped_at_cut"] == 2
+          # and stands whole when the limit holds it
+          and len(tied_2["kept"]) == 2 and tied_2["dropped_at_cut"] == 0
+          # every kept claim is edge-licensed by construction
+          and all(tuple(c["pair"]) == ("設定", "効力")
+                  for c in tied_2["kept"])
+          # the unspoken subject contributed nothing and is named
+          and all(c["subject"] == "甲権" for c in gated["kept"])
+          and gated["unspoken_subjects"] == ["乙権"])
+    return {
+        "experiment": "cross_geometry",
+        "fork": "SUMMARY_EDGE_LICENCE_AND_GROUP_DROPS",
+        "pass": bool(ok),
+        "result": {"no_lookup": no_lookup["verdict"],
+                   "no_pairs": no_pairs["verdict"],
+                   "tied_limit1": [len(tied_1.get("kept") or []),
+                                   tied_1.get("dropped_at_cut")],
+                   "tied_limit2": [len(tied_2.get("kept") or []),
+                                   tied_2.get("dropped_at_cut")],
+                   "gated_unspoken": gated.get("unspoken_subjects")},
+    }
+
+
 def staged_intersection_chains_n_stages_fork() -> Dict[str, Any]:
     """Any number of arrows chains; only the final stage elects.
 
@@ -4036,8 +4103,9 @@ def explanation_never_on_answer_path_fork() -> Dict[str, Any]:
     from . import consensus_store, graded, hierarchy
 
     leak = [m.__name__ for m in (consensus_store, graded, hierarchy)
-            if "from .explain" in inspect.getsource(m)
-            or "import explain" in inspect.getsource(m)]
+            if any(pat in inspect.getsource(m) for pat in
+                   ("from .explain", "import explain",
+                    "from .summarize", "import summarize"))]
     ok = not leak
     return {
         "experiment": "cross_geometry",
@@ -4112,6 +4180,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         explanation_bare_suffix_abstains_at_the_split_fork(),
         explanation_never_on_answer_path_fork(),
         staged_intersection_chains_n_stages_fork(),
+        summary_edge_licence_and_group_drops_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
