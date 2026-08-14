@@ -208,7 +208,8 @@ class GapGraph:
 
 
 def refusal_to_gap(graph: "GapGraph", query: str, verdict: str,
-                   branch: str, resolved: bool) -> Optional[str]:
+                   branch: str, resolved: bool,
+                   sources: Optional[List[str]] = None) -> Optional[str]:
     """The refusal ledger's twin write into the frontier map.
 
     Unresolved -> a GapNode exists for (agent_refusal, query), created
@@ -230,7 +231,8 @@ def refusal_to_gap(graph: "GapGraph", query: str, verdict: str,
     node = graph.create(
         gap_type="unresolved_refusal", subject=query,
         scope="agent_refusal", severity="QUALITY",
-        failure_type=verdict, acquisition_methods=[branch])
+        failure_type=verdict, acquisition_methods=[branch],
+        allowed_sources=sources)
     return node.gap_id
 
 

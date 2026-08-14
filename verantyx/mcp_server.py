@@ -488,6 +488,24 @@ def serve(store_path: str) -> int:
         return json.dumps(_vera().report(), ensure_ascii=False)
 
     @mcp.tool()
+    def what_would_close(query: str, verdict: str = "UNKNOWN_NOT_PRESENT") -> str:
+        """Which document, from which shelf, would close this refusal.
+
+        The enterprise inversion of the growth loop: the system never
+        fetches, it NAMES the missing document and a human supplies it.
+        Ranks the federation's domains by recountable proximity (held as
+        core / units held as cores), combines the winner with the
+        refusal's own repair (how much to register), and when NO shelf
+        holds anything nearby says coverage_hole instead of naming a
+        wrong shelf — sending a human after the wrong document is worse
+        than the honest hole. Ties are displayed, never broken."""
+        from .coverage import document_needed
+
+        v = _vera()
+        return json.dumps(document_needed(v.witnesses, query, verdict),
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def vera_summarize(subjects: str, limit: int = 5) -> str:
         """Edge-licensed compression over n held subjects (space-separated).
 
@@ -570,8 +588,22 @@ def serve(store_path: str) -> int:
         try:
             from .gap_graph import refusal_to_gap
 
+            sources = None
+            if not resolved:
+                # Which shelf would close this — ranked domains ride the
+                # node as allowed_sources so a human reading the gap map
+                # sees WHAT DOCUMENT to prepare, not just that a hole
+                # exists. Best-effort: the atlas needs the full stack.
+                try:
+                    from .coverage import closing_domains
+
+                    where = closing_domains(_vera().witnesses, query)
+                    if not where["coverage_hole"]:
+                        sources = [d["domain"] for d in where["closest"]]
+                except Exception:
+                    pass
             gap_id = refusal_to_gap(gap_graph, query, verdict, branch,
-                                    resolved)
+                                    resolved, sources=sources)
             if gap_id is not None:
                 _save_gap_graph()
         except Exception:

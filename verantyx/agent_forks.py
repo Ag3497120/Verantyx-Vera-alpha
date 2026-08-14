@@ -296,6 +296,50 @@ def refusal_feeds_the_gap_graph_fork() -> Dict[str, Any]:
                        "nodes": len(g.nodes)}}
 
 
+def coverage_names_the_shelf_or_the_hole_fork() -> Dict[str, Any]:
+    """The atlas names a shelf it HAS, or the hole — never a wrong shelf.
+
+    A gap node telling a human "prepare a 法学 document" when no shelf
+    holds anything near the subject sends them after the wrong
+    document, which is worse than the honest hole. Proximity is
+    recountable presence only (held core / unit held), ties display
+    rather than break, and the ranked shelves ride the GapNode as
+    allowed_sources.
+    """
+    from .coverage import closing_domains, document_needed
+    from .gap_graph import GapGraph, refusal_to_gap
+
+    law = CrossStore()
+    law.add("譲渡", ["担保", "移転"])
+    law.add("担保", ["債権", "物権"])
+    wiki = CrossStore()
+    wiki.add("超新星", ["天文", "爆発"])
+
+    domains = {"法学": law, "百科": wiki}
+    near = closing_domains(domains, "譲渡担保")
+    hole = document_needed(domains, "量子縺れ")
+    named = document_needed(domains, "譲渡担保")
+
+    g = GapGraph()
+    gid = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                         "gather-evidence", resolved=False,
+                         sources=["法学"])
+    node = g.get(gid)
+
+    ok = (near["closest"] and near["closest"][0]["domain"] == "法学"
+          and not near["coverage_hole"]
+          and hole["coverage_hole"] is True
+          and "ジャンルごと不足" in hole["document"]
+          and "法学" in named["document"]
+          and node is not None and node.allowed_sources == ["法学"])
+    return {"experiment": "agent",
+            "fork": "COVERAGE_NAMES_THE_SHELF_OR_THE_HOLE",
+            "pass": bool(ok),
+            "result": {"near": near["closest"][:1],
+                       "hole": hole["coverage_hole"],
+                       "node_sources": node.allowed_sources if node else None}}
+
+
 def all_agent_forks() -> List[Dict[str, Any]]:
     return [
         agent_readonly_runs_fork(),
@@ -308,4 +352,5 @@ def all_agent_forks() -> List[Dict[str, Any]]:
         grain_band_annotation_fork(),
         refusal_ledger_keeps_resolved_fork(),
         refusal_feeds_the_gap_graph_fork(),
+        coverage_names_the_shelf_or_the_hole_fork(),
     ]
