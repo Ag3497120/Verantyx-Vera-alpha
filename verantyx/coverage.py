@@ -43,15 +43,22 @@ def _units_of(subject: str) -> List[str]:
 def closing_domains(
     domains: Dict[str, Any],
     subject: str,
+    *,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Rank shelves by proximity to ``subject``; name the hole honestly.
 
     Scores are deliberately coarse and recountable: held as a core is 2,
-    a unit of the subject held as a core is 1 per unit. No frequency, no
-    similarity — presence only, so a reader can re-derive every number
-    by looking.
+    a unit of the subject held as a core is 1 per unit, and — when an
+    alias sidecar is supplied — the subject's canonical title held as a
+    core is 2 with the hop NAMED in the signal (パワハラ is a redirect;
+    the shelf holds パワーハラスメント, and a reader must see which of
+    the two the evidence actually sits under). One hop only: an alias
+    of an alias is a chain nobody attested. No frequency, no similarity
+    — presence only, so a reader can re-derive every number by looking.
     """
     subject = (subject or "").strip()
+    canonical = (aliases or {}).get(subject)
     ranked: List[Dict[str, Any]] = []
     units = _units_of(subject)
     for name in sorted(domains):
@@ -62,6 +69,10 @@ def closing_domains(
         if subject in store.crosses and subject not in labels:
             score += 2
             signals.append("held: %s" % subject)
+        if (canonical and canonical.casefold() in store.crosses
+                and canonical not in labels):
+            score += 2
+            signals.append("alias held: %s → %s" % (subject, canonical))
         for u in units:
             if u in store.crosses and u not in labels:
                 score += 1
@@ -70,17 +81,22 @@ def closing_domains(
             ranked.append({"domain": name, "score": score,
                            "signals": signals[:4]})
     ranked.sort(key=lambda d: (-d["score"], d["domain"]))
-    return {
+    out: Dict[str, Any] = {
         "subject": subject,
         "closest": ranked[:4],
         "coverage_hole": not ranked,
     }
+    if canonical:
+        out["canonical"] = canonical
+    return out
 
 
 def document_needed(
     domains: Dict[str, Any],
     subject: str,
     verdict: str = "UNKNOWN_NOT_PRESENT",
+    *,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """The human-readable line: which document, from which shelf.
 
@@ -92,7 +108,7 @@ def document_needed(
     """
     from .remedy import remedy as _remedy
 
-    where = closing_domains(domains, subject)
+    where = closing_domains(domains, subject, aliases=aliases)
     repair = _remedy({"verdict": verdict, "subject": subject})
     out: Dict[str, Any] = {**where, "verdict": verdict,
                            "repair": repair}

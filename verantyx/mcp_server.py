@@ -479,6 +479,22 @@ def serve(store_path: str) -> int:
             shelves["浅層wiki"] = _vera_cache["浅層wiki"]
         return shelves
 
+    def _aliases() -> Dict[str, str]:
+        """The redirect sidecar (alias -> canonical title), when built.
+
+        Lookup material only: an alias never becomes a core and never
+        votes; it lets the atlas say 「この語は正題Xの別名で、Xなら棚が
+        持つ」 with the hop named in the signal."""
+        if "別名" not in _vera_cache:
+            p = (Path.home() / "Projects" / "vera-corpus" / "build"
+                 / "jawiki_aliases.json")
+            try:
+                _vera_cache["別名"] = (json.loads(p.read_text(encoding="utf-8"))
+                                       if p.exists() else {})
+            except Exception:
+                _vera_cache["別名"] = {}
+        return _vera_cache["別名"]
+
     @mcp.tool()
     def vera_ask(query: str, sentences: int = 3) -> str:
         """Ask the full stack: language, staircase, inference core, reach.
@@ -523,8 +539,9 @@ def serve(store_path: str) -> int:
         than the honest hole. Ties are displayed, never broken."""
         from .coverage import document_needed
 
-        return json.dumps(document_needed(_atlas(), query, verdict),
-                          ensure_ascii=False, default=str)
+        return json.dumps(
+            document_needed(_atlas(), query, verdict, aliases=_aliases()),
+            ensure_ascii=False, default=str)
 
     @mcp.tool()
     def vera_summarize(subjects: str, limit: int = 5) -> str:
@@ -618,7 +635,8 @@ def serve(store_path: str) -> int:
                 try:
                     from .coverage import closing_domains
 
-                    where = closing_domains(_atlas(), query)
+                    where = closing_domains(_atlas(), query,
+                                            aliases=_aliases())
                     if not where["coverage_hole"]:
                         sources = [d["domain"] for d in where["closest"]]
                 except Exception:
