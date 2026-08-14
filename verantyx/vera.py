@@ -143,6 +143,27 @@ class Vera:
                 r = reach(store, t, model=self.models.get(lang), judge=judge)
                 if r["verdict"] in ("UNITS", "CONTAINMENT"):
                     landed.append(r)
+            # A UNITS landing may carry a constructed explanation — the
+            # minimal two-path crossing, typed EXPLAINED_BY_UNITS or a
+            # typed abstention, never folded into any verdict here.
+            # CONTAINMENT is handed back bare on purpose: locating is
+            # not explaining. Needs the writer's vocabulary as the word
+            # gate, so without a writer nothing is attached.
+            if landed and self.writer is not None:
+                from .explain import explain
+
+                for rr in landed:
+                    if rr.get("verdict") != "UNITS":
+                        continue
+                    try:
+                        ex = explain(store, rr["term"],
+                                     model=self.models.get(lang),
+                                     vocab=self.writer.vocab,
+                                     edges=self.edges, judge=judge)
+                        if ex.get("constructed"):
+                            rr["explained"] = ex
+                    except Exception:
+                        pass
             if landed:
                 out["reached"] = landed
         # Grain agreement, beside the data-varied witnesses and never pooled

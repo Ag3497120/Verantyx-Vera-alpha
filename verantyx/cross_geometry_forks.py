@@ -3861,6 +3861,131 @@ def placement_is_backward_compatible_fork() -> Dict[str, Any]:
     }
 
 
+def explanation_constructed_and_typed_fork() -> Dict[str, Any]:
+    """A UNITS landing explains only through the vocabulary gate, typed.
+
+    The explanation layer is the minimal multi-stage crossing — two paths
+    (one per unit), one intersection — and its output must be legible as
+    CONSTRUCTION everywhere it travels: verdict EXPLAINED_BY_UNITS,
+    ``constructed: True``, and the reader-visible marker in the draft.
+    The crossing must be recountable: every shared facet it lists is in
+    both units' crosses. And with an empty vocabulary the same landing
+    must abstain as ABSTAIN_UNIT_NOT_A_WORD — reaching is not a licence
+    to speak.
+    """
+    from .explain import CONSTRUCTED_MARK, explain
+    from .reach import build_model
+    from .vocabulary import Vocabulary
+
+    # Same fixture discipline as the reach fork: 電荷密度 is NOT ingested;
+    # its units earn their slots from other compounds.
+    store = CrossStore()
+    for s in ["電荷は物理量である。", "電荷は保存する。", "電荷は素量である。",
+              "電荷量は単位である。", "電荷量は測定である。",
+              "質量密度は分布である。", "質量密度は物性である。",
+              "密度は質量である。", "密度は体積である。"]:
+        _ingest_ja(store, s)
+    model = build_model(store)
+
+    vocab = Vocabulary()
+    vocab.add("電荷", "fixture", 3)
+    vocab.add("密度", "fixture", 3)
+    ex = explain(store, "電荷密度", model=model, vocab=vocab)
+
+    crossing_recountable = all(
+        f in (store.crosses.get("電荷") or {})
+        and f in (store.crosses.get("密度") or {})
+        for f in ex.get("crossing", ()))
+
+    gated = explain(store, "電荷密度", model=model, vocab=Vocabulary())
+
+    ok = (ex["verdict"] == "EXPLAINED_BY_UNITS"
+          and ex.get("constructed") is True
+          and CONSTRUCTED_MARK in ex.get("text", "")
+          and ex.get("subject") in ("電荷", "密度")
+          and crossing_recountable
+          # the gate closed: same landing, no vocabulary, typed abstention
+          and gated["verdict"] == "ABSTAIN_UNIT_NOT_A_WORD"
+          and gated.get("constructed") is True)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EXPLANATION_CONSTRUCTED_AND_TYPED",
+        "pass": bool(ok),
+        "result": {"explained": [ex["verdict"], ex.get("subject")],
+                   "crossing": ex.get("crossing"),
+                   "gated": gated["verdict"]},
+    }
+
+
+def explanation_bare_suffix_abstains_at_the_split_fork() -> Dict[str, Any]:
+    """A one-character head abstains AT THE SPLIT, not at the gate.
+
+    発明者 -> 者 is what the head-final preference costs. The vocabulary
+    gate is deliberately NOT where this falls: both 発明 and 者 are in
+    the fixture vocabulary, and the abstention still fires, because the
+    judgment belongs to the split. Widening or narrowing the gate was
+    measured to be the wrong lever (MIN_ATTEST 3 -> 1: speakable 64% at
+    4% real words), so a bare suffix that ever passes means the SPLIT
+    side gets fixed.
+    """
+    from .explain import explain
+    from .reach import build_model, reach
+    from .vocabulary import Vocabulary
+
+    # 発明者 is NOT ingested. 発明品 puts 発明 in the left slot and 品 in
+    # the right; 学者 puts 者 in the one-character right slot; 発明 held
+    # as its own core is what lets reach land by UNITS at all.
+    store = CrossStore()
+    for s in ["発明は創作である。", "発明は行為である。", "発明は保護である。",
+              "発明品は道具である。", "発明品は製品である。",
+              "学者は職業である。", "学者は研究である。"]:
+        _ingest_ja(store, s)
+    model = build_model(store)
+
+    vocab = Vocabulary()
+    vocab.add("発明", "fixture", 3)
+    vocab.add("者", "fixture", 3)
+
+    landed = reach(store, "発明者", model=model)
+    ex = explain(store, "発明者", model=model, vocab=vocab)
+
+    ok = (landed["verdict"] == "UNITS"
+          and ex["verdict"] == "ABSTAIN_BARE_SUFFIX_SPLIT"
+          and ex.get("constructed") is True)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EXPLANATION_BARE_SUFFIX_ABSTAINS_AT_THE_SPLIT",
+        "pass": bool(ok),
+        "result": {"reach": [landed["verdict"], landed.get("item")],
+                   "explain": ex["verdict"]},
+    }
+
+
+def explanation_never_on_answer_path_fork() -> Dict[str, Any]:
+    """Constructed explanations must not be able to arrive at a verdict.
+
+    Same isolation `writer_never_reaches_the_answer_path_fork` pins for
+    the generator: nothing that produces a verdict, a census, or the
+    concord band may import the explanation layer. A constructed
+    explanation entering `graded`'s vocabulary would let construction
+    count as agreement — the exact pooling the band measurements forbid.
+    """
+    import inspect
+
+    from . import consensus_store, graded, hierarchy
+
+    leak = [m.__name__ for m in (consensus_store, graded, hierarchy)
+            if "from .explain" in inspect.getsource(m)
+            or "import explain" in inspect.getsource(m)]
+    ok = not leak
+    return {
+        "experiment": "cross_geometry",
+        "fork": "EXPLANATION_NEVER_ON_ANSWER_PATH",
+        "pass": bool(ok),
+        "result": {"leaks": leak},
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -3922,6 +4047,9 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_polite_imperative_still_needs_a_licence_fork(),
         nothing_measured_moves_unknown_word_reach_fork(),
         unknown_word_reach_and_new_word_creation_are_one_operation_fork(),
+        explanation_constructed_and_typed_fork(),
+        explanation_bare_suffix_abstains_at_the_split_fork(),
+        explanation_never_on_answer_path_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),
