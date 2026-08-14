@@ -437,6 +437,7 @@ def serve(store_path: str) -> int:
         return json.dumps(_collapse(_conversation, reply), ensure_ascii=False)
 
     _vera_cache: Dict[str, Any] = {}
+    _math_cache: Dict[str, Any] = {}
 
     def _vera() -> Any:
         """The full stack, loaded the way the 3D viewer loads it.
@@ -626,6 +627,65 @@ def serve(store_path: str) -> int:
         from .intent_frames import parse as _parse
 
         return json.dumps(_parse(text), ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_math(name: str) -> str:
+        """Is this theorem verified? The mathlib witness store answers.
+
+        75,919 of mathlib's 77,242 theorems carry a
+        `verified:lean4:4.34.0-rc1` facet earned by an actual kernel
+        run — the hardest witness layer in the project. Lookup is by
+        (case-folded) declaration name or its trailing segments
+        (`semiconj` finds `addconstmapclass.semiconj` when unique;
+        ambiguity lists the candidates instead of choosing). A name the
+        store holds without the facet is UNVERIFIED_IN_STORE — present
+        but no kernel run vouches here; a name it does not hold is
+        UNKNOWN_NOT_IN_MATHLIB_STORE. This door answers about the
+        STORE, never about mathematics: absence of a witness is not a
+        claim of falsehood, and the sorry trap
+        (lean_witness_forks) is why the wording stays this careful."""
+        import json as _json
+        from pathlib import Path as _Path
+
+        if "mathlib" not in _math_cache:
+            p = (_Path.home() / "Projects" / "vera-corpus" / "build"
+                 / "mathlib_store.json")
+            if not p.is_file():
+                return _json.dumps(
+                    {"verdict": "UNKNOWN_NOT_LOADED",
+                     "note": "mathlib_store.json not present beside the "
+                             "published build"}, ensure_ascii=False)
+            d = _json.loads(p.read_text(encoding="utf-8"))
+            _math_cache["mathlib"] = d["crosses"]
+        crosses = _math_cache["mathlib"]
+
+        q = name.strip().casefold()
+        hit = crosses.get(q)
+        matches = [q] if hit is not None else [
+            k for k in crosses
+            if k == q or k.endswith("." + q)]
+        if not matches:
+            return _json.dumps(
+                {"verdict": "UNKNOWN_NOT_IN_MATHLIB_STORE", "name": name,
+                 "note": "no declaration by this name or trailing "
+                         "segment; absence of a witness is not a claim "
+                         "of falsehood"}, ensure_ascii=False)
+        if len(matches) > 12:
+            return _json.dumps(
+                {"verdict": "UNKNOWN_AMBIGUOUS_NAME", "name": name,
+                 "candidates": len(matches),
+                 "sample": sorted(matches)[:12]}, ensure_ascii=False)
+        out = []
+        for m in sorted(matches):
+            facets = crosses[m]
+            wit = sorted(f for f in facets if str(f).startswith("verified:"))
+            out.append({
+                "declaration": m,
+                "verdict": "VERIFIED" if wit else "UNVERIFIED_IN_STORE",
+                "witness": wit or None,
+            })
+        return _json.dumps({"verdict": "ANSWER", "n": len(out),
+                            "declarations": out}, ensure_ascii=False)
 
     @mcp.tool()
     def vera_explain(term: str) -> str:
