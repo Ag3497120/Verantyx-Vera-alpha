@@ -556,12 +556,32 @@ def serve(store_path: str) -> int:
         with resolved=false at hand-off (so the hand-off itself can never
         become invisible), and once more after the branch with the one
         honest oracle for resolution: re-ask the same query, and resolved
-        is whether the store now answers — never the agent's say-so."""
+        is whether the store now answers — never the agent's say-so.
+
+        The gap graph rides the same call: an unresolved refusal creates
+        (or reuses — dedup by scope/subject) a GapNode, so the frontier
+        map accumulates from operation instead of by hand, and a later
+        resolved=true moves that node to RESOLVED. The flow the design
+        names — refusal -> gather -> evidence -> record -> gap ledger —
+        closes here without the agent having to remember to file it."""
         growth.record_branch_outcome(query, verdict, branch, resolved)
         _save_growth()
+        gap_id = None
+        try:
+            from .gap_graph import refusal_to_gap
+
+            gap_id = refusal_to_gap(gap_graph, query, verdict, branch,
+                                    resolved)
+            if gap_id is not None:
+                _save_gap_graph()
+        except Exception:
+            # The ledger entry must survive a gap-graph hiccup; the two
+            # records are beside each other, not dependent.
+            pass
         return json.dumps(
             {"recorded": True, "open_refusals": len(growth.buckets),
-             "outcomes": len(growth.branch_outcomes)}, ensure_ascii=False)
+             "outcomes": len(growth.branch_outcomes),
+             "gap_id": gap_id}, ensure_ascii=False)
 
     @mcp.tool()
     def attest_claim(subject: str, text: str) -> str:

@@ -261,6 +261,41 @@ def refusal_ledger_keeps_resolved_fork() -> Dict[str, Any]:
                        "outcomes": len(back.branch_outcomes)}}
 
 
+def refusal_feeds_the_gap_graph_fork() -> Dict[str, Any]:
+    """Unresolved refusals become GapNodes; resolution moves, never deletes.
+
+    The frontier map must accumulate from operation, not by hand: an
+    unresolved refusal creates (or reuses — the double-call at hand-off
+    and close must be idempotent) a node under (agent_refusal, query),
+    and a later resolution moves THAT node to RESOLVED with the branch
+    named. Nothing is ever deleted — a resolved gap is history, and
+    history is what stops the same hole being re-detected from scratch.
+    """
+    from .gap_graph import GapGraph, refusal_to_gap
+
+    g = GapGraph()
+    a = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                       "gather-evidence", resolved=False)
+    b = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                       "gather-evidence", resolved=False)
+    none_yet = refusal_to_gap(g, "準委任とは", "UNKNOWN_NOT_PRESENT",
+                              "gather-evidence", resolved=True)
+    closed = refusal_to_gap(g, "譲渡担保とは", "UNKNOWN_NOT_PRESENT",
+                            "gather-evidence", resolved=True)
+    node = g.get(a) if a else None
+    ok = (a is not None and a == b          # double-call is idempotent
+          and none_yet is None               # nothing to resolve, no node
+          and closed == a                    # resolution moves THAT node
+          and node is not None
+          and node.status == "RESOLVED"
+          and node.failure_type == "UNKNOWN_NOT_PRESENT"
+          and len(g.nodes) == 1)             # moved, never deleted or duped
+    return {"experiment": "agent", "fork": "REFUSAL_FEEDS_THE_GAP_GRAPH",
+            "pass": bool(ok),
+            "result": {"gap_id": a, "status": node.status if node else None,
+                       "nodes": len(g.nodes)}}
+
+
 def all_agent_forks() -> List[Dict[str, Any]]:
     return [
         agent_readonly_runs_fork(),
@@ -272,4 +307,5 @@ def all_agent_forks() -> List[Dict[str, Any]]:
         multiline_paste_capture_fork(),
         grain_band_annotation_fork(),
         refusal_ledger_keeps_resolved_fork(),
+        refusal_feeds_the_gap_graph_fork(),
     ]
