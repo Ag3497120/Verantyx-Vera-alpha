@@ -68,6 +68,18 @@ def vocab() -> Any:
     return _cache["vocab"]
 
 
+def defs() -> Dict[str, str]:
+    """The definition sidecar (250MB json). The heaviest asset here —
+    loaded only when a door actually descends, then kept. The module
+    docstring's shelf argument does not apply: defs is a flat
+    surface->sentence map, not the 912MB cross shelf, and the descent
+    door is the one organ that cannot work without it."""
+    if "defs" not in _cache:
+        _cache["defs"] = json.loads(
+            (BUILD / "jawiki_defs.json").read_text(encoding="utf-8"))
+    return _cache["defs"]
+
+
 def empty_shelf() -> Any:
     if "empty_shelf" not in _cache:
         from .cross_store import CrossStore

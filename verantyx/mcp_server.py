@@ -628,6 +628,23 @@ def serve(store_path: str) -> int:
         return json.dumps(_parse(text), ensure_ascii=False, default=str)
 
     @mcp.tool()
+    def vera_explain(term: str) -> str:
+        """Meaning descent: the term's units grounded in definition
+        sentences, or a typed abstention. 電荷密度 → 電荷 (defined:
+        its lead sentence, source named) + 密度 (likewise), every split
+        licensed by the lattice (long window included), bare one-char
+        heads refused at the split, ties abstained. The output is
+        constructed — EXPLAINED_BY_UNIT_DEFS, never testimony about the
+        term itself — and says so. First call loads the 250MB definition
+        sidecar; it stays loaded."""
+        from . import meaning_assets as ma
+        from .meaning_descent import descend as _descend
+
+        out = _descend(term, lattice=ma.lattice(), defs=ma.defs(),
+                       aliases=ma.aliases())
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def vera_typo(term: str) -> str:
         """Typed hand-off for an out-of-vocabulary term. Never rewrites.
 
