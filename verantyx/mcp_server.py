@@ -568,6 +568,14 @@ def serve(store_path: str) -> int:
                 ensure_ascii=False)
         out = _summarize(store, subjects.split(), vocab=v.writer.vocab,
                          edges=v.edges, limit=limit)
+        # Same connective skeleton the diff door gained; same tolerance.
+        try:
+            from .connective_render import render_summary as _render
+            rendered = _render(out)
+            if rendered:
+                out["rendered"] = rendered
+        except Exception:
+            pass
         return json.dumps(out, ensure_ascii=False, default=str)
 
     @mcp.tool()
@@ -591,6 +599,17 @@ def serve(store_path: str) -> int:
                     lattice=ma.lattice(), shelf=ma.empty_shelf(),
                     senses=ma.senses())
         out["extractor"] = ma.extractor()
+        # Connective render: skeleton sentences over the three bundles,
+        # every connective licensed by the diff's own structure (243/243
+        # placements carried a reason in the acceptance run). Rendering
+        # failure never breaks the diff — the bundles are the substance.
+        try:
+            from .connective_render import render_diff as _render
+            rendered = _render(out)
+            if rendered:
+                out["rendered"] = rendered
+        except Exception:
+            pass
         return json.dumps(out, ensure_ascii=False, default=str)
 
     @mcp.tool()
