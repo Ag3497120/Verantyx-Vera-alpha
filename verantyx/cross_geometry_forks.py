@@ -3961,6 +3961,67 @@ def explanation_bare_suffix_abstains_at_the_split_fork() -> Dict[str, Any]:
     }
 
 
+def staged_intersection_chains_n_stages_fork() -> Dict[str, Any]:
+    """Any number of arrows chains; only the final stage elects.
+
+    Stage i's linked set becomes stage i+1's membership condition, under
+    the same width guard stage one always had. Intermediate stages hand
+    FORWARD and never elect — an election in the middle would discard
+    chains the last stage could still tell apart. The final stage keeps
+    the two-stage discipline exactly: link strength, strict lead, ties
+    abstain. And a chain that dies says at which stage: DISCONNECTED
+    carries at_stage.
+    """
+    from .stacked import staged
+
+    st = CrossStore()
+    # Stage 1 material: two crimes, one holds both conditions.
+    st.add("背任罪", ["背任", "上限"])
+    st.add("収賄罪", ["収賄", "上限"])
+    # Stage 2 material: two convicts, one touches the stage-1 survivor.
+    st.add("受刑者甲", ["服役", "背任罪"])
+    st.add("受刑者乙", ["服役", "収賄罪"])
+    # Stage 3 material: two courts, one touches the stage-2 survivor.
+    st.add("高等裁判所", ["再審", "受刑者甲"])
+    st.add("地方裁判所", ["再審"])
+
+    three = staged(st, "背任 上限 → 服役 → 再審")
+    two = staged(st, "背任 上限 → 服役")
+    dead = staged(st, "背任 上限 → 服役 → 抗告")
+
+    # A second court tying on link strength must turn the answer into an
+    # abstention — the tie rule survives the third stage.
+    st.add("最高裁判所", ["再審", "受刑者甲"])
+    tied = staged(st, "背任 上限 → 服役 → 再審")
+
+    ok = (three is not None
+          and three["verdict"] == "ANSWER_BY_STAGES"
+          and three["core"] == "高等裁判所"
+          and len(three.get("stages") or []) == 3
+          # two-stage callers see the shape they always saw
+          and two is not None
+          and two["verdict"] == "ANSWER_BY_STAGES"
+          and two["core"] == "受刑者甲"
+          and "stage1" in two and "stage2" in two
+          # a chain with no stage-3 material dies AT stage 3, typed
+          and dead is not None
+          and dead["verdict"] == "UNKNOWN_STAGE3_EMPTY"
+          # final-stage ties abstain at any depth
+          and tied is not None
+          and tied["verdict"] == "UNKNOWN_UNDERDETERMINED")
+    return {
+        "experiment": "cross_geometry",
+        "fork": "STAGED_INTERSECTION_CHAINS_N_STAGES",
+        "pass": bool(ok),
+        "result": {
+            "three": [three and three["verdict"], three and three.get("core")],
+            "two": [two and two["verdict"], two and two.get("core")],
+            "dead": dead and dead["verdict"],
+            "tied": tied and tied["verdict"],
+        },
+    }
+
+
 def explanation_never_on_answer_path_fork() -> Dict[str, Any]:
     """Constructed explanations must not be able to arrive at a verdict.
 
@@ -4050,6 +4111,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         explanation_constructed_and_typed_fork(),
         explanation_bare_suffix_abstains_at_the_split_fork(),
         explanation_never_on_answer_path_fork(),
+        staged_intersection_chains_n_stages_fork(),
         cross_field_agreement_selects_but_barely_applies_fork(),
         cut_agreement_is_not_evidence_and_must_not_be_pooled_fork(),
         a_rule_that_just_started_breaking_is_the_one_to_resend_fork(),

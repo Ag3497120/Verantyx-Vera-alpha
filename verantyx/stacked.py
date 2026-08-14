@@ -558,20 +558,35 @@ def intersect(store: Any, query: str) -> Optional[Dict[str, Any]]:
 
 
 def staged(store: Any, query: str) -> Optional[Dict[str, Any]]:
-    """Multi-step by staged intersection: 「条件… → 条件…」.
+    """Multi-step by staged intersection: 「条件… → 条件… → 条件…」.
 
     The chain that decays (41.5% -> 19.3%) walks facet edges; the stage
     that holds re-INTERSECTS at every step. Stage one narrows as usual;
-    its SURVIVORS become a membership condition for stage two — a stage-2
-    candidate must hold its own conditions AND touch a survivor (hold it
-    as a facet, or be held on its cross). Both trails ride the answer, so
-    a reader can see where each stage cut.
+    its SURVIVORS become a membership condition for the next stage — a
+    candidate there must hold its own conditions AND touch a survivor
+    (hold it as a facet, or be held on its cross). Any number of arrows
+    chains the same way: each intermediate stage hands its linked set
+    forward under the same width guard stage one always had (a stage
+    that narrows too little abstains rather than handing a crowd on),
+    and only the FINAL stage elects — link strength, strict lead, ties
+    abstain. Every stage's trail rides the answer, so a reader can see
+    where each cut.
 
     The arrow is explicit on purpose. 背任罪の刑の上限を科された者の
     再審請求先は hides its stage boundary in case grammar this reader
     does not parse; guessing the boundary would stage the wrong cut and
     answer a different chain. 「背任罪 刑 → 再審」 states it, and the
     typed UNKNOWNs say which stage failed.
+
+    Measured on the 89,369-core federation: the recorded two-stage
+    example still answers (時効 援用 → 期間 -> 時効), and a three-stage
+    chain lands — 殺人罪 → 時効 期間 → 停止 answers 時効 at 26 links,
+    survivors 33 -> 27 across the hand-offs. The original target
+    背任罪 → 刑 上限 → 再審請求 ends UNKNOWN_UNDERDETERMINED: its
+    final-stage candidates tie, and ties abstain here like everywhere.
+    Broad middles die at the guard by name (時効 援用 → 期間 → 中断 is
+    UNKNOWN_STAGE2_TOO_WIDE with 624 linked) — the guard is the system
+    telling the asker which stage needs another condition, not a wall.
     """
     if "→" not in query and "->" not in query:
         return None
@@ -580,13 +595,18 @@ def staged(store: Any, query: str) -> Optional[Dict[str, Any]]:
 
     parts = [p2.strip() for p2 in
              query.replace("->", "→").split("→") if p2.strip()]
-    if len(parts) != 2:
+    if len(parts) < 2:
         return None
-    t1 = ja_content_runs(parts[0])
-    t2 = ja_content_runs(parts[1])
-    if not t1 or not t2:
+    stage_terms = [ja_content_runs(p) for p in parts]
+    if not all(stage_terms):
         return None
-    pz1 = Puzzle(store=store).narrow(*t1)
+
+    def _touches(candidate: str, members: set) -> int:
+        cr = store.crosses.get(candidate) or {}
+        return sum(1 for m in members
+                   if m in cr or candidate in (store.crosses.get(m) or {}))
+
+    pz1 = Puzzle(store=store).narrow(*stage_terms[0])
     s1 = pz1.answer()
     survivors = (set(pz1.candidates or ())
                  if s1["verdict"] in ("ANSWER", "UNKNOWN_UNDERDETERMINED")
@@ -600,49 +620,80 @@ def staged(store: Any, query: str) -> Optional[Dict[str, Any]]:
                 "text": "", "remaining": len(survivors), "stage1": s1,
                 "note": "stage one narrowed too little to hand on; add a "
                         "condition before the arrow"}
-    pz2 = Puzzle(store=store).narrow(*t2)
-    if not pz2.candidates:
-        return {"verdict": "UNKNOWN_STAGE2_EMPTY", "core": None, "text": "",
-                "stage1": s1, "note": "no core holds the second stage's "
-                "conditions at all"}
-    # Link STRENGTH, not link existence: touching one survivor out of
-    # thirty is background, touching five is the chain. Measured with
-    # existence alone, 時効 援用 → 期間 left 236 standing; counting
-    # touches and demanding a strict lead is the same abstention
-    # discipline every other tie in this engine obeys.
-    linked: Dict[str, int] = {}
-    for c in pz2.candidates:
-        cr = store.crosses.get(c) or {}
-        n = sum(1 for m in survivors
-                if m in cr or c in (store.crosses.get(m) or {}))
-        if n:
-            linked[c] = n
-    out = {"stage1": {"conditions": t1, "survivors": sorted(survivors)[:8],
-                      "remaining": len(survivors)},
-           "stage2": {"conditions": t2,
-                      "candidates": len(pz2.candidates)}}
-    if not linked:
-        return {**out, "verdict": "UNKNOWN_STAGES_DISCONNECTED",
-                "core": None, "text": "",
-                "note": "both stages hold, but no stage-2 core touches a "
-                        "stage-1 survivor — the chain the question asserts "
-                        "is not written in this corpus"}
-    ranked = sorted(linked.items(), key=lambda kv: (-kv[1], kv[0]))
-    strict = (len(ranked) == 1
-              or ranked[0][1] > ranked[1][1])
-    if strict:
-        core = ranked[0][0]
-        cross = store.crosses.get(core) or {}
-        shown = sorted(cross, key=lambda f: (-cross[f], f))[:4]
-        return {**out, "verdict": "ANSWER_BY_STAGES", "core": core,
-                "core_key": core, "links": ranked[0][1],
-                "text": " ".join([core] + shown)}
-    top = ranked[0][1]
-    tied = [c for c, n in ranked if n == top]
-    return {**out, "verdict": "UNKNOWN_UNDERDETERMINED", "core": None,
-            "text": "", "candidates": tied[:12], "remaining": len(tied),
-            "note": "the strongest stage-2 candidates touch the same "
-                    "number of stage-1 survivors; ties abstain"}
+
+    trail: List[Dict[str, Any]] = [
+        {"stage": 1, "conditions": stage_terms[0],
+         "survivors": sorted(survivors)[:8], "remaining": len(survivors)}]
+
+    for i in range(1, len(parts)):
+        n_stage = i + 1
+        final = i == len(parts) - 1
+        terms = stage_terms[i]
+        pz = Puzzle(store=store).narrow(*terms)
+        out: Dict[str, Any] = {"stages": trail + [
+            {"stage": n_stage, "conditions": terms,
+             "candidates": len(pz.candidates or ())}]}
+        if len(parts) == 2:
+            # The shape the two-stage reader always got.
+            out["stage1"] = trail[0]
+            out["stage2"] = {"conditions": terms,
+                             "candidates": len(pz.candidates or ())}
+        if not pz.candidates:
+            return {**out, "verdict": "UNKNOWN_STAGE%d_EMPTY" % n_stage,
+                    "core": None, "text": "", "stage1": s1,
+                    "note": "no core holds stage %d's conditions at all"
+                            % n_stage}
+        # Link STRENGTH, not link existence: touching one survivor out of
+        # thirty is background, touching five is the chain. Measured with
+        # existence alone, 時効 援用 → 期間 left 236 standing; counting
+        # touches and demanding a strict lead is the same abstention
+        # discipline every other tie in this engine obeys.
+        linked: Dict[str, int] = {}
+        for c in pz.candidates:
+            n = _touches(c, survivors)
+            if n:
+                linked[c] = n
+        if not linked:
+            return {**out, "verdict": "UNKNOWN_STAGES_DISCONNECTED",
+                    "core": None, "text": "", "at_stage": n_stage,
+                    "note": "both stages hold, but no stage-%d core "
+                            "touches a stage-%d survivor — the chain the "
+                            "question asserts is not written in this "
+                            "corpus" % (n_stage, n_stage - 1)}
+        if not final:
+            # Intermediate stages hand FORWARD, they do not elect: an
+            # election in the middle would discard chains the last stage
+            # could still tell apart. The width guard is the same one
+            # stage one obeys.
+            if len(linked) > 40:
+                return {**out,
+                        "verdict": "UNKNOWN_STAGE%d_TOO_WIDE" % n_stage,
+                        "core": None, "text": "",
+                        "remaining": len(linked),
+                        "note": "stage %d narrowed too little to hand "
+                                "on; add a condition" % n_stage}
+            survivors = set(linked)
+            trail.append({"stage": n_stage, "conditions": terms,
+                          "survivors": sorted(survivors)[:8],
+                          "remaining": len(survivors)})
+            continue
+        ranked = sorted(linked.items(), key=lambda kv: (-kv[1], kv[0]))
+        strict = (len(ranked) == 1
+                  or ranked[0][1] > ranked[1][1])
+        if strict:
+            core = ranked[0][0]
+            cross = store.crosses.get(core) or {}
+            shown = sorted(cross, key=lambda f: (-cross[f], f))[:4]
+            return {**out, "verdict": "ANSWER_BY_STAGES", "core": core,
+                    "core_key": core, "links": ranked[0][1],
+                    "text": " ".join([core] + shown)}
+        top = ranked[0][1]
+        tied = [c for c, n in ranked if n == top]
+        return {**out, "verdict": "UNKNOWN_UNDERDETERMINED", "core": None,
+                "text": "", "candidates": tied[:12], "remaining": len(tied),
+                "note": "the strongest final-stage candidates touch the "
+                        "same number of survivors; ties abstain"}
+    return None
 
 
 def aspect_read(store: Any, out: Dict[str, Any],
