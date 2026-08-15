@@ -24,6 +24,78 @@ every time — and every answer traces back to counted source sentences.
 
 Structure, verdicts, signals, governed evolution, versioning and every way to participate: **[docs/PLATFORM.md](docs/PLATFORM.md)**. Live: [verantyx.ai/vera3d](https://verantyx.ai/vera3d/) · [model repo](https://huggingface.co/kofdai/vera-alpha) · suggest via issues labeled `vera-suggest`.
 
+## What it can do now — measured, 2026-08
+
+Every number here comes from a script in `tools/` and is burned into the
+docstring of the module it measures. Where a capability has a ceiling, the
+ceiling is stated too.
+
+| | measured |
+|---|---|
+| Federation | **89,369 cores**, repaired 2026-08-14 (103,599 rule-shaped false facets removed, ledger kept) |
+| Typed negation | observed `¬` testimony, gated on a real lemma — **97/97**, fabrication structurally impossible |
+| Unknown-word explanation | units grounded in sourced definitions — **81 of 91** remaining holes fully grounded |
+| Structural difference | exclusivity **0.9715** — "no attestation for B", never "B is not" |
+| Connective prose | **243/243** placements carry a licence; 「しかし」 only on an observed ¬ pair |
+| Instruction frames | 47 verbs × 28 operations — out-of-table **refuses 15/15** |
+| Multi-stage chains | arrows derived deterministically — **0/18** false splits |
+| Typo recovery | recovery@5 **84.8%**, false fires on real words **0/500**, 2.15 ms |
+| Mathematics | **75,919 of 77,242** mathlib theorems carry `verified:lean4:4.34.0-rc1` from real kernel runs (98.9% of files) |
+| Cold start | shallow shelf took the hole rate **74.5% → 45.5%** |
+| Meaning by association | kin prediction covers 140/150 at **10× chance — and 4% of a word's own facets is the ceiling** |
+| Commonsense | **9/50**. Two pre-registered ConceptNet imports both PARKED (29/20, 28/21) — no usable source found |
+
+Doors: **94** over MCP (`vera_ask`, `vera_diff`, `vera_explain`, `vera_intent`,
+`vera_typo`, `vera_math`, `vera_summarize`, `memory_ledger`, `survey_assets`,
+`assets_for`, `record_tool_witness`, `record_asset_outcome`, …).
+
+### Sovereigns stay apart
+
+Only the federation votes. mathlib witnesses, the jawiki sidecars (941,604
+aliases, 122,988 sense surfaces, definition sentences, predicate profiles),
+the gap map and the parked ConceptNet import are hand-off only, and
+`MANIFEST.json` says so in its first sentence. Merging two stores whose
+notion of "agreement" differs was measured six times and broke six times —
+out-of-corpus words reaching quorum 0 → 8, 284 answers becoming 208.
+
+### Where the machine itself is knowledge
+
+An agent that cannot do something here can ask what else this computer has.
+Four tiers, never collapsed:
+
+```text
+present   it exists            — a fact anyone can check by looking
+declares  Info.plist says so   — the vendor's claim, attributable
+verified  a run proved it      — record_tool_witness, earned
+chosen    it closed this need  — record_asset_outcome, remembered
+```
+
+A change in the machine opens a `GapNode` (ASSET_ARRIVED / ASSET_GONE) rather
+than passing silently, and the second time a need appears the answer is a
+lookup instead of another exploration.
+
+## In the IDE
+
+[Verantyx IDE](https://github.com/Ag3497120/Verantyx) ships Vera as a native
+child process (stdio JSON-RPC, no MCP registry in the path) and offers five
+modes: **jgen council / Vera-a (dual path) / Vera (store alone, no LLM) / Bot
+(settings & UI) / LLM**.
+
+- **The stereo cross is the route, not a logo.** It is a watermark across the
+  whole surface, lit by the real call — and only the arms the answer actually
+  evidenced. An arm with no cue stays grey, because a fact without a surface
+  cue has no arm.
+- **The reply is a console, not a bubble**: ANSWER (with verdict, grain,
+  witnesses) / EVIDENCE (named sources) / CONFLICT / **GAP — never an error.**
+  Declining *is* the answer.
+- **Memory is reviewable.** A ledger row moves from 証言 to 「ユーザーの校正」
+  by a person, and the review state lives beside the cross, never inside it:
+  an approval is not testimony the corpus gave.
+- **Surfaces are summoned by name** from a closed table — say 設定 / 記憶 /
+  画面 / モード. Anything unmatched falls through untouched.
+- **An attached document is offered, never taken**: 「入れますか?」 → 「はい」
+  ingests; anything else leaves it in the conversation only.
+
 ## Where this works, and where it does not
 
 Measured, on real documents, before you spend an afternoon on it.
