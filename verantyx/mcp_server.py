@@ -189,6 +189,116 @@ def serve(store_path: str) -> int:
         )
 
     @mcp.tool()
+    def survey_assets(extra_paths: str = "") -> str:
+        """What this machine actually has — presence only, never ability.
+
+        The exploring agent needs an inventory before it can ask "if I
+        cannot do this here, what on this computer can". This builds it
+        by looking, and it stores exactly one kind of claim:
+
+            present:true / path:… / kind:app|cli
+
+        and nothing about what any of them CAN DO. That line is the
+        whole discipline. That `/Applications/Visual Studio Code.app`
+        exists is a fact anyone can check by looking. That VS Code can
+        edit code is a CLAIM — true, obvious, and still not something
+        this store may hold until a run witnesses it, because the moment
+        a model's general knowledge about tools is written in as fact,
+        the store stops being able to tell what it verified from what it
+        assumed, and that distinction is the only thing it sells.
+
+        Ability arrives later and separately, through
+        `record_tool_witness`, as `verified:tool:<name>` — earned by a
+        run that happened on this machine. So an answer can always say
+        which half it is standing on: 「あります」 from here, 「効きま
+        した」 only from there.
+        """
+        import os
+        import shutil
+
+        found = 0
+        for base in ("/Applications", "/System/Applications",
+                     str(Path.home() / "Applications")):
+            try:
+                names = sorted(os.listdir(base))
+            except OSError:
+                continue
+            for name in names:
+                if not name.endswith(".app"):
+                    continue
+                label = name[:-4]
+                store.add("app:" + label.casefold(),
+                          ["present:true", "kind:app",
+                           "path:" + os.path.join(base, name),
+                           "name:" + label],
+                          source="survey:applications")
+                found += 1
+
+        clis = ["git", "node", "npm", "python3", "swift", "xcodebuild",
+                "code", "cargo", "docker", "ffmpeg", "curl", "brew",
+                "ollama", "lake", "lean"]
+        for extra in (extra_paths or "").split():
+            if extra and extra not in clis:
+                clis.append(extra)
+        for c in clis:
+            where = shutil.which(c)
+            if not where:
+                continue
+            store.add("cli:" + c,
+                      ["present:true", "kind:cli", "path:" + where,
+                       "name:" + c],
+                      source="survey:path")
+            found += 1
+
+        _save()
+        return json.dumps({
+            "verdict": "ANSWER", "recorded": found,
+            "holds": "presence only",
+            "note": "ability is not stored here; a run must witness it "
+                    "via record_tool_witness",
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    def record_tool_witness(tool: str, command: str, result: str,
+                            passed: bool = True, version: str = "") -> str:
+        """An external tool's run, kept as a witness — not as a log line.
+
+        This is what makes using another app different from launching
+        it. `npm test` passing is not Vera's opinion and not the model's
+        recollection: it is a run that happened, on this machine, with
+        an exit state, and it belongs in the store the same way a Lean
+        kernel run does. The facet is `verified:tool:<tool>[:<version>]`
+        and it names the command, so a later answer can cite WHICH run
+        vouched for it and a reader can re-run the same line.
+
+        A failing run is recorded too, as `refuted:tool:<tool>`. Keeping
+        only the passes would make the store a highlight reel — the
+        exact shape of dishonesty this engine exists to refuse — and the
+        failures are the more useful half, because they are what a gap
+        is made of.
+
+        Nothing here is a claim about the WORLD. It is a claim about a
+        run: the tool said this, at this time, on this command. Whether
+        the tool was right is the tool's business, and the citation
+        makes that visible instead of laundering it into fact."""
+        t = (tool or "").strip().casefold()
+        if not t:
+            return json.dumps({"verdict": "UNKNOWN_NO_TOOL"})
+        core = "run:" + t + ":" + (command or "").strip()[:80]
+        mark = ("verified:tool:" + t + (":" + version if version else "")
+                if passed else "refuted:tool:" + t)
+        facets = [mark, "command:" + (command or "").strip()[:120]]
+        for line in (result or "").splitlines()[:6]:
+            line = line.strip()
+            if line:
+                facets.append("said:" + line[:80])
+        store.add(core, facets, source="tool:" + t)
+        _save()
+        return json.dumps({"verdict": "ANSWER", "core": core,
+                           "witness": mark,
+                           "kept": len(facets)}, ensure_ascii=False)
+
+    @mcp.tool()
     def memory_ledger(limit: int = 12) -> str:
         """The memory as a LEDGER a person can read and act on.
 
