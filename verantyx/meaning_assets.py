@@ -41,11 +41,26 @@ def _indexed() -> Optional[Dict[str, Any]]:
 
 
 def profiles() -> Dict[str, Any]:
+    """The predicate profiles a door reads.
+
+    Prefers the polarity-marked table when the index carries one: an
+    observed ¬ is testimony the diff and the connective render may use
+    (「しかし」 is reachable only through such a pair), and withholding
+    it from the doors was the wiring gap that made every rendered
+    opposition impossible. The plain table stays beside it because the
+    burned measurements were taken on it; `extractor()` names which
+    table answered, so no number is silently re-attributed.
+    """
     if "profiles" not in _cache:
         idx = _indexed()
         if idx is not None:
-            _cache["extractor"] = "indexed"
-            _cache["profiles"] = idx["profiles"]
+            polar = idx.get("profiles_polar")
+            if polar is not None and len(polar):
+                _cache["extractor"] = "indexed+polarity"
+                _cache["profiles"] = polar
+            else:
+                _cache["extractor"] = "indexed"
+                _cache["profiles"] = idx["profiles"]
         else:
             from .predicate_profile import load
             _cache["extractor"], _cache["profiles"] = load()

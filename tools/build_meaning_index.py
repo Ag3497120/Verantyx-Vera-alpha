@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 BUILD = Path.home() / "Projects" / "vera-corpus" / "build"
 OUT = BUILD / "meaning_index.db"
 
-TABLES = ("aliases", "senses", "profiles", "defs")
+TABLES = ("aliases", "senses", "profiles", "profiles_polar", "defs")
 
 
 def main() -> int:
@@ -52,6 +52,10 @@ def main() -> int:
     pour("aliases", BUILD / "jawiki_aliases.json", ident)
     pour("senses", BUILD / "jawiki_senses.json", dump)
     pour("profiles", BUILD / "predicate_profiles.json", dump)
+    # The polarity-marked build (¬流れる). Kept in its OWN table: the
+    # plain profiles are what every burned measurement was taken on, and
+    # a door that reads the marked ones must be able to say which it read.
+    pour("profiles_polar", BUILD / "predicate_profiles_polar.json", dump)
     pour("defs", BUILD / "jawiki_defs.json", ident)
 
     con.execute("VACUUM")

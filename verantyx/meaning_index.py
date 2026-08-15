@@ -120,9 +120,18 @@ def maps(path: Path = INDEX) -> Optional[Dict[str, SqliteMap]]:
     conn = connection(path)
     if conn is None:
         return None
-    return {
+    out = {
         "aliases": SqliteMap(conn, "aliases"),
         "senses": SqliteMap(conn, "senses", json.loads),
         "profiles": SqliteMap(conn, "profiles", json.loads),
         "defs": SqliteMap(conn, "defs"),
     }
+    # The polarity-marked profiles, when an index carries them. Optional
+    # because an older index predates the table and every caller must
+    # tolerate its absence rather than crash.
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        ("profiles_polar",),
+    ).fetchone():
+        out["profiles_polar"] = SqliteMap(conn, "profiles_polar", json.loads)
+    return out
