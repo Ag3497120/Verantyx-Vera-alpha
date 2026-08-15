@@ -412,7 +412,22 @@ def yes_no(store: Any, query: str) -> Optional[Dict[str, Any]]:
                                     else None)
     conditions = [c for c in (cov.get("aspects") or [])]
     if not conditions:
-        return None
+        # 「塩はしょっぱいですか」 yields only [塩]: しょっぱい is hiragana
+        # and never a content run. Falling through used to dump the
+        # subject's census (SEEDED) and assert クロイツ/タウブ — or, after
+        # those were removed, アンモニア/イオン — as if they answered the
+        # property. A yes/no with no extractable property is a gap.
+        if subject is None:
+            return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None,
+                    "text": "", "subject": cov.get("subject"),
+                    "note": "a yes/no question about a subject the store "
+                            "does not hold cannot be attested either way"}
+        return {"verdict": "NOT_ATTESTED", "core": subject, "text": "",
+                "subject": subject, "conditions": [], "unattested": [],
+                "note": "the question is yes/no and no content-run "
+                        "property was extracted; answering with the "
+                        "subject's census would answer a different "
+                        "question"}
     if subject is None:
         return {"verdict": "UNKNOWN_NOT_PRESENT", "core": None, "text": "",
                 "subject": cov.get("subject"),
@@ -758,6 +773,20 @@ def ask(
     # and forcing 「〜できるか」 through it either refuses or answers about
     # the subject as if とは had been asked. Attestation is its own shape.
     st_ = staged(store, query)
+    if st_ is None:
+        # Arrow-free multi-stage: the deterministic splitter proposes the
+        # cuts (closed surface tables, 0/18 missplits in its regression)
+        # and the SAME staged machinery runs them — the splitter stages,
+        # it never elects. The derived chain rides the answer so a reader
+        # can audit every cut; a query the splitter cannot stage falls
+        # through silently, because a guessed cut answers a different
+        # chain (staged's own docstring, now with the guessing removed).
+        from .stage_split import as_staged_query, split as _stage_split
+        arrow = as_staged_query(_stage_split(query))
+        if arrow is not None:
+            st_ = staged(store, arrow)
+            if st_ is not None:
+                st_["stage_split"] = {"chain": arrow, "derived": True}
     if st_ is not None:
         return st_
     cmp_ = compare_shape(store, query)

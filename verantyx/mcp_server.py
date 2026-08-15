@@ -93,6 +93,21 @@ def serve(store_path: str) -> int:
     def _save_gap_graph() -> None:
         gap_graph.save(ggpath)
 
+    #: Human review marks, held BESIDE the store. A person's approval is
+    #: not testimony the corpus gave; writing it into the facets would
+    #: forge the kind of evidence this engine exists to refuse.
+    _review_path = Path(str(path) + ".review.json")
+
+    def _review_marks() -> Dict[str, str]:
+        try:
+            return json.loads(_review_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _write_review_marks(marks: Dict[str, str]) -> None:
+        _review_path.write_text(
+            json.dumps(marks, ensure_ascii=False, indent=1), encoding="utf-8")
+
     xopath = transfer_outcome_log_path(path)
     transfer_log = TransferOutcomeLog.load(xopath)
 
@@ -172,6 +187,385 @@ def serve(store_path: str) -> int:
             {"remembered": key, "facets": store.top_facets(key or "", 8)},
             ensure_ascii=False,
         )
+
+    @mcp.tool()
+    def record_asset_outcome(need: str, asset: str, worked: bool,
+                             gap_id: str = "", command: str = "",
+                             result: str = "") -> str:
+        """What happened when an asset was used for a need — and, when
+        it worked, the recipe that makes the second time cheap.
+
+        This is the half that turns exploring into learning. Without it
+        the loop finds the same asset by the same reasoning every time,
+        which is not autonomy, it is amnesia with good manners.
+
+        Three things are written, and only the first is unconditional:
+
+            outcome   `recipe:<need>` gains `tried:<asset>` either way.
+                      A failure is as much a fact as a success and is
+                      the thing that stops the next run repeating it.
+            witness   a successful run also lands via the tool-witness
+                      shape (`verified:tool:<asset>`), so `assets_for`
+                      returns it under `witnessed` from then on.
+            gap       a named gap moves to RESOLVED with the asset in
+                      its resolution, so the graph stops asking.
+
+        A failure never writes `chose:` — the recipe records that it was
+        tried and did not work, which is what a later planner needs, and
+        recording a defeat as a choice would make the store recommend
+        the thing that already broke.
+        """
+        n = (need or "").strip().casefold()
+        a = (asset or "").strip().casefold()
+        if not n or not a:
+            return json.dumps({"verdict": "UNKNOWN_NEED_OR_ASSET"})
+
+        facets = ["tried:" + a, ("worked:" + a) if worked else ("failed:" + a)]
+        if worked:
+            facets.append("chose:" + a)
+        store.add("recipe:" + n, facets, source="outcome:" + a)
+
+        if command.strip():
+            mark = ("verified:tool:" + a) if worked else ("refuted:tool:" + a)
+            wf = [mark, "command:" + command.strip()[:120], "for:" + n]
+            for line in (result or "").splitlines()[:4]:
+                if line.strip():
+                    wf.append("said:" + line.strip()[:80])
+            store.add("run:" + a + ":" + command.strip()[:80], wf,
+                      source="tool:" + a)
+        _save()
+
+        resolved = None
+        if worked and gap_id.strip():
+            try:
+                gap_graph.set_status(gap_id.strip(), "RESOLVED",
+                                     resolution="closed by " + a)
+                _save_gap_graph()
+                resolved = gap_id.strip()
+            except Exception:
+                resolved = None
+
+        return json.dumps({"verdict": "ANSWER", "need": n, "asset": a,
+                           "worked": worked, "gap_resolved": resolved,
+                           "recipe": "recipe:" + n}, ensure_ascii=False)
+
+    @mcp.tool()
+    def assets_for(need: str) -> str:
+        """Which assets on this machine could close a stated need.
+
+        The plan side of the gap loop. A GapNode says what is missing;
+        this says what is here that might close it, and it keeps the two
+        kinds of answer apart on purpose:
+
+            witnessed   a run already succeeded with this asset for this
+                        kind of work (verified:tool:…). Repeatable.
+            present     the asset exists. Nothing more is claimed — it
+                        has never been tried for this, and calling it a
+                        solution would be the model's belief about tools
+                        entering as fact.
+
+        The need→asset table is CLOSED, like the intent frames and the
+        summon table, and for the same reason: a fuzzy match here would
+        propose Blender for "run tests" with total confidence, and an
+        agent acting on that wastes the user's machine and their trust.
+        A need outside the table returns UNKNOWN_NEED_NOT_MAPPED with
+        the mapped needs listed — a refusal that says how to ask again.
+        """
+        table = {
+            "編集": ["code", "vscode", "visual studio code", "xcode", "vim",
+                     "nova", "sublime text"],
+            "実行": ["terminal", "iterm", "node", "npm", "python3", "swift",
+                     "cargo", "docker"],
+            "確認": ["safari", "google chrome", "firefox", "preview"],
+            "検索": ["safari", "google chrome"],
+            "版管理": ["git", "github desktop", "sourcetree", "fork"],
+            "設計": ["figma", "sketch", "blender"],
+            "文書": ["notes", "pages", "textedit", "typora"],
+            "表計算": ["numbers", "microsoft excel"],
+            "ビルド": ["xcodebuild", "swift", "npm", "cargo", "docker"],
+        }
+        aliases = {"edit": "編集", "run": "実行", "test": "実行",
+                   "browse": "確認", "verify": "確認", "build": "ビルド",
+                   "git": "版管理", "design": "設計", "write": "文書"}
+        key = (need or "").strip().casefold()
+        key = aliases.get(key, key)
+        wanted = table.get(key)
+        if wanted is None:
+            for k in table:
+                if k in (need or ""):
+                    wanted, key = table[k], k
+                    break
+        if wanted is None:
+            return json.dumps({"verdict": "UNKNOWN_NEED_NOT_MAPPED",
+                               "need": need, "mapped": sorted(table),
+                               "note": "closed table; a guess here would "
+                                       "send an agent at the wrong app"},
+                              ensure_ascii=False)
+
+        # The remembered choice comes first. If a run already closed a
+        # need with an asset, the second time is a lookup, not another
+        # exploration — and assets that were tried and failed are named
+        # so the planner does not walk into them again.
+        chosen, failed = [], []
+        for f in (store.crosses.get("recipe:" + key) or {}):
+            t = str(f)
+            if t.startswith("chose:"):
+                chosen.append(t[6:])
+            elif t.startswith("failed:"):
+                failed.append(t[7:])
+
+        witnessed, present = [], []
+        for core, cross in store.crosses.items():
+            facets = set(cross)
+            if core.startswith("run:"):
+                tool = core.split(":", 2)[1] if ":" in core else ""
+                if tool in wanted and any(
+                        str(f).startswith("verified:tool:") for f in facets):
+                    witnessed.append({"asset": tool, "run": core})
+                continue
+            if not (core.startswith("app:") or core.startswith("cli:")):
+                continue
+            name = core.split(":", 1)[1]
+            if name in wanted and "present:true" in facets:
+                path = next((str(f)[5:] for f in facets
+                             if str(f).startswith("path:")), "")
+                present.append({"asset": name, "path": path})
+
+        return json.dumps({
+            "verdict": "ANSWER" if (chosen or witnessed or present)
+                       else "UNKNOWN_NO_ASSET",
+            "need": key,
+            "chosen": chosen[:3],
+            "failed_before": failed[:4],
+            "witnessed": witnessed[:6],
+            "present_untried": present[:8],
+            "note": "witnessed = a run vouched for it; present = it "
+                    "exists and nothing more is claimed",
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    def survey_assets(extra_paths: str = "") -> str:
+        """What this machine actually has — presence only, never ability.
+
+        The exploring agent needs an inventory before it can ask "if I
+        cannot do this here, what on this computer can". This builds it
+        by looking, and it stores exactly one kind of claim:
+
+            present:true / path:… / kind:app|cli
+
+        and nothing about what any of them CAN DO. That line is the
+        whole discipline. That `/Applications/Visual Studio Code.app`
+        exists is a fact anyone can check by looking. That VS Code can
+        edit code is a CLAIM — true, obvious, and still not something
+        this store may hold until a run witnesses it, because the moment
+        a model's general knowledge about tools is written in as fact,
+        the store stops being able to tell what it verified from what it
+        assumed, and that distinction is the only thing it sells.
+
+        Ability arrives later and separately, through
+        `record_tool_witness`, as `verified:tool:<name>` — earned by a
+        run that happened on this machine. So an answer can always say
+        which half it is standing on: 「あります」 from here, 「効きま
+        した」 only from there.
+        """
+        import os
+        import shutil
+
+        # Three tiers, and they are never collapsed:
+        #   present:   it exists — a fact anyone can check by looking
+        #   declares:  the app's OWN bundle says it opens these types.
+        #              Still not a run, but not a model's belief either:
+        #              the claim is the vendor's, recorded as theirs.
+        #   verified:  a run happened (record_tool_witness). Earned.
+        import plistlib
+
+        before = {c for c in store.crosses
+                  if c.startswith("app:") or c.startswith("cli:")}
+        found = 0
+        for base in ("/Applications", "/System/Applications",
+                     str(Path.home() / "Applications")):
+            try:
+                names = sorted(os.listdir(base))
+            except OSError:
+                continue
+            for name in names:
+                if not name.endswith(".app"):
+                    continue
+                label = name[:-4]
+                full = os.path.join(base, name)
+                facets = ["present:true", "kind:app",
+                          "path:" + full, "name:" + label]
+                # What the app declares about itself, read from its own
+                # Info.plist. A declared document type is the vendor's
+                # claim, kept as the vendor's — it tells the planner
+                # which candidates are worth a first run without
+                # pretending the run already happened.
+                try:
+                    with open(os.path.join(full, "Contents", "Info.plist"),
+                              "rb") as fh:
+                        info = plistlib.load(fh)
+                    seen = set()
+                    for doc in (info.get("CFBundleDocumentTypes") or [])[:12]:
+                        for ext in (doc.get("CFBundleTypeExtensions") or [])[:6]:
+                            e = str(ext).strip().lower()
+                            if e and e != "*" and e not in seen:
+                                seen.add(e)
+                                facets.append("declares:doctype:" + e)
+                    for url in (info.get("CFBundleURLTypes") or [])[:4]:
+                        for sch in (url.get("CFBundleURLSchemes") or [])[:3]:
+                            facets.append("declares:scheme:" + str(sch).lower())
+                except Exception:
+                    pass
+                store.add("app:" + label.casefold(), facets,
+                          source="survey:applications")
+                found += 1
+
+        clis = ["git", "node", "npm", "python3", "swift", "xcodebuild",
+                "code", "cargo", "docker", "ffmpeg", "curl", "brew",
+                "ollama", "lake", "lean"]
+        for extra in (extra_paths or "").split():
+            if extra and extra not in clis:
+                clis.append(extra)
+        for c in clis:
+            where = shutil.which(c)
+            if not where:
+                continue
+            store.add("cli:" + c,
+                      ["present:true", "kind:cli", "path:" + where,
+                       "name:" + c],
+                      source="survey:path")
+            found += 1
+
+        # A change in the machine is a change in what Vera can reach, so
+        # it opens gaps rather than passing silently. An arrival is an
+        # untried capability; a departure invalidates anything that was
+        # witnessed through it, which is the more urgent of the two
+        # because a stored procedure now points at nothing.
+        after = {c for c in store.crosses
+                 if c.startswith("app:") or c.startswith("cli:")}
+        opened = []
+        for core in sorted(after - before):
+            g = gap_graph.create(
+                "ASSET_ARRIVED", core, "machine:assets", "OPTIONAL",
+                acquisition_methods=["record_tool_witness"],
+                required_for=["SELECT_ACTION"])
+            opened.append({"gap": g.gap_id, "kind": "arrived", "asset": core})
+        for core in sorted(before - after):
+            g = gap_graph.create(
+                "ASSET_GONE", core, "machine:assets", "QUALITY",
+                required_for=["SELECT_ACTION"])
+            opened.append({"gap": g.gap_id, "kind": "gone", "asset": core})
+        if opened:
+            _save_gap_graph()
+
+        _save()
+        return json.dumps({
+            "verdict": "ANSWER", "recorded": found,
+            "gaps_opened": opened[:12],
+            "holds": "presence and the vendor's own declarations",
+            "note": "ability is not stored here; a run must witness it "
+                    "via record_tool_witness",
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    def record_tool_witness(tool: str, command: str, result: str,
+                            passed: bool = True, version: str = "") -> str:
+        """An external tool's run, kept as a witness — not as a log line.
+
+        This is what makes using another app different from launching
+        it. `npm test` passing is not Vera's opinion and not the model's
+        recollection: it is a run that happened, on this machine, with
+        an exit state, and it belongs in the store the same way a Lean
+        kernel run does. The facet is `verified:tool:<tool>[:<version>]`
+        and it names the command, so a later answer can cite WHICH run
+        vouched for it and a reader can re-run the same line.
+
+        A failing run is recorded too, as `refuted:tool:<tool>`. Keeping
+        only the passes would make the store a highlight reel — the
+        exact shape of dishonesty this engine exists to refuse — and the
+        failures are the more useful half, because they are what a gap
+        is made of.
+
+        Nothing here is a claim about the WORLD. It is a claim about a
+        run: the tool said this, at this time, on this command. Whether
+        the tool was right is the tool's business, and the citation
+        makes that visible instead of laundering it into fact."""
+        t = (tool or "").strip().casefold()
+        if not t:
+            return json.dumps({"verdict": "UNKNOWN_NO_TOOL"})
+        core = "run:" + t + ":" + (command or "").strip()[:80]
+        mark = ("verified:tool:" + t + (":" + version if version else "")
+                if passed else "refuted:tool:" + t)
+        facets = [mark, "command:" + (command or "").strip()[:120]]
+        for line in (result or "").splitlines()[:6]:
+            line = line.strip()
+            if line:
+                facets.append("said:" + line[:80])
+        store.add(core, facets, source="tool:" + t)
+        _save()
+        return json.dumps({"verdict": "ANSWER", "core": core,
+                           "witness": mark,
+                           "kept": len(facets)}, ensure_ascii=False)
+
+    @mcp.tool()
+    def memory_ledger(limit: int = 12) -> str:
+        """The memory as a LEDGER a person can read and act on.
+
+        `recall` answers about one core; this lists what is actually
+        held, newest-heaviest first, so a reader can see memory
+        accumulate and act on individual entries. Each row carries its
+        review state, because the state is the point: a fact the store
+        ingested and a fact a person has checked are different kinds of
+        thing, and merging them would lose the only distinction that
+        makes an approval mean anything.
+
+            証言           ingested, not yet reviewed by a person
+            ユーザーの校正  a person approved or edited it — the label
+                           that rides with it when an agent reads it
+
+        Review state lives in a sidecar keyed by core, never inside the
+        cross itself: a person's approval is not testimony the corpus
+        gave, and writing it into the facets would forge exactly the
+        kind of evidence this engine exists to refuse."""
+        rows = []
+        marks = _review_marks()
+        for core in list(store.crosses)[-max(1, limit) * 3:]:
+            facets = store.top_facets(core, 4)
+            if not facets:
+                continue
+            rows.append({
+                "core": core,
+                "facets": [f for f, _ in facets] if facets and
+                          isinstance(facets[0], (list, tuple)) else facets,
+                "state": marks.get(core, "証言"),
+            })
+        rows.reverse()
+        return json.dumps({"verdict": "ANSWER", "held": len(store.crosses),
+                           "rows": rows[:limit]}, ensure_ascii=False)
+
+    @mcp.tool()
+    def memory_review(core: str, state: str = "ユーザーの校正",
+                      text: str = "") -> str:
+        """Mark a memory as reviewed by a person, or edit it.
+
+        `state` is the label an agent will see. `text` (optional) adds
+        the corrected sentence as new testimony under the same core —
+        an edit is an addition with provenance, never a silent rewrite
+        of what was already stored, because a memory that changes with
+        no trace is the same shape of lie as an invisible ingest."""
+        key = core.casefold().strip()
+        if not key:
+            return json.dumps({"verdict": "UNKNOWN_NO_CORE"})
+        marks = _review_marks()
+        marks[key] = state
+        _write_review_marks(marks)
+        added = None
+        if text.strip():
+            added = store.ingest_sentence(text.strip())
+            _save()
+        return json.dumps({"verdict": "ANSWER", "core": key,
+                           "state": state, "added": added},
+                          ensure_ascii=False)
 
     @mcp.tool()
     def record_code_change(file_path: str, description: str) -> str:
@@ -437,6 +831,7 @@ def serve(store_path: str) -> int:
         return json.dumps(_collapse(_conversation, reply), ensure_ascii=False)
 
     _vera_cache: Dict[str, Any] = {}
+    _math_cache: Dict[str, Any] = {}
 
     def _vera() -> Any:
         """The full stack, loaded the way the 3D viewer loads it.
@@ -448,11 +843,18 @@ def serve(store_path: str) -> int:
         MCP tools and the picture cannot answer from different builds.
         """
         if "v" not in _vera_cache:
+            import os
+
             from .export_sqlite import vera as load_published
             from .vera import load as load_vera
 
             root = Path.home() / "Projects" / "vera-corpus"
-            db = root / "build" / "vera.db"
+            # VERA_PUBLISHED_DB lets a host pin WHICH stamped release
+            # answers (the IDE's model picker sets it and restarts this
+            # process). Sidecars are discovered beside the db by
+            # filename, so a version directory carries its whole world.
+            env_db = os.environ.get("VERA_PUBLISHED_DB", "")
+            db = Path(env_db) if env_db else root / "build" / "vera.db"
             _vera_cache["v"] = (load_published(db) if db.exists()
                                 else load_vera(root))
         return _vera_cache["v"]
@@ -568,6 +970,155 @@ def serve(store_path: str) -> int:
                 ensure_ascii=False)
         out = _summarize(store, subjects.split(), vocab=v.writer.vocab,
                          edges=v.edges, limit=limit)
+        # Same connective skeleton the diff door gained; same tolerance.
+        try:
+            from .connective_render import render_summary as _render
+            rendered = _render(out)
+            if rendered:
+                out["rendered"] = rendered
+        except Exception:
+            pass
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_diff(a: str, b: str) -> str:
+        """Structural difference of two subjects — shared / A-only / B-only.
+
+        The six-layer diff (type, predicate profile, kin family, shelf
+        mass, edge direction, definition tokens) with the two registered
+        guards: "A-only" always means "attested for A, no attestation
+        for B" — never a negative claim about B (that would be an
+        unlicensed polarity assertion); and every layer that cannot meet
+        the minimum profile on both sides abstains, with the imbalance
+        reported in `coverage`. This door loads no shelf (912MB stays on
+        disk), so the two shelf layers abstain here by design — the
+        coverage field says so rather than hiding it. Hand-off only;
+        nothing here votes."""
+        from . import meaning_assets as ma
+        from .structural_diff import diff as _diff
+
+        out = _diff(a, b, profiles=ma.profiles(), aliases=ma.aliases(),
+                    lattice=ma.lattice(), shelf=ma.empty_shelf(),
+                    senses=ma.senses())
+        out["extractor"] = ma.extractor()
+        # Connective render: skeleton sentences over the three bundles,
+        # every connective licensed by the diff's own structure (243/243
+        # placements carried a reason in the acceptance run). Rendering
+        # failure never breaks the diff — the bundles are the substance.
+        try:
+            from .connective_render import render_diff as _render
+            rendered = _render(out)
+            if rendered:
+                out["rendered"] = rendered
+        except Exception:
+            pass
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_intent(text: str) -> str:
+        """Frame an instruction structurally, or refuse with UNKNOWN_INTENT.
+
+        The measured share of instruction understanding: 47 verb lemmas
+        by 28 operations plus case-particle arms (「geminiを開いて」 →
+        開く(対象=gemini)). Anything outside the table refuses — the
+        refusal is the signal that the LLM should take the utterance,
+        so a caller wires this as: frame parsed -> verify/act on typed
+        intent; UNKNOWN_INTENT -> hand the text to the model. Never a
+        guessed intent."""
+        from .intent_frames import parse as _parse
+
+        return json.dumps(_parse(text), ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_math(name: str) -> str:
+        """Is this theorem verified? The mathlib witness store answers.
+
+        75,919 of mathlib's 77,242 theorems carry a
+        `verified:lean4:4.34.0-rc1` facet earned by an actual kernel
+        run — the hardest witness layer in the project. Lookup is by
+        (case-folded) declaration name or its trailing segments
+        (`semiconj` finds `addconstmapclass.semiconj` when unique;
+        ambiguity lists the candidates instead of choosing). A name the
+        store holds without the facet is UNVERIFIED_IN_STORE — present
+        but no kernel run vouches here; a name it does not hold is
+        UNKNOWN_NOT_IN_MATHLIB_STORE. This door answers about the
+        STORE, never about mathematics: absence of a witness is not a
+        claim of falsehood, and the sorry trap
+        (lean_witness_forks) is why the wording stays this careful."""
+        import json as _json
+        from pathlib import Path as _Path
+
+        if "mathlib" not in _math_cache:
+            p = (_Path.home() / "Projects" / "vera-corpus" / "build"
+                 / "mathlib_store.json")
+            if not p.is_file():
+                return _json.dumps(
+                    {"verdict": "UNKNOWN_NOT_LOADED",
+                     "note": "mathlib_store.json not present beside the "
+                             "published build"}, ensure_ascii=False)
+            d = _json.loads(p.read_text(encoding="utf-8"))
+            _math_cache["mathlib"] = d["crosses"]
+        crosses = _math_cache["mathlib"]
+
+        q = name.strip().casefold()
+        hit = crosses.get(q)
+        matches = [q] if hit is not None else [
+            k for k in crosses
+            if k == q or k.endswith("." + q)]
+        if not matches:
+            return _json.dumps(
+                {"verdict": "UNKNOWN_NOT_IN_MATHLIB_STORE", "name": name,
+                 "note": "no declaration by this name or trailing "
+                         "segment; absence of a witness is not a claim "
+                         "of falsehood"}, ensure_ascii=False)
+        if len(matches) > 12:
+            return _json.dumps(
+                {"verdict": "UNKNOWN_AMBIGUOUS_NAME", "name": name,
+                 "candidates": len(matches),
+                 "sample": sorted(matches)[:12]}, ensure_ascii=False)
+        out = []
+        for m in sorted(matches):
+            facets = crosses[m]
+            wit = sorted(f for f in facets if str(f).startswith("verified:"))
+            out.append({
+                "declaration": m,
+                "verdict": "VERIFIED" if wit else "UNVERIFIED_IN_STORE",
+                "witness": wit or None,
+            })
+        return _json.dumps({"verdict": "ANSWER", "n": len(out),
+                            "declarations": out}, ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_explain(term: str) -> str:
+        """Meaning descent: the term's units grounded in definition
+        sentences, or a typed abstention. 電荷密度 → 電荷 (defined:
+        its lead sentence, source named) + 密度 (likewise), every split
+        licensed by the lattice (long window included), bare one-char
+        heads refused at the split, ties abstained. The output is
+        constructed — EXPLAINED_BY_UNIT_DEFS, never testimony about the
+        term itself — and says so. First call loads the 250MB definition
+        sidecar; it stays loaded."""
+        from . import meaning_assets as ma
+        from .meaning_descent import descend as _descend
+
+        out = _descend(term, lattice=ma.lattice(), defs=ma.defs(),
+                       aliases=ma.aliases())
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_typo(term: str) -> str:
+        """Typed hand-off for an out-of-vocabulary term. Never rewrites.
+
+        Recovery@5 84.8% with 0/500 false fires on in-vocabulary terms
+        (typo_recovery's docstring holds the protocol). The answer is
+        candidates with their evidence (shared positional units, edit
+        distance), or IN_VOCABULARY, or UNKNOWN_NO_CANDIDATE — the
+        caller decides; silent correction is the one thing this door
+        can never do."""
+        from . import meaning_assets as ma
+        from .typo_recovery import recover as _recover
+
+        out = _recover(term, lattice=ma.lattice(), vocab=ma.vocab())
         return json.dumps(out, ensure_ascii=False, default=str)
 
     @mcp.tool()

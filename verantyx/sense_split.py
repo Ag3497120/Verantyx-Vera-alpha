@@ -333,6 +333,36 @@ def senses_of(
     return sorted(by_core.values(), key=_sense_sort_key)
 
 
+def dab_base_target(
+    surface: str,
+    aliases: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """When a surface hops to 「X (曖昧さ回避)」, what bare X points at.
+
+    みかん hops to ミカン (曖昧さ回避) and stops — the one-hop rule is
+    right to stop, because a disambiguation page is not a sense. But
+    Wikipedia's own title convention says the page is ABOUT the bare
+    surface, and bare ミカン redirects to ウンシュウミカン, an article
+    with a profile. Reporting that is not guessing the asker's meaning:
+    it is naming one more candidate the encyclopedia itself wrote down,
+    returned BESIDE the parenthetical senses and never substituted for
+    them. Nil when the base has no redirect, or redirects to another
+    disambiguation page (a chain this refuses to walk).
+    """
+    a = aliases or {}
+    hop = a.get((surface or "").strip(), "")
+    parsed = parse_parenthetical(hop)
+    if not parsed or parsed[1] != DAB_TAG:
+        return None
+    target = a.get(parsed[0])
+    if not target or target == hop:
+        return None
+    again = parse_parenthetical(target)
+    if again and again[1] == DAB_TAG:
+        return None
+    return target
+
+
 def is_disambiguation_title(
     title: str,
     aliases: Optional[Dict[str, str]] = None,
@@ -439,12 +469,16 @@ def resolve(
             }
 
     if is_disambiguation_title(surface, aliases):
-        return {
+        out = {
             "verdict": AMBIGUOUS_SENSE,
             "senses": [_named(it) for it in items] or [
                 {"core": aliases.get(surface, surface), "domain_tag": DAB_TAG}
             ],
         }
+        base = dab_base_target(surface, aliases)
+        if base:
+            out["base_target"] = base
+        return out
 
     prim = primary_sense(surface, items, aliases)
     if prim is None:

@@ -77,6 +77,55 @@ Outcomes, per item × route:
         塩はしょっぱいですか  浅層棚  SHELF_LEAD  WRONG
             塩（しお、）は、塩化ナトリウムを主な成分とし、海水の乾燥・
             岩塩の採掘によって生産される物質。
+
+## Measured — federation repair 2026-08-14, same bank, federation route only
+
+    bank predates first route            yes (untouched)
+    n                                    50
+    no ConceptNet / no LLM
+    ingest rule                          ja_chosen_core: named-compound
+                                         last-run / first-run prefix /
+                                         kata-sense paren → hole
+    store repair                         rule-derived provenance filter
+                                         on federation.pkl + re-export
+                                         vera.db; holes not refilled
+    ask rule                             yes_no with no content-run
+                                         property → NOT_ATTESTED
+                                         (does not dump the census)
+
+    route × outcome  (連邦 only; 浅層棚 / 意味降下 not re-run)
+                    ANSWERED_CORRECT  TYPED_REFUSAL  WRONG
+        連邦                       9             41      0
+
+    per-category
+        連邦      物性  5/15/0   生活  2/13/0   因果  2/13/0
+        (correct / refusal / wrong)
+
+    pass line federation WRONG = 0          yes
+    the two prior WRONGs
+        塩はしょっぱいですか   NOT_ATTESTED  TYPED_REFUSAL
+        レモンは酸っぱいですか NOT_ATTESTED  TYPED_REFUSAL
+    がいしょくほう / クロイツ / タウブ / 炭酸ガス  gone from the answers
+
+    known-good still answering (spot)
+        火は熱いですか  ATTESTED  火 熱
+        鉄は重いですか  ATTESTED  鉄 重
+        正当防衛とは    SEEDED    正当防衛 行為 防衛 成立 他人
+        時効とは        SEEDED    時効 援用 中断 成立 完成
+    針 / 紙 / 靴 were prior corrects whose axis hit sat on a stolen-run
+    claim (針・棘, タイムズ紙, 靴・履物). The hole is a refusal.
+
+    repair ledger  federation_repair_ledger_2026-08-14.jsonl
+        slots removed                    103599
+        unique (core, facet) dropped     98987
+        by pattern
+            first_run_compound_prefix         43655
+            content_paren_before_ha           30714
+            core_changed                      15244
+            topic_name_compound_last_run       8995
+            topic_particle_retargeted          4716
+            no_identifiable_topic               275
+        vera.db facets  1472829 → 1369230
 """
 from __future__ import annotations
 

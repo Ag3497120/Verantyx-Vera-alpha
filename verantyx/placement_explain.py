@@ -26,7 +26,7 @@ from typing import Any, Dict, List
 from . import ja_grammar
 from .arm_schema import classify_arm
 from .cross_store import CrossStore
-from .lang import _JA_TOPIC, detect, ja_content_runs
+from .lang import detect, ja_chosen_core, ja_content_runs, ja_topic_match
 from .polarity import detect as detect_en
 from .polarity import detect_ja, subject_is_core
 
@@ -42,13 +42,16 @@ def explain(sentence: str) -> Dict[str, Any]:
 
     if lang in ("ja", "zh"):
         runs = ja_content_runs(s)
-        core, rule = (runs[0], "first_content_run") if runs else (None, "none")
-        m = _JA_TOPIC.match(s)
-        if m:
-            topic_runs = ja_content_runs(m.group(1))
-            if topic_runs:
-                core = topic_runs[-1]
-                rule = "head_of_topic_phrase"
+        core = ja_chosen_core(s)
+        hit = ja_topic_match(s)
+        if not runs:
+            rule = "none"
+        elif core is None:
+            rule = "no_identifiable_topic"
+        elif hit and not hit[1]:
+            rule = "head_of_topic_phrase"
+        else:
+            rule = "first_content_run"
         out.update({
             "core": core,
             "core_rule": rule,
@@ -57,9 +60,11 @@ def explain(sentence: str) -> Dict[str, Any]:
                     "は/が の前の句の最後の名詞（主辞後置）。「本町の避難所は」なら 避難所。",
                 "first_content_run":
                     "主題標識が無いので最初の内容語。係り先の判断材料が文中に無い。",
+                "no_identifiable_topic":
+                    "主題が複合語の一部にしか切れない、または括弧内の語義なので格納しない。",
                 "none": "内容語が見つからない。この文は格納されない。",
             }[rule],
-            "facets": [r for r in runs if r != core],
+            "facets": [r for r in runs if r and r != core],
         })
         if lang == "zh":
             out["note"] = ("中国語判定: 分割のみ適用、日本語の極性語彙は適用されない"

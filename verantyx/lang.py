@@ -276,8 +276,188 @@ def ja_content_runs(text: str) -> List[str]:
 
 #: The topic phrase: everything before the first は/が that follows a content
 #: character. Used to pick the head noun as the core.
+#:
+#: Kept as a regex for callers that only need the old shape. Ingest uses
+#: `ja_topic_match` instead: the regex is blind to parentheses — `)` before
+#: は misses `ウマ (麻雀)は`, and が inside `（塩が…）` steals the topic —
+#: and it cannot tell a named compound (クロイツ-タウブ塩) from a の-headed
+#: phrase (本町の避難所).
 _JA_TOPIC = re.compile(
     r"^(.*?[㐀-䶿一-鿿ァ-ヺヽヾヿー0-9０-９][いなれめきちりつけ]?)[はが]")
+
+_TOPIC_MARK = frozenset("はが")
+_HA_PREFIX = frozenset("でにとをへも")
+_OKU_TOPIC = frozenset("いなれめきちりつけ")
+_PAREN_OPEN = frozenset("（(")
+_PAREN_CLOSE = frozenset("）)")
+_CONTENT_CHAR = re.compile(r"[㐀-䶿一-鿿ァ-ヺヽヾヿー0-9０-９]")
+_KATA_RUN = re.compile(r"^[ァ-ヺヽヾヿー]+$")
+_LATIN_RUN = re.compile(r"^[A-Za-zＡ-Ｚａ-ｚ][A-Za-z0-9Ａ-Ｚａ-ｚ０-９.+#_-]*$")
+_SHORT_KANJI = re.compile(r"^[㐀-䶿一-鿿]{1,2}$")
+_COMPOUND_JOIN = re.compile(r"^[-‐−–—・·]*$")
+
+
+def _paren_depth_at(text: str, i: int) -> int:
+    depth = 0
+    for ch in text[:i]:
+        if ch in _PAREN_OPEN:
+            depth += 1
+        elif ch in _PAREN_CLOSE and depth:
+            depth -= 1
+    return depth
+
+
+def _skip_trailing_parens(text: str, j: int) -> Tuple[int, str]:
+    """Walk left from ``j`` over spaces and trailing parentheticals.
+
+    Returns the index of the noun end and the concatenated interiors
+    (so a caller can ask whether the paren held a content run).
+    """
+    interiors: List[str] = []
+    while j > 0 and text[j - 1] in " 　":
+        j -= 1
+    while j > 0 and text[j - 1] in _PAREN_CLOSE:
+        close = text[j - 1]
+        open_ch = "（" if close == "）" else "("
+        depth = 1
+        k = j - 2
+        while k >= 0 and depth:
+            if text[k] == close:
+                depth += 1
+            elif text[k] == open_ch:
+                depth -= 1
+            k -= 1
+        if depth != 0:
+            break
+        interiors.append(text[k + 2:j - 1])
+        j = k + 1
+        while j > 0 and text[j - 1] in " 　":
+            j -= 1
+    return j, "".join(reversed(interiors))
+
+
+def _is_topic_particle(text: str, i: int) -> bool:
+    """は/が at ``i`` is a topic marker, not では/には and not inside parens.
+
+    A reading or sense parenthetical may sit between the noun and the
+    particle: ``塩（しお）は`` and ``ウマ (麻雀)は`` both count. The
+    previous regex required a content character immediately before は/が,
+    so a closing ``)`` made the whole match fail and ingest fell through
+    to the first-run fallback.
+    """
+    if i < 1 or text[i] not in _TOPIC_MARK:
+        return False
+    if _paren_depth_at(text, i):
+        return False
+    if text[i] == "は" and text[i - 1] in _HA_PREFIX:
+        return False
+    j, _interiors = _skip_trailing_parens(text, i)
+    if j > 1 and text[j - 1] in _OKU_TOPIC and _CONTENT_CHAR.match(text[j - 2]):
+        return True
+    return bool(j > 0 and _CONTENT_CHAR.match(text[j - 1]))
+
+
+def ja_topic_match(text: str) -> Optional[Tuple[str, bool]]:
+    """(topic phrase, content-bearing paren before the particle) or None."""
+    t = text or ""
+    for i, ch in enumerate(t):
+        if ch in _TOPIC_MARK and _is_topic_particle(t, i):
+            j, interiors = _skip_trailing_parens(t, i)
+            phrase = t[:j].rstrip(" 　")
+            return phrase, bool(ja_content_runs(interiors))
+    return None
+
+
+def _adjacent_in(text: str, left: str, right: str) -> bool:
+    """``right`` follows ``left`` immediately or across a hyphen/nakaguro."""
+    i = text.find(left)
+    if i < 0:
+        return False
+    j = i + len(left)
+    k = text.find(right, j)
+    if k < 0:
+        return False
+    gap = text[j:k]
+    return gap == "" or bool(_COMPOUND_JOIN.match(gap))
+
+
+def _is_split_name_compound(phrase: str, runs: List[str]) -> bool:
+    """Katakana/latin + short kanji tail, adjacent — クロイツ-タウブ塩.
+
+    ``ダイヤルされた番号`` has the same two runs but された sits between
+    them; that is a verb modifier plus a head, not a named compound.
+    """
+    if len(runs) < 2:
+        return False
+    tail, prev = runs[-1], runs[-2]
+    if not (_SHORT_KANJI.match(tail) and (
+            _KATA_RUN.match(prev) or _LATIN_RUN.match(prev))):
+        return False
+    return _adjacent_in(phrase, prev, tail)
+
+
+def _opening_is_split_compound(text: str, runs: List[str]) -> bool:
+    """First two content runs are one noun (レモン果汁), not a new field.
+
+    A spaced dash (``キレートレモン - レモン果汁``) is a field break, not
+    a compound join.
+    """
+    if len(runs) < 2:
+        return False
+    i = text.find(runs[0])
+    if i < 0:
+        return False
+    j = i + len(runs[0])
+    k = text.find(runs[1], j)
+    if k < 0:
+        return False
+    gap = text[j:k]
+    return gap == "" or bool(_COMPOUND_JOIN.match(gap))
+
+
+def ja_chosen_core(text: str) -> Optional[str]:
+    """The core ``ja_ingest_sentence`` would file under, or None.
+
+    None is a typed hole: the sentence has no identifiable single-noun
+    topic, and filing it under a run stolen from a compound would glue
+    an unrelated predicate onto that run. The hole stays a hole —
+    this function does not invent a replacement core.
+    """
+    runs = ja_content_runs(text)
+    if not runs:
+        return None
+    core = runs[0]
+    topic_runs: List[str] = []
+    hit = ja_topic_match(text or "")
+    if hit:
+        phrase, content_paren = hit
+        topic_runs = ja_content_runs(phrase)
+        if content_paren:
+            # ウマ (麻雀)は — a named surface plus a domain tag. A
+            # qualifier paren on a kanji topic (制度（無料）が) is not
+            # a sense: keep the head. The hole is only for a katakana
+            # or latin surface, where the paren names another sense.
+            last = topic_runs[-1] if topic_runs else ""
+            if last and (_KATA_RUN.match(last) or _LATIN_RUN.match(last)):
+                return None
+        if topic_runs:
+            if "の" not in phrase and _is_split_name_compound(phrase, topic_runs):
+                return None
+            core = topic_runs[-1]
+    elif _opening_is_split_compound(text or "", runs):
+        return None
+
+    if _is_polar_ja(core):
+        from .polarity import subject_of
+        found = subject_of(text, core, "ja")
+        if found and not _is_polar_ja(found):
+            return found
+        rest = ([r for r in topic_runs if not _is_polar_ja(r)]
+                or [r for r in runs if not _is_polar_ja(r)])
+        if not rest:
+            return None
+        return rest[-1]
+    return core
 
 
 _POLAR_JA: Optional[frozenset] = None
@@ -325,6 +505,11 @@ def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:
 
     Sentences without a topic marker keep the first-run rule, stated rather
     than hidden: there is no head to find without a boundary to find it in.
+    Two measured exceptions refuse rather than steal a run from a compound:
+    a katakana/latin name with a short kanji tail (クロイツ-タウブ塩 → 塩)
+    and a first-run prefix glued to the next run (レモン果汁 → レモン).
+    A content-bearing parenthetical before は/が (ウマ (麻雀)は) is the
+    same hole — the sentence is about a sense, not the bare surface.
 
     A polar term is never the core, because a core is a topic and a polar term
     is a predicate. This is not tidiness — it is what keeps the subject gate
@@ -339,37 +524,9 @@ def ja_ingest_sentence(store: CrossStore, text: str) -> Optional[str]:
     runs = ja_content_runs(text)
     if not runs:
         return None
-    core = runs[0]
-    topic_runs: List[str] = []
-    m = _JA_TOPIC.match(text or "")
-    if m:
-        topic_runs = ja_content_runs(m.group(1))
-        if topic_runs:
-            core = topic_runs[-1]
-
-    if _is_polar_ja(core):
-        # Ask the polarity module who the subject is — the same question it
-        # asks before placing a pole, so the index key and the gate agree.
-        from .polarity import subject_of
-        found = subject_of(text, core, "ja")
-        if found and not _is_polar_ja(found):
-            core = found
-        else:
-            # The fallback used `topic_runs or runs`, so when the topic phrase
-            # was ENTIRELY the polar term — 「断水が発生していましたが、復旧しま
-            # した」, whose topic phrase is just 断水 — the list came back
-            # empty and the core fell back to runs[0], which is that same
-            # polar term. The demotion undid itself.
-            #
-            # Widen to the whole sentence, and if nothing there is a topic
-            # either, store nothing. A sentence with no identifiable subject
-            # is better left out than filed under the word for its state,
-            # where every other mention of that state will collide with it.
-            rest = ([r for r in topic_runs if not _is_polar_ja(r)]
-                    or [r for r in runs if not _is_polar_ja(r)])
-            if not rest:
-                return None
-            core = rest[-1]
+    core = ja_chosen_core(text)
+    if core is None:
+        return None
 
     facets = [r for r in runs if r != core]
     # `source=` is what CrossStore records as provenance, and the English
@@ -518,4 +675,54 @@ def is_question(text: str, lang: str = "auto") -> bool:
         "do", "does", "did", "can", "could", "should", "would", "solve",
         "tell", "give", "show", "explain", "describe", "list", "write",
         "help", "please", "find", "search", "make", "let",
+    }
+
+
+def regression() -> Dict[str, Any]:
+    """The topic-core rule: compounds and parentheticals do not steal a run."""
+    from .cross_store import CrossStore
+
+    cases = [
+        ("クロイツ-タウブ塩が代表例。", None),
+        ("レモン果汁20%使用し、クエン酸を機能性表示成分として配合した"
+         "155ml瓶入り（炭酸ガス入り）。", None),
+        ("ウマ (麻雀)は、麻雀の牌の一つである。", None),
+        ("本町の避難所は開設されました。", "避難所"),
+        ("塩（しお）は、塩化ナトリウムを主な成分とする。", "塩"),
+        ("水洗トイレが使用可能になった", "水洗トイレ"),
+        ("キレートレモン - レモン果汁20%を使用した155ml瓶入り（炭酸ガス入り）。",
+         "キレートレモン"),
+        ("断水。", None),
+        ("九州自動車道、南九州自動車道など通行止めが発生しております。",
+         "九州自動車道"),
+        ("レモンを22.5°のくし切りにカットし、急速冷凍したカット済み冷凍レモン。",
+         "レモン"),
+        ("もしダイヤルされた番号が使われていない。", "番号"),
+        ("火災報知用電話制度（無料）が始まった。", "火災報知用電話制度"),
+    ]
+    rows = []
+    ok = True
+    for sentence, want in cases:
+        got = ja_ingest_sentence(CrossStore(), sentence)
+        hit = got == want
+        ok = ok and hit
+        rows.append({"sentence": sentence, "want": want, "got": got,
+                     "pass": hit})
+    from .cross_store import CrossStore as _CS
+    from .stacked import yes_no
+    toy = _CS()
+    toy.crosses["塩"] = {"アンモニア": 1, "イオン": 1}
+    yn = yes_no(toy, "塩はしょっぱいですか")
+    yn_ok = yn is not None and str(yn.get("verdict")) == "NOT_ATTESTED" and not yn.get("text")
+    ok = ok and yn_ok
+    rows.append({"sentence": "塩はしょっぱいですか", "want": "NOT_ATTESTED",
+                 "got": None if yn is None else yn.get("verdict"),
+                 "pass": yn_ok})
+    return {
+        "experiment": "lang",
+        "fork": "JA_TOPIC_COMPOUND_HOLE",
+        "pass": bool(ok),
+        "result": {"n": len(rows),
+                   "n_pass": sum(1 for r in rows if r["pass"]),
+                   "rows": rows},
     }

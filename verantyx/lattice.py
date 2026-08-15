@@ -58,6 +58,20 @@ coverage (140 -> 117) and precision (0.043 -> 0.034), the reverse of
 what the bare-suffix lesson suggested; a single character relates
 weakly but its FAMILY aggregated still points at the right
 neighbourhood.
+
+## The long window (added after the eight-gap wave)
+
+Lengths 6..12 were not lattice nodes at all — 10,258 attested words
+(テレビドラマ, 滋賀県警本部長) invisible to descent. They enter under
+two rules that replace positional patterns: every cut position is
+proposed, and a cut survives only when BOTH sides are attested words,
+never a single character. Measured on the same vocabulary: 4,970 of
+10,258 long words carry a licensed split (テレビ|ドラマ,
+滋賀県警|本部長); the 150 held-out prediction is untouched (covers 135,
+recall 0.0344 vs 0.0351 without the window, same repaired store —
+single-item noise, and the held-out terms are all 3..5 chars). The
+numbers above this section predate the federation repair; the protocol
+script reproduces both eras.
 """
 from __future__ import annotations
 
@@ -69,6 +83,20 @@ from .granularity import SPLITS
 #: Word lengths the lattice can split. SPLITS is the measured inventory;
 #: longer strings pass through unsplit rather than guessed at.
 _LENGTHS = tuple(sorted(SPLITS))
+
+#: The long window (6..12). Long compounds get no positional patterns —
+#: a pattern at length 6 would propose cuts no corpus attested, and the
+#: federation repair (4ea0b5b) just removed 103,599 facets born from
+#: stealing single runs off long compounds. So two rules replace the
+#: patterns: a cut is proposed at every position, and it survives only
+#: if BOTH sides are attested words; and no side may be a single
+#: character. タブレットコンピュータ splits where the vocabulary itself
+#: splits (タブレット|コンピュータ) or not at all.
+_LONG_MIN, _LONG_MAX = 6, 12
+
+
+def _long_cuts(n: int) -> Tuple[Tuple[int, int], ...]:
+    return tuple((a, n - a) for a in range(2, n - 1))
 
 
 @dataclass
@@ -88,14 +116,26 @@ def build(words: Any) -> Lattice:
     """The lattice over attested words only. ``words`` is any container
     supporting membership-free iteration (a Vocabulary's keys included)."""
     lat = Lattice()
+    long_words: List[str] = []
     for w in words:
-        if not (2 <= len(w) <= max(_LENGTHS)):
+        if not (2 <= len(w) <= _LONG_MAX):
             continue
         lat.words.add(w)
+        if len(w) > max(_LENGTHS):
+            long_words.append(w)
+            continue
         for a, b in SPLITS.get(len(w), ()):
             left, right = w[:a], w[a:]
             lat.up.setdefault((left, "L"), set()).add(w)
             lat.up.setdefault((right, "R"), set()).add(w)
+    # Second pass: long words index only the cuts the vocabulary licenses
+    # (both sides attested words) — see the long-window note above.
+    for w in long_words:
+        for a, b in _long_cuts(len(w)):
+            left, right = w[:a], w[a:]
+            if left in lat.words and right in lat.words:
+                lat.up.setdefault((left, "L"), set()).add(w)
+                lat.up.setdefault((right, "R"), set()).add(w)
     lat.atoms = {u for (u, _pos) in lat.up if len(u) == 1}
     return lat
 
@@ -103,11 +143,20 @@ def build(words: Any) -> Lattice:
 def splits_of(lat: Lattice, term: str) -> List[Tuple[str, str]]:
     """Splits whose BOTH halves are lattice nodes (word or atom)."""
     out: List[Tuple[str, str]] = []
-    for a, b in SPLITS.get(len(term), ()):
-        left, right = term[:a], term[a:]
-        if ((left in lat.words or left in lat.atoms)
-                and (right in lat.words or right in lat.atoms)):
-            out.append((left, right))
+    n = len(term)
+    if n in SPLITS:
+        for a, b in SPLITS[n]:
+            left, right = term[:a], term[a:]
+            if ((left in lat.words or left in lat.atoms)
+                    and (right in lat.words or right in lat.atoms)):
+                out.append((left, right))
+    elif _LONG_MIN <= n <= _LONG_MAX:
+        # Long window: words only, no atoms — a single character stolen
+        # off a long compound is the repaired ingest disease.
+        for a, b in _long_cuts(n):
+            left, right = term[:a], term[a:]
+            if left in lat.words and right in lat.words:
+                out.append((left, right))
     return out
 
 
@@ -143,7 +192,10 @@ def kin(lat: Lattice, term: str, *, min_unit: int = 1,
     measured trade is in the module docstring).
     """
     out: Dict[str, List[str]] = {}
-    for a, b in SPLITS.get(len(term), ()):
+    n = len(term)
+    cuts = SPLITS.get(n) or (
+        _long_cuts(n) if _LONG_MIN <= n <= _LONG_MAX else ())
+    for a, b in cuts:
         for unit, pos in ((term[:a], "L"), (term[a:], "R")):
             if len(unit) < min_unit:
                 continue
