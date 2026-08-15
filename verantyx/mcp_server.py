@@ -93,6 +93,21 @@ def serve(store_path: str) -> int:
     def _save_gap_graph() -> None:
         gap_graph.save(ggpath)
 
+    #: Human review marks, held BESIDE the store. A person's approval is
+    #: not testimony the corpus gave; writing it into the facets would
+    #: forge the kind of evidence this engine exists to refuse.
+    _review_path = Path(str(path) + ".review.json")
+
+    def _review_marks() -> Dict[str, str]:
+        try:
+            return json.loads(_review_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _write_review_marks(marks: Dict[str, str]) -> None:
+        _review_path.write_text(
+            json.dumps(marks, ensure_ascii=False, indent=1), encoding="utf-8")
+
     xopath = transfer_outcome_log_path(path)
     transfer_log = TransferOutcomeLog.load(xopath)
 
@@ -172,6 +187,66 @@ def serve(store_path: str) -> int:
             {"remembered": key, "facets": store.top_facets(key or "", 8)},
             ensure_ascii=False,
         )
+
+    @mcp.tool()
+    def memory_ledger(limit: int = 12) -> str:
+        """The memory as a LEDGER a person can read and act on.
+
+        `recall` answers about one core; this lists what is actually
+        held, newest-heaviest first, so a reader can see memory
+        accumulate and act on individual entries. Each row carries its
+        review state, because the state is the point: a fact the store
+        ingested and a fact a person has checked are different kinds of
+        thing, and merging them would lose the only distinction that
+        makes an approval mean anything.
+
+            証言           ingested, not yet reviewed by a person
+            ユーザーの校正  a person approved or edited it — the label
+                           that rides with it when an agent reads it
+
+        Review state lives in a sidecar keyed by core, never inside the
+        cross itself: a person's approval is not testimony the corpus
+        gave, and writing it into the facets would forge exactly the
+        kind of evidence this engine exists to refuse."""
+        rows = []
+        marks = _review_marks()
+        for core in list(store.crosses)[-max(1, limit) * 3:]:
+            facets = store.top_facets(core, 4)
+            if not facets:
+                continue
+            rows.append({
+                "core": core,
+                "facets": [f for f, _ in facets] if facets and
+                          isinstance(facets[0], (list, tuple)) else facets,
+                "state": marks.get(core, "証言"),
+            })
+        rows.reverse()
+        return json.dumps({"verdict": "ANSWER", "held": len(store.crosses),
+                           "rows": rows[:limit]}, ensure_ascii=False)
+
+    @mcp.tool()
+    def memory_review(core: str, state: str = "ユーザーの校正",
+                      text: str = "") -> str:
+        """Mark a memory as reviewed by a person, or edit it.
+
+        `state` is the label an agent will see. `text` (optional) adds
+        the corrected sentence as new testimony under the same core —
+        an edit is an addition with provenance, never a silent rewrite
+        of what was already stored, because a memory that changes with
+        no trace is the same shape of lie as an invisible ingest."""
+        key = core.casefold().strip()
+        if not key:
+            return json.dumps({"verdict": "UNKNOWN_NO_CORE"})
+        marks = _review_marks()
+        marks[key] = state
+        _write_review_marks(marks)
+        added = None
+        if text.strip():
+            added = store.ingest_sentence(text.strip())
+            _save()
+        return json.dumps({"verdict": "ANSWER", "core": key,
+                           "state": state, "added": added},
+                          ensure_ascii=False)
 
     @mcp.tool()
     def record_code_change(file_path: str, description: str) -> str:
