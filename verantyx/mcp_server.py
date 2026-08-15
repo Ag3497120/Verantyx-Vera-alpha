@@ -189,6 +189,86 @@ def serve(store_path: str) -> int:
         )
 
     @mcp.tool()
+    def assets_for(need: str) -> str:
+        """Which assets on this machine could close a stated need.
+
+        The plan side of the gap loop. A GapNode says what is missing;
+        this says what is here that might close it, and it keeps the two
+        kinds of answer apart on purpose:
+
+            witnessed   a run already succeeded with this asset for this
+                        kind of work (verified:tool:…). Repeatable.
+            present     the asset exists. Nothing more is claimed — it
+                        has never been tried for this, and calling it a
+                        solution would be the model's belief about tools
+                        entering as fact.
+
+        The need→asset table is CLOSED, like the intent frames and the
+        summon table, and for the same reason: a fuzzy match here would
+        propose Blender for "run tests" with total confidence, and an
+        agent acting on that wastes the user's machine and their trust.
+        A need outside the table returns UNKNOWN_NEED_NOT_MAPPED with
+        the mapped needs listed — a refusal that says how to ask again.
+        """
+        table = {
+            "編集": ["code", "vscode", "visual studio code", "xcode", "vim",
+                     "nova", "sublime text"],
+            "実行": ["terminal", "iterm", "node", "npm", "python3", "swift",
+                     "cargo", "docker"],
+            "確認": ["safari", "google chrome", "firefox", "preview"],
+            "検索": ["safari", "google chrome"],
+            "版管理": ["git", "github desktop", "sourcetree", "fork"],
+            "設計": ["figma", "sketch", "blender"],
+            "文書": ["notes", "pages", "textedit", "typora"],
+            "表計算": ["numbers", "microsoft excel"],
+            "ビルド": ["xcodebuild", "swift", "npm", "cargo", "docker"],
+        }
+        aliases = {"edit": "編集", "run": "実行", "test": "実行",
+                   "browse": "確認", "verify": "確認", "build": "ビルド",
+                   "git": "版管理", "design": "設計", "write": "文書"}
+        key = (need or "").strip().casefold()
+        key = aliases.get(key, key)
+        wanted = table.get(key)
+        if wanted is None:
+            for k in table:
+                if k in (need or ""):
+                    wanted, key = table[k], k
+                    break
+        if wanted is None:
+            return json.dumps({"verdict": "UNKNOWN_NEED_NOT_MAPPED",
+                               "need": need, "mapped": sorted(table),
+                               "note": "closed table; a guess here would "
+                                       "send an agent at the wrong app"},
+                              ensure_ascii=False)
+
+        witnessed, present = [], []
+        for core, cross in store.crosses.items():
+            facets = set(cross)
+            if core.startswith("run:"):
+                tool = core.split(":", 2)[1] if ":" in core else ""
+                if tool in wanted and any(
+                        str(f).startswith("verified:tool:") for f in facets):
+                    witnessed.append({"asset": tool, "run": core})
+                continue
+            if not (core.startswith("app:") or core.startswith("cli:")):
+                continue
+            name = core.split(":", 1)[1]
+            if name in wanted and "present:true" in facets:
+                path = next((str(f)[5:] for f in facets
+                             if str(f).startswith("path:")), "")
+                present.append({"asset": name, "path": path})
+
+        return json.dumps({
+            "verdict": "ANSWER" if (witnessed or present)
+                       else "UNKNOWN_NO_ASSET",
+            "need": key,
+            "witnessed": witnessed[:6],
+            "present_untried": present[:8],
+            "note": "witnessed = a run vouched for it; present = it "
+                    "exists and nothing more is claimed",
+        }, ensure_ascii=False)
+
+    @mcp.tool()
     def survey_assets(extra_paths: str = "") -> str:
         """What this machine actually has — presence only, never ability.
 
