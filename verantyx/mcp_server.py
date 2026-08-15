@@ -296,6 +296,16 @@ def serve(store_path: str) -> int:
         import os
         import shutil
 
+        # Three tiers, and they are never collapsed:
+        #   present:   it exists — a fact anyone can check by looking
+        #   declares:  the app's OWN bundle says it opens these types.
+        #              Still not a run, but not a model's belief either:
+        #              the claim is the vendor's, recorded as theirs.
+        #   verified:  a run happened (record_tool_witness). Earned.
+        import plistlib
+
+        before = {c for c in store.crosses
+                  if c.startswith("app:") or c.startswith("cli:")}
         found = 0
         for base in ("/Applications", "/System/Applications",
                      str(Path.home() / "Applications")):
@@ -307,10 +317,31 @@ def serve(store_path: str) -> int:
                 if not name.endswith(".app"):
                     continue
                 label = name[:-4]
-                store.add("app:" + label.casefold(),
-                          ["present:true", "kind:app",
-                           "path:" + os.path.join(base, name),
-                           "name:" + label],
+                full = os.path.join(base, name)
+                facets = ["present:true", "kind:app",
+                          "path:" + full, "name:" + label]
+                # What the app declares about itself, read from its own
+                # Info.plist. A declared document type is the vendor's
+                # claim, kept as the vendor's — it tells the planner
+                # which candidates are worth a first run without
+                # pretending the run already happened.
+                try:
+                    with open(os.path.join(full, "Contents", "Info.plist"),
+                              "rb") as fh:
+                        info = plistlib.load(fh)
+                    seen = set()
+                    for doc in (info.get("CFBundleDocumentTypes") or [])[:12]:
+                        for ext in (doc.get("CFBundleTypeExtensions") or [])[:6]:
+                            e = str(ext).strip().lower()
+                            if e and e != "*" and e not in seen:
+                                seen.add(e)
+                                facets.append("declares:doctype:" + e)
+                    for url in (info.get("CFBundleURLTypes") or [])[:4]:
+                        for sch in (url.get("CFBundleURLSchemes") or [])[:3]:
+                            facets.append("declares:scheme:" + str(sch).lower())
+                except Exception:
+                    pass
+                store.add("app:" + label.casefold(), facets,
                           source="survey:applications")
                 found += 1
 
@@ -330,10 +361,33 @@ def serve(store_path: str) -> int:
                       source="survey:path")
             found += 1
 
+        # A change in the machine is a change in what Vera can reach, so
+        # it opens gaps rather than passing silently. An arrival is an
+        # untried capability; a departure invalidates anything that was
+        # witnessed through it, which is the more urgent of the two
+        # because a stored procedure now points at nothing.
+        after = {c for c in store.crosses
+                 if c.startswith("app:") or c.startswith("cli:")}
+        opened = []
+        for core in sorted(after - before):
+            g = gap_graph.create(
+                "ASSET_ARRIVED", core, "machine:assets", "OPTIONAL",
+                acquisition_methods=["record_tool_witness"],
+                required_for=["SELECT_ACTION"])
+            opened.append({"gap": g.gap_id, "kind": "arrived", "asset": core})
+        for core in sorted(before - after):
+            g = gap_graph.create(
+                "ASSET_GONE", core, "machine:assets", "QUALITY",
+                required_for=["SELECT_ACTION"])
+            opened.append({"gap": g.gap_id, "kind": "gone", "asset": core})
+        if opened:
+            _save_gap_graph()
+
         _save()
         return json.dumps({
             "verdict": "ANSWER", "recorded": found,
-            "holds": "presence only",
+            "gaps_opened": opened[:12],
+            "holds": "presence and the vendor's own declarations",
             "note": "ability is not stored here; a run must witness it "
                     "via record_tool_witness",
         }, ensure_ascii=False)
