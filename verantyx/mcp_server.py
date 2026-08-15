@@ -189,6 +189,67 @@ def serve(store_path: str) -> int:
         )
 
     @mcp.tool()
+    def record_asset_outcome(need: str, asset: str, worked: bool,
+                             gap_id: str = "", command: str = "",
+                             result: str = "") -> str:
+        """What happened when an asset was used for a need — and, when
+        it worked, the recipe that makes the second time cheap.
+
+        This is the half that turns exploring into learning. Without it
+        the loop finds the same asset by the same reasoning every time,
+        which is not autonomy, it is amnesia with good manners.
+
+        Three things are written, and only the first is unconditional:
+
+            outcome   `recipe:<need>` gains `tried:<asset>` either way.
+                      A failure is as much a fact as a success and is
+                      the thing that stops the next run repeating it.
+            witness   a successful run also lands via the tool-witness
+                      shape (`verified:tool:<asset>`), so `assets_for`
+                      returns it under `witnessed` from then on.
+            gap       a named gap moves to RESOLVED with the asset in
+                      its resolution, so the graph stops asking.
+
+        A failure never writes `chose:` — the recipe records that it was
+        tried and did not work, which is what a later planner needs, and
+        recording a defeat as a choice would make the store recommend
+        the thing that already broke.
+        """
+        n = (need or "").strip().casefold()
+        a = (asset or "").strip().casefold()
+        if not n or not a:
+            return json.dumps({"verdict": "UNKNOWN_NEED_OR_ASSET"})
+
+        facets = ["tried:" + a, ("worked:" + a) if worked else ("failed:" + a)]
+        if worked:
+            facets.append("chose:" + a)
+        store.add("recipe:" + n, facets, source="outcome:" + a)
+
+        if command.strip():
+            mark = ("verified:tool:" + a) if worked else ("refuted:tool:" + a)
+            wf = [mark, "command:" + command.strip()[:120], "for:" + n]
+            for line in (result or "").splitlines()[:4]:
+                if line.strip():
+                    wf.append("said:" + line.strip()[:80])
+            store.add("run:" + a + ":" + command.strip()[:80], wf,
+                      source="tool:" + a)
+        _save()
+
+        resolved = None
+        if worked and gap_id.strip():
+            try:
+                gap_graph.set_status(gap_id.strip(), "RESOLVED",
+                                     resolution="closed by " + a)
+                _save_gap_graph()
+                resolved = gap_id.strip()
+            except Exception:
+                resolved = None
+
+        return json.dumps({"verdict": "ANSWER", "need": n, "asset": a,
+                           "worked": worked, "gap_resolved": resolved,
+                           "recipe": "recipe:" + n}, ensure_ascii=False)
+
+    @mcp.tool()
     def assets_for(need: str) -> str:
         """Which assets on this machine could close a stated need.
 
@@ -241,6 +302,18 @@ def serve(store_path: str) -> int:
                                        "send an agent at the wrong app"},
                               ensure_ascii=False)
 
+        # The remembered choice comes first. If a run already closed a
+        # need with an asset, the second time is a lookup, not another
+        # exploration — and assets that were tried and failed are named
+        # so the planner does not walk into them again.
+        chosen, failed = [], []
+        for f in (store.crosses.get("recipe:" + key) or {}):
+            t = str(f)
+            if t.startswith("chose:"):
+                chosen.append(t[6:])
+            elif t.startswith("failed:"):
+                failed.append(t[7:])
+
         witnessed, present = [], []
         for core, cross in store.crosses.items():
             facets = set(cross)
@@ -259,9 +332,11 @@ def serve(store_path: str) -> int:
                 present.append({"asset": name, "path": path})
 
         return json.dumps({
-            "verdict": "ANSWER" if (witnessed or present)
+            "verdict": "ANSWER" if (chosen or witnessed or present)
                        else "UNKNOWN_NO_ASSET",
             "need": key,
+            "chosen": chosen[:3],
+            "failed_before": failed[:4],
             "witnessed": witnessed[:6],
             "present_untried": present[:8],
             "note": "witnessed = a run vouched for it; present = it "
