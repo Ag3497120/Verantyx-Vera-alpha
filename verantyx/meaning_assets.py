@@ -19,17 +19,36 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 BUILD = Path.home() / "Projects" / "vera-corpus" / "build"
 
 _cache: Dict[str, Any] = {}
 
 
+def _indexed() -> Optional[Dict[str, Any]]:
+    """The SQLite index's read-through maps, or None when unbuilt.
+
+    Preferred over the json for every door: holding the three big
+    sidecars resident cost 2.4GB and got the engine process killed
+    mid-call inside the IDE (see meaning_index's docstring for the
+    measurement and the refusal it corrupted).
+    """
+    if "indexed" not in _cache:
+        from .meaning_index import maps
+        _cache["indexed"] = maps()
+    return _cache["indexed"]
+
+
 def profiles() -> Dict[str, Any]:
     if "profiles" not in _cache:
-        from .predicate_profile import load
-        _cache["extractor"], _cache["profiles"] = load()
+        idx = _indexed()
+        if idx is not None:
+            _cache["extractor"] = "indexed"
+            _cache["profiles"] = idx["profiles"]
+        else:
+            from .predicate_profile import load
+            _cache["extractor"], _cache["profiles"] = load()
     return _cache["profiles"]
 
 
@@ -40,16 +59,21 @@ def extractor() -> str:
 
 def aliases() -> Dict[str, str]:
     if "aliases" not in _cache:
-        _cache["aliases"] = json.loads(
+        idx = _indexed()
+        _cache["aliases"] = idx["aliases"] if idx is not None else json.loads(
             (BUILD / "jawiki_aliases.json").read_text(encoding="utf-8"))
     return _cache["aliases"]
 
 
 def senses() -> Dict[str, Any]:
     if "senses" not in _cache:
-        d = json.loads(
-            (BUILD / "jawiki_senses.json").read_text(encoding="utf-8"))
-        _cache["senses"] = d.get("senses", d)
+        idx = _indexed()
+        if idx is not None:
+            _cache["senses"] = idx["senses"]
+        else:
+            d = json.loads(
+                (BUILD / "jawiki_senses.json").read_text(encoding="utf-8"))
+            _cache["senses"] = d.get("senses", d)
     return _cache["senses"]
 
 
@@ -75,7 +99,8 @@ def defs() -> Dict[str, str]:
     surface->sentence map, not the 912MB cross shelf, and the descent
     door is the one organ that cannot work without it."""
     if "defs" not in _cache:
-        _cache["defs"] = json.loads(
+        idx = _indexed()
+        _cache["defs"] = idx["defs"] if idx is not None else json.loads(
             (BUILD / "jawiki_defs.json").read_text(encoding="utf-8"))
     return _cache["defs"]
 
