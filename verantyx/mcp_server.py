@@ -38,6 +38,10 @@ from .growth_signals import GrowthSignals, growth_signals_path
 from .llm_local import ollama_available
 from .math_sim import math_ask
 from .module_forge import build_test_queries, draft_module
+from .observation import Observation as _Observation
+from .observation import facets as _obs_facets
+from .observation import readings as _obs_readings
+from .observation import report as _obs_report
 from .module_ingest import DomainModuleQuarantine
 from .module_verify import verify_module
 
@@ -248,6 +252,88 @@ def serve(store_path: str) -> int:
         return json.dumps({"verdict": "ANSWER", "need": n, "asset": a,
                            "worked": worked, "gap_resolved": resolved,
                            "recipe": "recipe:" + n}, ensure_ascii=False)
+
+    @mcp.tool()
+    def observe(subject: str, passes: str = "", by: str = "",
+                against: str = "", after: str = "", yielded: str = "",
+                claim: str = "", items: str = "",
+                items_closed: bool = False) -> str:
+        """Place an observation on the six arms. This is not a gate.
+
+        Anything a caller looked at — a window, a file, a command's
+        stdout, a page — comes through here to become a cross instead of
+        prose in a prompt. Prose in a prompt is where the 8/13 Teams run
+        lost 「初めてのaijax」→"ajax" and where a 27B model loops: nothing
+        in a paragraph can be asked whether it has support.
+
+        The door never withholds and never adjudicates, because it does
+        not need to. Facets are arm-tagged, so a role that was not
+        established simply contributes nothing — an unsupported general
+        claim is ABSENT from the store rather than present-and-flagged,
+        and absence is what the existing arm verdicts already fire on.
+        Adjudication stays where it already lives (`ArmIndex.gate`), at
+        answer time, for observations and every other claim alike.
+
+        Two ways in, and they compose:
+
+            passes  {"pass name": "verbatim text", …} as JSON. Several
+                    readings of one target. Agreement puts them on
+                    support+; ANY disagreement puts every variant on
+                    both support+ and support-, which is the contested
+                    state the store already demotes. No majority wins
+                    quietly and no tie empties the arm.
+            roles   by / against / after / yielded / claim / items,
+                    `|`-separated. Commas are not a separator here
+                    because OCR text is full of them.
+
+        `items_closed` is the one thing a caller must be honest about,
+        and it is honest by default: having parts and having ALL the
+        parts are different facts. While it is false the general claim
+        is not placed at all — which is what an unread third tab, an
+        unscrolled last row and a grep over half a repo all are.
+        """
+        subj = (subject or "").strip()
+        if not subj:
+            return json.dumps({"verdict": "UNKNOWN_SUBJECT_MISSING"})
+
+        def _parts(s: str):
+            return tuple(p.strip() for p in (s or "").split("|") if p.strip())
+
+        read_by, read_against = _parts(by), _parts(against)
+        if passes.strip():
+            try:
+                d = json.loads(passes)
+            except Exception:
+                return json.dumps({"verdict": "UNKNOWN_PASSES_NOT_JSON",
+                                   "note": "passes must be a JSON object of "
+                                           "pass name -> verbatim text"})
+            if not isinstance(d, dict) or not d:
+                return json.dumps({"verdict": "UNKNOWN_PASSES_NOT_OBJECT"})
+            base = _obs_readings(subj, {str(k): str(v) for k, v in d.items()})
+            # Explicit roles layer over the pass placement rather than
+            # replacing it — 束ねず重ねる, on the smallest possible scale.
+            read_by = base.by + read_by
+            read_against = base.against + read_against
+
+        obs = _Observation(
+            subject=subj, by=read_by, against=read_against,
+            after=(after or "").strip(), yielded=(yielded or "").strip(),
+            claim=(claim or "").strip(), items=_parts(items),
+            items_closed=bool(items_closed))
+
+        rep = _obs_report(obs)
+        placed = _obs_facets(obs)
+        if placed:
+            store.add("observed:" + subj, placed, source="observation")
+            _save()
+
+        return json.dumps({"verdict": "PLACED", "subject": subj,
+                           "written": len(placed),
+                           "filled": rep["filled"], "empty": rep["empty"],
+                           "gap_verdicts": rep["gap_verdicts"],
+                           "contested": rep["contested"],
+                           "instances_open": rep["instances_open"]},
+                          ensure_ascii=False)
 
     @mcp.tool()
     def assets_for(need: str) -> str:
@@ -1018,7 +1104,7 @@ def serve(store_path: str) -> int:
     def vera_intent(text: str) -> str:
         """Frame an instruction structurally, or refuse with UNKNOWN_INTENT.
 
-        The measured share of instruction understanding: 47 verb lemmas
+        The measured share of instruction understanding: 48 verb lemmas
         by 28 operations plus case-particle arms (「geminiを開いて」 →
         開く(対象=gemini)). Anything outside the table refuses — the
         refusal is the signal that the LLM should take the utterance,

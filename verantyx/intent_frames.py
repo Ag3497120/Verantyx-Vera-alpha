@@ -28,7 +28,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
-# Closed verb inventory. (dict_form, op, class). 47 entries, 28 ops.
+# Closed verb inventory. (dict_form, op, class). 48 entries, 28 ops.
 # class is the conjugation row — never inferred from the ending.
 # ---------------------------------------------------------------------------
 
@@ -51,6 +51,12 @@ VERBS: Tuple[Tuple[str, str, str], ...] = (
     ("まとめる", "SUMMARIZE", "ichidan"),
     ("要約する", "SUMMARIZE", "suru"),
     ("読む", "READ", "mu"),
+    # 「見る」→ READ, not CHECK. 確認する(CHECK) asks whether something
+    # holds; 「課題を見て」 asks for the contents to come back. The
+    # downstream act is the same one 読む names — read the thing and
+    # report it — so they share an op rather than splitting the frame
+    # over a distinction the caller never makes.
+    ("見る", "READ", "ichidan"),
     ("書く", "WRITE", "ku"),
     ("実行する", "RUN", "suru"),
     ("止める", "STOP", "ichidan"),
