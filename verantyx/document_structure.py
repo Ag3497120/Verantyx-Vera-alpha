@@ -288,6 +288,61 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     return {"verdict": "UNKNOWN_NOT_IN_DOCUMENTS", "subject": subject}
 
 
+#: WITHDRAWN 2026-08-17 — kept only so the failure is legible. Do not
+#: wire this in. See docs/PREREGISTERED_2026-08-17_lexicon_heading_alias.md:
+#: the floor was derived from twenty single-WORD negative controls and
+#: measured against them, and it holds for words. People type SENTENCES,
+#: and a sentence's token average drifts toward a document's general
+#: vector: 29 of 50 commonsense questions crossed the floor and were
+#: answered with a section of a contest PDF. 「氷は冷たいですか」 returned
+#: 「原則として、授業で利用した以下の環境を用いて…Python, Flask」.
+#:
+#: The stop condition named exactly this and forbids a second threshold,
+#: a margin term, or a bigger lexicon. It is honoured.
+#:
+#: The floor a proposed heading must clear. Pre-registered
+#: 2026-08-17 as the smallest value that refuses all twenty declared
+#: negative controls on the fit document, and confirmed on a held-out
+#: document where the highest nonsense score was 0.348. It is a property
+#: of THIS lexicon: swap the table and it must be re-derived, because a
+#: floor carried over from another model is a number with no measurement
+#: behind it.
+ALIAS_FLOOR = 0.42
+
+
+def propose_heading(subject: str, book: Dict[str, Any],
+                    lex: Any, floor: float = ALIAS_FLOOR) -> Optional[str]:
+    """A heading the loaded documents hold that this subject may mean.
+
+    The dictionary PROPOSES; `lookup` still decides. It may only name a
+    heading the index already contains, so the worst it can do is send the
+    reader to the wrong section of a real document — never to a section
+    that does not exist. Measured on a held-out document: 4 of 8
+    paraphrases reached their heading, 4 were refused, 0 went wrong.
+
+    A ranking read of a static embed table. No generation, no sampling —
+    0-4 ms and byte-identical across runs, so determinism survives. The
+    same table's POLARITY is forbidden (54.8%, a coin flip, measured
+    2026-08-08) and is not touched here.
+    """
+    if lex is None or not subject.strip():
+        return None
+    keys: List[str] = []
+    for doc in book.get("documents", []):
+        keys.extend(str(sec.get("heading")) for sec in doc.get("sections", [])
+                    if sec.get("heading"))
+        keys.extend(str(k) for k in (doc.get("labels") or {}))
+    if not keys:
+        return None
+    try:
+        hits = lex.nearest(subject, keys, k=1)
+    except Exception:
+        return None
+    if hits and hits[0][1] >= floor:
+        return hits[0][0]
+    return None
+
+
 def verify_quoted(result: Dict[str, Any], text: str) -> bool:
     """Every emitted line is a substring of the source, or this fails.
 
