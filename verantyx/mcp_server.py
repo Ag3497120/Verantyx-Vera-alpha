@@ -256,6 +256,57 @@ def serve(store_path: str) -> int:
                            "recipe": "recipe:" + n}, ensure_ascii=False)
 
     @mcp.tool()
+    def vera_domain(name: str, path: str) -> str:
+        """Register one document's vocabulary as a domain. Words, not facts.
+
+        `ingest_documents` adds facts that vote. This adds words that only
+        speak — one fillers table and one patterns table, while `frames`,
+        the shared grammar, is never written. Grammar transfers and
+        vocabulary does not (0.735–0.857 agreement on a shared verb's
+        dominant case across an encyclopedia, the Civil Code, the Labour
+        Standards Act and a two-page brief, against a 0.28 shuffled
+        control), so a domain costs its nouns and nothing else.
+
+        The tables are LAYERED in front of the shared ones, never merged:
+        merging stores whose notion of agreement differs invented an
+        out-of-corpus quorum of 0→8 and dropped answers 284→208, six times
+        out of six.
+
+        `name` must be [a-z0-9_] and is refused rather than rewritten,
+        because it becomes a table name. Registration is gated on the data
+        — a document yielding fewer than five verbs or five slots is
+        refused, since a domain that composes nothing looks exactly like
+        one that had nothing to say.
+        """
+        from .domain_ingest import read_document, register
+        p = Path(path).expanduser()
+        if not p.is_file():
+            return json.dumps({"verdict": "UNKNOWN_FILE_NOT_FOUND",
+                               "path": str(p)}, ensure_ascii=False)
+        try:
+            text = read_document(p)
+        except Exception as exc:
+            return json.dumps({"verdict": "UNKNOWN_UNREADABLE",
+                               "path": str(p), "error": str(exc)[:120]},
+                              ensure_ascii=False)
+        return json.dumps(register((name or "").strip().lower(), text),
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_domain_text(name: str, text: str) -> str:
+        """Register pasted text as a domain's vocabulary. Same gates.
+
+        For text that arrived without a file — a paste wrapped in
+        ⟨verantyx⟩ tags in the composer. It runs the identical registration
+        as `vera_domain` so a paste cannot enter on easier terms than a
+        document: same five-verb / five-slot floor, same refusal of a name
+        outside [a-z0-9_], same untouched `frames`.
+        """
+        from .domain_ingest import register
+        return json.dumps(register((name or "").strip().lower(), text or ""),
+                          ensure_ascii=False)
+
+    @mcp.tool()
     def vera_domains() -> str:
         """Which document vocabularies are registered, and what is shared.
 
@@ -1086,6 +1137,36 @@ def serve(store_path: str) -> int:
                           ensure_ascii=False, default=str)
 
     @mcp.tool()
+    def vera_engine(query: str, last_core: str = "", domain: str = "") -> str:
+        """Everything the engine knows how to bring, for one question.
+
+        **Call this door, not the specific ones.** MCP puts the caller in
+        charge of which door runs, and a caller that knows three doors gets
+        a three-door engine: measured, the IDE knew 60 of the 99 and its
+        answering path used three, leaving seventeen organs outside every
+        question anyone asked. A different client picked a different three
+        and the same engine looked like a different product.
+
+        So this door carries the composition instead of the caller. One
+        question goes in and the ordering — intent, staging, typo repair,
+        arithmetic, theorem witness, difference, census, context
+        completion, meaning descent, arm placement, gap ledger, frame
+        composition — happens here, in the measured layering direction.
+        The reply names the door that answered and lists every stage with
+        what it did, so a caller can see which organs ran rather than
+        having to know they exist.
+
+        `last_core` supplies the previous answer's subject, which is what
+        makes 「その刑は」 resolvable; `domain` restricts composition to a
+        registered document. Deterministic, and no model is called."""
+        from .engine import ask as _engine_ask
+
+        return json.dumps(
+            _engine_ask(query, _vera(), last_core=last_core, domain=domain,
+                        store_path=path),
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def vera_sovereigns() -> str:
         """Which sovereigns are loaded, and how big each is."""
         return json.dumps(_vera().report(), ensure_ascii=False)
@@ -1208,48 +1289,10 @@ def serve(store_path: str) -> int:
         STORE, never about mathematics: absence of a witness is not a
         claim of falsehood, and the sorry trap
         (lean_witness_forks) is why the wording stays this careful."""
-        import json as _json
-        from pathlib import Path as _Path
+        from .mathlib_witness import lookup as _lookup
 
-        if "mathlib" not in _math_cache:
-            p = (_Path.home() / "Projects" / "vera-corpus" / "build"
-                 / "mathlib_store.json")
-            if not p.is_file():
-                return _json.dumps(
-                    {"verdict": "UNKNOWN_NOT_LOADED",
-                     "note": "mathlib_store.json not present beside the "
-                             "published build"}, ensure_ascii=False)
-            d = _json.loads(p.read_text(encoding="utf-8"))
-            _math_cache["mathlib"] = d["crosses"]
-        crosses = _math_cache["mathlib"]
+        return json.dumps(_lookup(name), ensure_ascii=False, default=str)
 
-        q = name.strip().casefold()
-        hit = crosses.get(q)
-        matches = [q] if hit is not None else [
-            k for k in crosses
-            if k == q or k.endswith("." + q)]
-        if not matches:
-            return _json.dumps(
-                {"verdict": "UNKNOWN_NOT_IN_MATHLIB_STORE", "name": name,
-                 "note": "no declaration by this name or trailing "
-                         "segment; absence of a witness is not a claim "
-                         "of falsehood"}, ensure_ascii=False)
-        if len(matches) > 12:
-            return _json.dumps(
-                {"verdict": "UNKNOWN_AMBIGUOUS_NAME", "name": name,
-                 "candidates": len(matches),
-                 "sample": sorted(matches)[:12]}, ensure_ascii=False)
-        out = []
-        for m in sorted(matches):
-            facets = crosses[m]
-            wit = sorted(f for f in facets if str(f).startswith("verified:"))
-            out.append({
-                "declaration": m,
-                "verdict": "VERIFIED" if wit else "UNVERIFIED_IN_STORE",
-                "witness": wit or None,
-            })
-        return _json.dumps({"verdict": "ANSWER", "n": len(out),
-                            "declarations": out}, ensure_ascii=False)
 
     @mcp.tool()
     def vera_explain(term: str) -> str:
