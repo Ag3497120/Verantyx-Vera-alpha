@@ -51,6 +51,13 @@ ORDER: Tuple[str, ...] = ("が", "に", "で", "から", "へ", "と", "を")
 NO_VERB = "UNKNOWN_VERB_NOT_IN_FRAMES"
 NO_PATTERN = "UNKNOWN_NO_OBSERVED_PATTERN"
 NO_FILLER = "UNKNOWN_SLOT_UNFILLED"
+#: Asked for a domain's own words and the domain does not have them. The
+#: shared layer could answer — that is exactly what must not happen when a
+#: reader will take the sentence as the domain's. A law firm asking about
+#: 担保 and receiving an encyclopedia's sense of it is wrong in a way that
+#: is invisible unless the layer is named, so `domain_only` refuses and
+#: `layer` is reported on every draft either way.
+NOT_IN_DOMAIN = "UNKNOWN_NOT_IN_DOMAIN"
 
 
 @dataclass(frozen=True)
@@ -126,14 +133,23 @@ class Tables:
     def frame(self, verb: str):
         return self._get("frames", verb, self._frames)
 
-    def pattern(self, verb: str):
-        return (self._domain_get("patterns", verb)
-                or self._get("patterns", verb, self._patterns))
+    def pattern(self, verb: str, *, domain_only: bool = False):
+        """(value, layer). `layer` is the domain's name or "shared"."""
+        v = self._domain_get("patterns", verb)
+        if v is not None:
+            return v, self.domain
+        if domain_only:
+            return None, self.domain
+        return self._get("patterns", verb, self._patterns), "shared"
 
-    def filler(self, verb: str, case: str):
+    def filler(self, verb: str, case: str, *, domain_only: bool = False):
         key = "%s\t%s" % (verb, case)
-        return (self._domain_get("fillers", key)
-                or self._get("fillers", key, self._fillers))
+        v = self._domain_get("fillers", key)
+        if v is not None:
+            return v, self.domain
+        if domain_only:
+            return None, self.domain
+        return self._get("fillers", key, self._fillers), "shared"
 
 
 def _top_pattern(raw: Dict[str, Any]) -> Tuple[Tuple[str, ...], int]:
@@ -145,19 +161,33 @@ def _top_pattern(raw: Dict[str, Any]) -> Tuple[Tuple[str, ...], int]:
 
 
 def compose(verb: str, tables: Tables, *,
-            given: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            given: Optional[Dict[str, str]] = None,
+            domain_only: bool = False) -> Dict[str, Any]:
     """One clause for `verb`, or a typed refusal naming what was missing.
 
     `given` pins particular slots — the caller knows the subject, the
     tables know the shape. A pinned case that the observed pattern does
     not contain is added rather than dropped: the person asking for it is
     better evidence than the corpus's silence about it.
+
+    Every draft names the layer each slot came from. Layering means the
+    shared vocabulary answers whenever a domain is silent, which is the
+    right default for reach and the wrong one when the reader will take
+    the sentence as the domain's own. `domain_only` refuses instead —
+    「知らない」 beats an encyclopedia's sense of a term of art, and that
+    is what customising for an organisation should mean: not editing the
+    shared map, but declining to leave it.
     """
     if tables.frame(verb) is None:
         return {"verdict": NO_VERB, "verb": verb,
                 "note": "この動詞の枠が無い。推測した項構造は出さない"}
 
-    raw = tables.pattern(verb)
+    raw, pat_layer = tables.pattern(verb, domain_only=domain_only)
+    if not raw and domain_only:
+        return {"verdict": NOT_IN_DOMAIN, "verb": verb,
+                "domain": tables.domain,
+                "note": "この分野の記録に無い。共有語彙には在るかもしれないが、"
+                        "分野の言葉として出すことはしない"}
     if not raw:
         return {"verdict": NO_PATTERN, "verb": verb,
                 "note": "格が同時に現れた記録が無い。枠から閾値で組むと、"
@@ -168,23 +198,37 @@ def compose(verb: str, tables: Tables, *,
     wanted = tuple(c for c in ORDER if c in set(cases) | set(pinned))
 
     slots: List[Tuple[str, str]] = []
+    layers: List[Tuple[str, str]] = []
     unfilled: List[str] = []
     for c in wanted:
         if c in pinned:
             slots.append((c, pinned[c]))
             continue
-        f = tables.filler(verb, c)
+        f, lay = tables.filler(verb, c, domain_only=domain_only)
         if not f:
             unfilled.append(c)
             continue
         slots.append((c, max(f.items(), key=lambda kv: kv[1])[0]))
+        layers.append((c, lay))
 
     if not slots:
-        return {"verdict": NO_FILLER, "verb": verb,
+        return {"verdict": NOT_IN_DOMAIN if domain_only else NO_FILLER,
+                "verb": verb, "domain": tables.domain,
                 "pattern": list(cases), "unfilled": unfilled,
                 "note": "枠も型もあるが、この語彙で埋まる項が無い"}
 
     text = "".join(n + c for c, n in slots) + verb + "。"
-    return Draft(text=text, verb=verb, pattern=cases, slots=tuple(slots),
-                 pattern_count=seen).as_dict() | (
-        {"unfilled": unfilled} if unfilled else {})
+    by_layer = dict(layers)
+    out = Draft(text=text, verb=verb, pattern=cases, slots=tuple(slots),
+                pattern_count=seen).as_dict()
+    out["layers"] = {"pattern": pat_layer,
+                     "slots": [{"case": c, "layer": by_layer.get(c, "given")}
+                               for c, _ in slots]}
+    # One word for the caller who only wants to know whose sentence this is.
+    srcs = {pat_layer} | set(by_layer.values())
+    out["layer"] = (tables.domain if srcs == {tables.domain}
+                    else "shared" if srcs == {"shared"} else "mixed")
+    out["domain_only"] = domain_only
+    if unfilled:
+        out["unfilled"] = unfilled
+    return out

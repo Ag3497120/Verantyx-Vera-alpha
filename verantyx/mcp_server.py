@@ -273,7 +273,8 @@ def serve(store_path: str) -> int:
 
     @mcp.tool()
     def vera_compose(verb: str, subject: str = "", target: str = "",
-                     object_: str = "", domain: str = "") -> str:
+                     object_: str = "", domain: str = "",
+                     domain_only: bool = False) -> str:
         """Build one clause for a verb from its observed frame. No model.
 
         Three tables and no generation model: `frames` says which cases
@@ -305,8 +306,17 @@ def serve(store_path: str) -> int:
 
         `domain` layers a registered document's vocabulary in FRONT of the
         shared one — never merged with it. A verb the domain never used
-        still resolves through the shared tables, and which layer answered
-        stays visible. See `vera_domains` for what is registered.
+        still resolves through the shared tables, and every draft names the
+        layer each slot came from (`layer`: the domain / shared / mixed).
+
+        `domain_only` refuses instead of falling through. Layering is right
+        for reach and wrong when a reader will take the sentence as the
+        organisation's own: a firm asking about 担保 and getting an
+        encyclopedia's sense of it is wrong in a way nothing on screen
+        shows. Customising for an organisation means declining to leave
+        their vocabulary, not editing the shared map — so this is the flag
+        an enterprise deployment sets, and the refusal is
+        UNKNOWN_NOT_IN_DOMAIN.
         """
         tables = _ComposeTables.indexed((domain or '').strip())
         if tables is None:
@@ -316,7 +326,8 @@ def serve(store_path: str) -> int:
                               ensure_ascii=False)
         given = {k: v.strip() for k, v in
                  (("が", subject), ("に", target), ("を", object_)) if v.strip()}
-        return json.dumps(_compose((verb or "").strip(), tables, given=given),
+        return json.dumps(_compose((verb or "").strip(), tables, given=given,
+                                   domain_only=bool(domain_only)),
                           ensure_ascii=False)
 
     @mcp.tool()
