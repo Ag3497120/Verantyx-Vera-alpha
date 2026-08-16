@@ -85,15 +85,33 @@ class Tables:
     def __init__(self, conn=None, *,
                  frames: Optional[Dict[str, Any]] = None,
                  patterns: Optional[Dict[str, Any]] = None,
-                 fillers: Optional[Dict[str, Any]] = None) -> None:
+                 fillers: Optional[Dict[str, Any]] = None,
+                 domain: str = "") -> None:
         self._conn = conn
         self._frames, self._patterns, self._fillers = frames, patterns, fillers
+        #: A domain LAYER, never a merge. Its tables are read first and the
+        #: shared ones stay behind them, so a word this domain never used
+        #: still resolves and its origin is still visible. Merging stores
+        #: whose notion of agreement differs has been measured six times
+        #: out of six to invent quorum and lose answers.
+        self.domain = domain
 
     @classmethod
-    def indexed(cls) -> Optional["Tables"]:
+    def indexed(cls, domain: str = "") -> Optional["Tables"]:
         from .meaning_index import connection
         conn = connection()
-        return cls(conn) if conn is not None else None
+        return cls(conn, domain=domain) if conn is not None else None
+
+    def _domain_get(self, table: str, key: str):
+        if not self.domain or self._conn is None:
+            return None
+        try:
+            row = self._conn.execute(
+                "SELECT v FROM %s__%s WHERE k = ?" % (table, self.domain),
+                (key,)).fetchone()
+        except Exception:
+            return None
+        return json.loads(row[0]) if row else None
 
     def _get(self, table: str, key: str, override) -> Optional[Dict[str, Any]]:
         if override is not None:
@@ -109,10 +127,13 @@ class Tables:
         return self._get("frames", verb, self._frames)
 
     def pattern(self, verb: str):
-        return self._get("patterns", verb, self._patterns)
+        return (self._domain_get("patterns", verb)
+                or self._get("patterns", verb, self._patterns))
 
     def filler(self, verb: str, case: str):
-        return self._get("fillers", "%s\t%s" % (verb, case), self._fillers)
+        key = "%s\t%s" % (verb, case)
+        return (self._domain_get("fillers", key)
+                or self._get("fillers", key, self._fillers))
 
 
 def _top_pattern(raw: Dict[str, Any]) -> Tuple[Tuple[str, ...], int]:

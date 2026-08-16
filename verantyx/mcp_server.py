@@ -256,8 +256,24 @@ def serve(store_path: str) -> int:
                            "recipe": "recipe:" + n}, ensure_ascii=False)
 
     @mcp.tool()
+    def vera_domains() -> str:
+        """Which document vocabularies are registered, and what is shared.
+
+        A domain costs its NOUNS, not its grammar. Measured across an
+        encyclopedia, the Civil Code, the Labour Standards Act and a
+        two-page brief, a shared verb's dominant case agrees 0.735–0.857
+        against a 0.28 shuffled control, so `frames` is one thin map for
+        everyone and only the fillers are per-domain.
+        """
+        from .domain_ingest import domains as _domains
+        return json.dumps({"verdict": "ANSWER", "domains": _domains(),
+                           "shared": ["frames", "patterns", "fillers"],
+                           "note": "分野は重ねる。合体はしない"},
+                          ensure_ascii=False)
+
+    @mcp.tool()
     def vera_compose(verb: str, subject: str = "", target: str = "",
-                     object_: str = "") -> str:
+                     object_: str = "", domain: str = "") -> str:
         """Build one clause for a verb from its observed frame. No model.
 
         Three tables and no generation model: `frames` says which cases
@@ -286,8 +302,13 @@ def serve(store_path: str) -> int:
         writes sentences, it does not testify. Refusals are typed:
         UNKNOWN_VERB_NOT_IN_FRAMES / UNKNOWN_NO_OBSERVED_PATTERN /
         UNKNOWN_SLOT_UNFILLED.
+
+        `domain` layers a registered document's vocabulary in FRONT of the
+        shared one — never merged with it. A verb the domain never used
+        still resolves through the shared tables, and which layer answered
+        stays visible. See `vera_domains` for what is registered.
         """
-        tables = _ComposeTables.indexed()
+        tables = _ComposeTables.indexed((domain or '').strip())
         if tables is None:
             return json.dumps({"verdict": "UNKNOWN_INDEX_ABSENT",
                                "note": "meaning_index.db が無い。"
