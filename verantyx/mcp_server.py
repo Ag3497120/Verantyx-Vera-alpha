@@ -38,6 +38,8 @@ from .growth_signals import GrowthSignals, growth_signals_path
 from .llm_local import ollama_available
 from .math_sim import math_ask
 from .module_forge import build_test_queries, draft_module
+from .compose_frame import Tables as _ComposeTables
+from .compose_frame import compose as _compose
 from .observation import Observation as _Observation
 from .observation import facets as _obs_facets
 from .observation import readings as _obs_readings
@@ -252,6 +254,49 @@ def serve(store_path: str) -> int:
         return json.dumps({"verdict": "ANSWER", "need": n, "asset": a,
                            "worked": worked, "gap_resolved": resolved,
                            "recipe": "recipe:" + n}, ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_compose(verb: str, subject: str = "", target: str = "",
+                     object_: str = "") -> str:
+        """Build one clause for a verb from its observed frame. No model.
+
+        Three tables and no generation model: `frames` says which cases
+        the verb takes, `patterns` says which of them occurred TOGETHER,
+        and `fillers` says which nouns were seen in each slot. The
+        pattern chooses the shape; the fillers only fill it.
+
+        Composing from the frame alone with a threshold is what produced
+        「父がそれぞれ当該各号に父と期間を定める。」 — the mean pattern
+        holds 1.22 cases while the mean frame holds 3.20, so a threshold
+        over the frame invents about two arguments per sentence.
+
+        Grammar transfers and vocabulary does not. Measured across
+        encyclopedia, civil code and labour law, the dominant case of a
+        shared verb agrees 0.735–0.857 of the time against a 0.28
+        shuffled control — so frames and patterns are a thin shared map
+        while fillers belong to whatever corpus was read. Swap the
+        fillers and the same grammar speaks another domain.
+
+        `subject` / `target` / `object_` pin the が / に / を slots when
+        the caller knows them; a pinned case the pattern lacks is added,
+        because a person asking for it outweighs the corpus's silence.
+
+        Every draft is marked `constructed: True`. 「権利を有する」 being
+        well-formed is not a claim that anyone holds a right — this door
+        writes sentences, it does not testify. Refusals are typed:
+        UNKNOWN_VERB_NOT_IN_FRAMES / UNKNOWN_NO_OBSERVED_PATTERN /
+        UNKNOWN_SLOT_UNFILLED.
+        """
+        tables = _ComposeTables.indexed()
+        if tables is None:
+            return json.dumps({"verdict": "UNKNOWN_INDEX_ABSENT",
+                               "note": "meaning_index.db が無い。"
+                                       "tools/index_frames.py を先に走らせる"},
+                              ensure_ascii=False)
+        given = {k: v.strip() for k, v in
+                 (("が", subject), ("に", target), ("を", object_)) if v.strip()}
+        return json.dumps(_compose((verb or "").strip(), tables, given=given),
+                          ensure_ascii=False)
 
     @mcp.tool()
     def observe(subject: str, passes: str = "", by: str = "",
