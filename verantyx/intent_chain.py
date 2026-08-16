@@ -61,6 +61,10 @@ from .observation import Observation, place
 STALLED = "STALLED"
 BLOCKED = "BLOCKED"
 DONE = "DONE"
+#: Every stage ran and the last one established nothing. Not a failure of
+#: the harness — the honest outcome of a run that reached its end without
+#: finding what it was sent for.
+DONE_EMPTY = "DONE_NOTHING_FOUND"
 RUNNING = "RUNNING"
 BUDGET = "UNKNOWN_BUDGET"
 
@@ -78,6 +82,8 @@ class Stage:
     #: Filled by this stage's own delivery.
     cause_out: List[str] = field(default_factory=list)
     delivered: bool = False
+    #: Did this stage establish anything, or only run? See Observation.found.
+    found: bool = False
     observation: Optional[Observation] = None
 
     @property
@@ -132,6 +138,13 @@ class Circulation:
         if not self.stages:
             return BLOCKED
         if all(s.delivered for s in self.stages):
+            # Every stage ran. Whether the GOAL was reached is a different
+            # question, and conflating them is how a harness reports
+            # success for a run that found nothing. Measured: 「teamsを開いて
+            # 課題を見て」 delivered both stages, saw no 課題 at all, and
+            # said DONE.
+            if not any(getattr(s, "found", False) for s in self.stages[-1:]):
+                return DONE_EMPTY
             return DONE
         if self.laps >= self.budget:
             return BUDGET
@@ -163,7 +176,12 @@ class Circulation:
         # delivery that established something may do so: handing an empty
         # result forward would let a stage run on a precondition that was
         # never actually met.
-        if gained > 0 and s.n + 1 < len(self.stages):
+        s.found = obs.found()
+        # The precondition is satisfied by a FINDING, never by the act of
+        # looking. `gained > 0` was the old test and it passed for a stage
+        # that established nothing, because the tool name and the subject
+        # place arms on their own.
+        if s.found and s.n + 1 < len(self.stages):
             s.cause_out = ["stage%d:%s" % (s.n, s.op)]
             self.stages[s.n + 1].cause_in = list(s.cause_out)
 

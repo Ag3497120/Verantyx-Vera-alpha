@@ -1136,6 +1136,158 @@ def serve(store_path: str) -> int:
         return json.dumps(_vera().ask(query, limit=sentences),
                           ensure_ascii=False, default=str)
 
+    # ── The harness: the ENGINE owns the loop, not the model ─────────
+    #
+    # Measured, and the reason this exists: a 27B model handed the loop
+    # produced forty paragraphs and no tool call. A tool list pasted into
+    # a prompt asks the model to be the scheduler, and a weak model cannot
+    # be one. So the schedule moves here — `intent_chain.Circulation`
+    # decides what runs next, and the model is asked for language at named
+    # points instead of being asked what to do.
+    #
+    # 1,143 lines of this machinery existed with no door at all, which
+    # meant no caller could reach it. These five give it one.
+    _circulations: Dict[str, Any] = {}
+
+    def _circ_id(instruction: str) -> str:
+        import hashlib
+        return hashlib.sha256(
+            instruction.strip().encode("utf-8")).hexdigest()[:16]
+
+    @mcp.tool()
+    def harness_begin(instruction: str, budget: int = 8) -> str:
+        """Start a run. The engine reads the instruction and owns the loop.
+
+        The instruction is framed by `vera_intent` first: it becomes an op
+        the frame table covers, or it is refused as UNKNOWN_INTENT. A
+        guessed intent is worse than a refused one — the whole point of
+        moving the schedule here is that nothing downstream is built on a
+        reading nobody vouched for.
+
+        Returns the run id, the chain of stages, and the first stage. The
+        id is a hash of the instruction, so the same instruction resumes
+        the same run rather than starting a parallel one."""
+        from .intent_chain import Circulation
+        from .intent_frames import parse as _parse
+
+        parsed = _parse(instruction)
+        if parsed.get("verdict") != "INTENT":
+            return json.dumps(
+                {"verdict": parsed.get("verdict", "UNKNOWN_INTENT"),
+                 "instruction": instruction,
+                 "note": "枠表が覆っていない。推測した意図で段を組むことはしない"},
+                ensure_ascii=False, default=str)
+        rid = _circ_id(instruction)
+        circ = Circulation(parsed, budget=budget)
+        _circulations[rid] = circ
+        nxt = circ.next_stage()
+        return json.dumps(
+            {"verdict": "RUNNING", "run": rid, "op": parsed.get("op"),
+             "status": circ.status(), "state": circ.state(),
+             "next": None if nxt is None else {
+                 "n": nxt.n, "op": nxt.op, "args": nxt.args,
+                 "cause_in": nxt.cause_in}},
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_next(run: str) -> str:
+        """What the engine wants done next. The model does not choose.
+
+        An empty result never becomes the next stage's precondition —
+        `cause_in` has to be satisfied by something actually observed, so
+        a run stalls honestly instead of proceeding on nothing."""
+        circ = _circulations.get(run)
+        if circ is None:
+            return json.dumps({"verdict": "UNKNOWN_RUN", "run": run},
+                              ensure_ascii=False)
+        nxt = circ.next_stage()
+        return json.dumps(
+            {"verdict": circ.status(), "run": run,
+             "next": None if nxt is None else {
+                 "n": nxt.n, "op": nxt.op, "args": nxt.args,
+                 "cause_in": nxt.cause_in},
+             "state": circ.state()},
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_deliver(run: str, subject: str, passes: str = "",
+                        by: str = "", against: str = "", after: str = "",
+                        yielded: str = "", claim: str = "",
+                        items: str = "", items_closed: bool = False) -> str:
+        """Hand back what was actually seen. Progress is arms placed.
+
+        Same shape as `observe`, because it is the same act: whatever a
+        step looked at becomes a cross rather than prose in a prompt.
+        Nothing in a paragraph can be asked whether it has support, which
+        is how the 8/13 Teams run lost 「初めてのaijax」 to "ajax".
+
+        A step that ran and saw nothing is delivered too. That is the
+        record the run stalls on, and a stall with a named cause is the
+        outcome this harness exists to produce instead of a loop."""
+        from .observation import Observation
+        circ = _circulations.get(run)
+        if circ is None:
+            return json.dumps({"verdict": "UNKNOWN_RUN", "run": run},
+                              ensure_ascii=False)
+        obs = Observation(
+            subject=subject, by=by, against=against, after=after,
+            yielded=yielded, claim=claim,
+            items=[x for x in (items or "").split("\n") if x.strip()],
+            items_closed=items_closed)
+        out = circ.deliver(obs)
+        return json.dumps(
+            {"verdict": circ.status(), "run": run, "delivered": out,
+             "state": circ.state()},
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_ask_back(run: str, subject: str = "") -> str:
+        """The run is underdetermined — the question to put to a PERSON.
+
+        Not a prompt for the model. When the engine cannot settle
+        something itself, the honest move is a typed question with the
+        candidates it does hold, and the answer comes back marked
+        `support+:human:` — testimony, never a measurement."""
+        from .ask_back import from_circulation
+        circ = _circulations.get(run)
+        if circ is None:
+            return json.dumps({"verdict": "UNKNOWN_RUN", "run": run},
+                              ensure_ascii=False)
+        q = from_circulation(circ, subject)
+        if q is None:
+            return json.dumps(
+                {"verdict": "NOTHING_TO_ASK", "run": run,
+                 "status": circ.status(),
+                 "note": "この段は人に訊く形の未決ではない"},
+                ensure_ascii=False, default=str)
+        return json.dumps({"verdict": "ASK", "run": run, **q.as_dict()},
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_vary(procedure_json: str,
+                     alternatives_json: str = "") -> str:
+        """One success, several methods — by single change, for attribution.
+
+        Every variant differs from the parent in exactly ONE step. That is
+        not tidiness: if two things change and the variant fails, nothing
+        was learned. The parent must already be VERIFIED or TRUSTED, so a
+        procedure nobody has run cannot spawn ten more.
+
+        Measured: a verified Teams route yielded 10 variants."""
+        from .procedure_vary import Procedure, agenda, vary
+
+        try:
+            pd = json.loads(procedure_json)
+            alts = json.loads(alternatives_json) if alternatives_json else None
+        except ValueError as exc:
+            return json.dumps({"verdict": "UNKNOWN_NOT_JSON",
+                               "error": str(exc)[:120]}, ensure_ascii=False)
+        parent = Procedure(**pd)
+        return json.dumps(
+            {"variants": [v.as_dict() for v in vary(parent, alts)],
+             "agenda": agenda(parent, alts)},
+            ensure_ascii=False, default=str)
+
     @mcp.tool()
     def vera_engine(query: str, last_core: str = "", domain: str = "",
                     store_first: bool = False) -> str:

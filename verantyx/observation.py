@@ -105,6 +105,24 @@ class Observation:
     #: list and an unopened tab are the same unclosed arm.
     items_closed: bool = False
 
+    def found(self) -> bool:
+        """Did this establish anything, or only that something was looked at?
+
+        `by` / `against` / `after` describe the ACT — which tool ran, what
+        it ran against, what preceded it. `yielded` / `items` / `claim`
+        describe the FINDING. Measured 2026-08-16: a stage that opened a
+        window and saw nothing still placed seven arms, purely from the
+        act, and the chain counted that as progress and reported DONE for
+        a run that found nothing.
+
+        Arms placed by looking are not arms placed by finding, and a
+        harness that cannot tell them apart reports success for exactly
+        the runs that most need to report failure.
+        """
+        return bool((self.yielded or "").strip()
+                    or (self.claim or "").strip()
+                    or [x for x in (self.items or ()) if str(x).strip()])
+
 
 def place(obs: Observation) -> Dict[str, List[str]]:
     """The observation's six arms. Total, deterministic, no guessing.
