@@ -50,6 +50,74 @@ _CUES = [
     ("kind+", re.compile(r"\b(in general|generally|typically|is a kind of|are kinds of)\b", re.I)),
 ]
 
+#: Japanese cues (PREREGISTERED_2026-08-16_japanese_arms). Closed, and
+#: matched only in the PREDICATE REGION — the tail of the clause. Japanese
+#: has no word boundaries, so a bare substring match over-fires by default:
+#: 「一種の冗談を言う」 contains 一種 and asserts nothing about a kind.
+#: Position is what separates them, and it is the same repair that finally
+#: worked for polarity — look at where the thing sits, not at whether the
+#: characters occur.
+#:
+#: Order matters (first hit wins), longest and most specific first.
+_JA_CUES = [
+    ("support-", ("この限りでない", "を除く", "を除き", "ただし",
+                  "適用されない", "限りでない")),
+    ("support+", ("に規定される", "に規定されている", "に定められる",
+                  "に定められている", "に支持されている", "によれば",
+                  "とされている")),
+    ("cause+",   ("によって発生する", "によって生じる", "が原因で",
+                  "によって倒れる", "に起因する", "から生じる")),
+    ("cause-",   ("をもたらす", "を引き起こす", "につながる",
+                  "を生じさせる")),
+    ("kind+",    ("は一般に", "は通常", "は総称", "の総称である")),
+    ("kind-",    ("の一種である", "の一種", "に分類される", "の一つである",
+                  "の例である")),
+]
+
+#: The predicate region is the text after the last case particle — but the
+#: で of である is NOT one. Measured 2026-08-16: reading it as a case marker
+#: cut 「りんごは果実の一種である」 down to 「ある」 and every cue with it,
+#: which failed A2 on all ten items while A1 passed on all ten. Same shape
+#: as every other defect found that day: a functional element taken for
+#: something it is not. で before あ/は/も is the continuative of だ, and
+#: に before よ heads a compound particle (による), not a case.
+_JA_SKIP = re.compile(r"で(?=[あはも])|に(?=よ)")
+
+
+def _ja_predicate_region(sentence: str) -> str:
+    """The clause tail a cue may be read from.
+
+    Scans for the last case particle that is not part of a copula or a
+    compound-particle head. Falls back to the whole sentence when there is
+    no particle at all — a fragment with no structure gets no special
+    leniency, it simply has nowhere else for a predicate to be.
+    """
+    text = sentence or ""
+    last = -1
+    for i, ch in enumerate(text):
+        if ch not in "はがをにでとへ":
+            continue
+        if _JA_SKIP.match(text, i):
+            continue
+        last = i
+    return text[last + 1:] if last >= 0 else text
+
+
+def classify_arm_ja(sentence: str) -> Optional[str]:
+    """Arm for a Japanese sentence, or None. None is a first-class answer.
+
+    A cue outside the predicate region does not count. That single rule is
+    what keeps 「一種の冗談を言う」 untagged while 「りんごは果実の一種である」
+    is kind-, and it is registered before any of this was measured.
+    """
+    tail = _ja_predicate_region(sentence)
+    for arm, cues in _JA_CUES:
+        for cue in cues:
+            if cue in tail:
+                return arm
+    return None
+
+
 _INTENT = [
     ("cause+", re.compile(r"\b(why|what causes|なぜ|どうして)\b", re.I)),
     ("cause-", re.compile(r"\b(what happens (if|when)|what does .* lead to)\b", re.I)),
@@ -71,7 +139,10 @@ def classify_arm(sentence: str) -> Optional[str]:
     for arm, rx in _CUES:
         if rx.search(sentence or ""):
             return arm
-    return None
+    # Japanese was invisible here until 2026-08-16: every fact in the
+    # published store came back untagged, so judgement ran over facet sets
+    # instead of over claims.
+    return classify_arm_ja(sentence)
 
 
 def classify_intent(query: str) -> Optional[str]:

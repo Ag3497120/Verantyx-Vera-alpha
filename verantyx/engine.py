@@ -43,6 +43,12 @@ _DIFF_MARKS = ("の違い", "の差", "と の違い", "はどう違う", "の�
 #: A follow-up shaped like it is about the last answer.
 _DEICTIC = ("その", "それ", "この", "あの")
 
+#: What a Japanese question puts after its subject. Longest first, so
+#: 「とは」 is taken before 「は」 — stripping the shorter one first leaves
+#: a stray 「と」 on the subject.
+_TOPIC_SUFFIXES = ("とは何ですか", "とは何", "とは", "って何", "って",
+                   "は？", "は", "？", "?")
+
 
 @dataclass
 class Turn:
@@ -165,7 +171,7 @@ def _readings(obj: Dict[str, Any]) -> Dict[str, Any]:
 
 def ask(query: str, vera: Any, *, last_core: str = "",
         domain: str = "", store_path: Any = None, store: Any = None,
-        store_first: bool = False) -> Dict[str, Any]:
+        store_first: bool = False, _retry: bool = False) -> Dict[str, Any]:
     """Everything the engine knows how to bring, for one question.
 
     `vera` is the loaded stack, passed in rather than loaded here: which
@@ -204,36 +210,38 @@ def ask(query: str, vera: Any, *, last_core: str = "",
         return t.as_dict()
     t.note("intent", True, "問いとして扱う")
 
-    # Repair before anything reads it. A misspelt subject fails every
-    # later stage identically to a subject the store has never heard of,
-    # and those are not the same problem. Never silent: the repair is a
-    # named hand-off, and the original is kept beside it.
+    # A repair candidate is COMPUTED here and deliberately NOT applied.
+    #
+    # It used to be applied, on the reasoning that a misspelt subject
+    # fails every later stage identically to an unknown one. Measured, the
+    # cost is worse than the disease: 「提出物は」 was repaired to
+    # 「提出物件」 and the question stopped reaching a document that had a
+    # 提出物 section — a good question rewritten into a different one. The
+    # organ's zero-false-fire figure was measured on in-vocabulary words,
+    # and a word with a topic particle stuck to it is not one.
+    #
+    # So repair became a LAST resort. Every stage answers the question as
+    # asked, and only when all of them refuse is the candidate tried —
+    # once, with the door and the substitution both on the record.
+    typo_candidate = ""
     try:
         from .meaning_assets import lattice as _lat
         from .meaning_assets import vocab as _voc
         from .typo_recovery import recover
-        core_term = q.replace("とは", "").replace("？", "").strip()
+        core_term = q
+        for suf in _TOPIC_SUFFIXES:
+            if core_term.endswith(suf) and len(core_term) > len(suf):
+                core_term = core_term[: -len(suf)]
+                break
         tr = recover(core_term, lattice=_lat(), vocab=_voc())
         if tr.get("verdict") == "TYPO_CANDIDATE" and tr.get("candidates"):
-            best = tr["candidates"][0]["word"]
-            t.note("typo", True, "%s → %s" % (core_term, best), changed=True)
-            q = q.replace(core_term, best)
+            typo_candidate = q.replace(core_term,
+                                       tr["candidates"][0]["word"])
+            t.note("typo", True, "候補 %s（まだ使わない）" % typo_candidate)
         else:
             t.note("typo", True, str(tr.get("verdict")))
     except Exception as exc:
         t.note("typo", False, "%s: %s" % (type(exc).__name__, str(exc)[:50]))
-
-    try:
-        from .stage_split import split as _split
-        st = _split(q)
-        if st.get("verdict") == "STAGED" and len(st.get("stages", [])) > 1:
-            t.note("stage_split", True, st.get("chain", ""), changed=True)
-        else:
-            t.note("stage_split", True, str(st.get("verdict")))
-    except Exception as exc:
-        t.note("stage_split", False, str(exc)[:60])
-
-    # ── a difference is a different question ─────────────────────────
 
     # Arithmetic is a different kind of question, answered by an exact
     # organ rather than by a census. It is asked first because a census
@@ -279,6 +287,42 @@ def ask(query: str, vera: Any, *, last_core: str = "",
         t.note("mathlib", False,
                "%s: %s" % (type(exc).__name__, str(exc)[:50]))
 
+    # What a loaded document literally says. Asked FIRST, and before the
+    # store's own index, because this is the only stage that can quote —
+    # everything after it answers with words it selected, and a question
+    # about a document the person just handed over should get the
+    # document's own sentence when the document has one.
+    if store_path is not None:
+        try:
+            from .document_structure import load as _docs_load
+            from .document_structure import lookup as _docs_lookup
+            book = _docs_load(store_path)
+            if book.get("documents"):
+                subj = q
+                for suf in _TOPIC_SUFFIXES:
+                    if subj.endswith(suf) and len(subj) > len(suf):
+                        subj = subj[: -len(suf)]
+                        break
+                dr = _docs_lookup(subj, book)
+                dv = str(dr.get("verdict", ""))
+                if dv in ("DOCUMENT_SECTION", "DOCUMENT_LABEL"):
+                    t.note("document", True,
+                           "%s ← %s" % (dv, dr.get("source")), changed=True)
+                    t.raw, t.door = dr, "document"
+                    t.verdict = dv
+                    t.core = str(dr.get("subject") or "")
+                    t.text = str(dr.get("text") or "")
+                    t.origins = [str(dr.get("source") or "読み込んだ文書")]
+                    t.readings = {"quoted": True}
+                    t.remedy = ""
+                    return t.as_dict()
+                t.note("document", True, dv)
+            else:
+                t.note("document", True, "読み込んだ文書は無い")
+        except Exception as exc:
+            t.note("document", False,
+                   "%s: %s" % (type(exc).__name__, str(exc)[:50]))
+
     # The person's own documents. Asked as its own stage with its own
     # door name, so an answer that came from a PDF someone loaded can
     # never be mistaken for one the federation vouched for.
@@ -294,8 +338,7 @@ def ask(query: str, vera: Any, *, last_core: str = "",
             # unreachable. A hand-off normalisation, not an interpretation.
             forms = [q]
             bare = q
-            for suf in ("とは何ですか", "とは何", "とは", "って何",
-                        "って", "は？", "は", "？", "?"):
+            for suf in _TOPIC_SUFFIXES:
                 if bare.endswith(suf) and len(bare) > len(suf):
                     bare = bare[: -len(suf)]
                     break
@@ -444,6 +487,25 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                           "core": local.get("core"),
                           "text": _render(local),
                           "note": "この端末に入れた文書。連合とは別の空間"}
+
+    # Everything refused and a repair candidate exists. Asked once, with
+    # the substitution named — never silently, because an answer about a
+    # word the person did not type is a different answer.
+    if (typo_candidate and not _retry
+            and t.verdict.startswith(("UNKNOWN", "ABSTAIN", "AMBIGUOUS",
+                                      "UNGROUNDED"))):
+        again = ask(typo_candidate, vera, last_core=last_core,
+                    domain=domain, store_path=store_path, store=store,
+                    store_first=store_first, _retry=True)
+        av = str(again.get("verdict", ""))
+        if not av.startswith(("UNKNOWN", "ABSTAIN", "AMBIGUOUS",
+                              "UNGROUNDED")):
+            again["stages"] = t.stages + [
+                {"stage": "typo", "fired": True, "changed": True,
+                 "note": "%s → %s で聞き直した" % (q, typo_candidate)}
+            ] + list(again.get("stages") or [])
+            again["repaired_from"] = q
+            return again
 
     # A refusal says what is missing; the gap graph may already hold a
     # named ticket for it. Annotation only — a gap does not become a fact
