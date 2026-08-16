@@ -1137,7 +1137,8 @@ def serve(store_path: str) -> int:
                           ensure_ascii=False, default=str)
 
     @mcp.tool()
-    def vera_engine(query: str, last_core: str = "", domain: str = "") -> str:
+    def vera_engine(query: str, last_core: str = "", domain: str = "",
+                    store_first: bool = False) -> str:
         """Everything the engine knows how to bring, for one question.
 
         **Call this door, not the specific ones.** MCP puts the caller in
@@ -1158,12 +1159,23 @@ def serve(store_path: str) -> int:
 
         `last_core` supplies the previous answer's subject, which is what
         makes 「その刑は」 resolvable; `domain` restricts composition to a
-        registered document. Deterministic, and no model is called."""
+        registered document.
+
+        `store_first` decides which of the two spaces gets to be THE
+        answer when both have one: this terminal's own documents
+        (everything `load_documents` ingested) or the published
+        federation. They are never merged — the door name in the reply
+        says which space spoke, and when both answered the other one
+        rides along under `local`. Default is the federation, because a
+        loaded document should not silently take over general questions.
+
+        Deterministic, and no model is called."""
         from .engine import ask as _engine_ask
 
         return json.dumps(
             _engine_ask(query, _vera(), last_core=last_core, domain=domain,
-                        store_path=path),
+                        store_path=path, store=store,
+                        store_first=store_first),
             ensure_ascii=False, default=str)
 
     @mcp.tool()

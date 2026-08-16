@@ -30,7 +30,13 @@ a = Analysis(
            # {'verdict': 'VOID_ENVIRONMENT', 'missing': ['unidic_lite']}.
            (_unidic_dicdir(), 'unidic_lite/dicdir')],
     hiddenimports=['mcp', 'mcp.server.fastmcp',
-                   'fugashi', 'unidic_lite'],
+                   'fugashi', 'unidic_lite',
+                   # Without a PDF reader, every document door refuses the
+                   # most common document there is. Measured 2026-08-16: a
+                   # contest PDF returned UNKNOWN_UNREADABLE from
+                   # vera_domain and UNKNOWN_NO_PARSER from load_documents,
+                   # so the shipped engine could not read one byte of it.
+                   'pypdf', 'pypdf._reader'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

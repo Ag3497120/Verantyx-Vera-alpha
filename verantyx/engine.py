@@ -164,13 +164,30 @@ def _readings(obj: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def ask(query: str, vera: Any, *, last_core: str = "",
-        domain: str = "", store_path: Any = None) -> Dict[str, Any]:
+        domain: str = "", store_path: Any = None, store: Any = None,
+        store_first: bool = False) -> Dict[str, Any]:
     """Everything the engine knows how to bring, for one question.
 
     `vera` is the loaded stack, passed in rather than loaded here: which
     store answers is the host's decision, and a module that chose for
     itself is how a probe measures the default store and reports it as the
     engine.
+
+    Two spaces, never pooled
+    ------------------------
+    `vera` is the published federation (ja 89,369 cores, en 15,268).
+    `store` is what THIS person put in — every document that arrived
+    through `load_documents` lands there and nowhere else. Measured
+    2026-08-16 on a contest PDF: 「必須要件」 answered ANSWER from the
+    store and UNGROUNDED_UNITS from the federation, because the question
+    was being asked of a space the document had never entered.
+
+    Both are asked, and their verdicts are reported side by side. They are
+    NOT merged into one vote — that direction is measured at 6 failures
+    out of 6. `store_first` says which one gets to be THE answer when both
+    have one; it is the person's choice, because "my document is more
+    relevant than the encyclopaedia" is a fact about their intent and not
+    something this module can measure.
     """
     t = Turn(query=query.strip())
     q = t.query
@@ -261,6 +278,56 @@ def ask(query: str, vera: Any, *, last_core: str = "",
     except Exception as exc:
         t.note("mathlib", False,
                "%s: %s" % (type(exc).__name__, str(exc)[:50]))
+
+    # The person's own documents. Asked as its own stage with its own
+    # door name, so an answer that came from a PDF someone loaded can
+    # never be mistaken for one the federation vouched for.
+    local: Optional[Dict[str, Any]] = None
+    if store is not None:
+        try:
+            from .consensus_store import consensus_over_store
+            # The store indexes subjects, not sentences: measured, 「必須要件」
+            # answers ANSWER and 「必須要件は」 answers UNKNOWN_NO_EVIDENCE —
+            # the same question, one topic particle apart. The federation
+            # path strips 「とは」 in its descent and the store path never
+            # did, which is the whole reason a loaded document looked
+            # unreachable. A hand-off normalisation, not an interpretation.
+            forms = [q]
+            bare = q
+            for suf in ("とは何ですか", "とは何", "とは", "って何",
+                        "って", "は？", "は", "？", "?"):
+                if bare.endswith(suf) and len(bare) > len(suf):
+                    bare = bare[: -len(suf)]
+                    break
+            if bare != q:
+                forms.append(bare)
+            lo, lv, used = None, "", q
+            for form in forms:
+                cand = consensus_over_store(store, form)
+                cv = str(cand.get("verdict", ""))
+                lo, lv, used = cand, cv, form
+                if not cv.startswith(("UNKNOWN", "ABSTAIN", "AMBIGUOUS")):
+                    break
+            if used != q:
+                t.note("store_form", True, "%s → %s" % (q, used))
+            if lo is not None and not lv.startswith(
+                    ("UNKNOWN", "ABSTAIN", "AMBIGUOUS")):
+                local = lo
+                t.note("store", True, "%s core:%s" % (lv, lo.get("core")),
+                       changed=store_first)
+                if store_first:
+                    t.raw, t.door = lo, "store"
+                    t.verdict, t.core = lv, str(lo.get("core") or "")
+                    t.text = _render(lo)
+                    t.tokens = list(lo.get("tokens") or [])
+                    t.origins = _origins(lo) or ["この端末に入れた文書"]
+                    t.readings = _readings(lo)
+                    return t.as_dict()
+            else:
+                t.note("store", True, lv)
+        except Exception as exc:
+            t.note("store", False,
+                   "%s: %s" % (type(exc).__name__, str(exc)[:50]))
 
     pair = _looks_like_diff(q)
     if pair:
@@ -354,6 +421,29 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                else "手がかり無し — 面のまま")
     except Exception as exc:
         t.note("arms", False, str(exc)[:60])
+
+    # The federation had nothing and the person's own documents did. This
+    # is a fall-through between two spaces, not a merge: the door changes
+    # to `store`, so the reader always knows which space spoke.
+    if local is not None and t.verdict.startswith(
+            ("UNKNOWN", "ABSTAIN", "AMBIGUOUS", "UNGROUNDED")):
+        t.note("store", True, "連合は答えず、端末の文書が答えた", changed=True)
+        t.raw, t.door = local, "store"
+        t.verdict = str(local.get("verdict"))
+        t.core = str(local.get("core") or "")
+        t.text = _render(local)
+        t.tokens = list(local.get("tokens") or [])
+        t.origins = _origins(local) or ["この端末に入れた文書"]
+        t.readings = _readings(local)
+        return t.as_dict()
+    if local is not None:
+        # Both answered. The federation's verdict stands, and the store's
+        # is carried BESIDE it rather than folded in — a reader deciding
+        # between an encyclopaedia and their own PDF should see both.
+        t.raw["local"] = {"verdict": local.get("verdict"),
+                          "core": local.get("core"),
+                          "text": _render(local),
+                          "note": "この端末に入れた文書。連合とは別の空間"}
 
     # A refusal says what is missing; the gap graph may already hold a
     # named ticket for it. Annotation only — a gap does not become a fact
