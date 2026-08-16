@@ -53,6 +53,7 @@ def build(n: int) -> dict:
         raise SystemExit("G0 UNMET: fugashi missing (%s) — run is VOID" % exc)
 
     from verantyx.meaning_index import connection
+    from verantyx.preregistration import Gate, guard
 
     tagger = fugashi.Tagger()
     conn = connection()
@@ -267,25 +268,37 @@ def build(n: int) -> dict:
         sum(len(c) for c in fillers.values()) / max(len(fillers), 1), 2)
     c2_ok = bool(out.get("C2_kana_kept"))
     out["C2"] = "PASS" if c2_ok else "FAIL"
-    if c1 == "PASS" and c2_ok and out["N1"] == "PASS" and out["N4"] == "PASS":
-        FILL.write_text(json.dumps(
-            {"%s\t%s" % k: dict(v) for k, v in fillers.items()},
-            ensure_ascii=False), encoding="utf-8")
-        out["fillers_saved"] = str(FILL)
-        out["fillers_mb"] = round(FILL.stat().st_size / 1048576, 1)
-    else:
-        out["fillers_saved"] = None
 
-    if c1 == "PASS" and c2_ok:
+    # Every pass line the pre-registrations name, declared here so the
+    # save cannot outrun them. The C2 run that wrote its files before
+    # anyone read the number is why this is code and not a comment.
+    gates = [
+        Gate("C1′", c1 == "PASS", "transitivity separates, floor applied"),
+        Gate("C2", c2_ok, "real kana verbs (する/ある/いる) survive"),
+        Gate("N1", out["N1"] == "PASS", "case slots separate"),
+        Gate("N4", out["N4"] == "PASS", "サ変 stem not double-counted"),
+    ]
+
+    def _write_frames():
         OUT.parent.mkdir(parents=True, exist_ok=True)
         OUT.write_text(json.dumps(
             {v: dict(c) for v, c in frames.items()}, ensure_ascii=False),
             encoding="utf-8")
-        out["saved"] = str(OUT)
-    else:
-        out["saved"] = None
-        out["note"] = ("C1 failed — nothing written. Frames that cannot "
-                       "separate 流れる from 科す may not be used downstream.")
+        return OUT
+
+    def _write_fillers():
+        FILL.write_text(json.dumps(
+            {"%s\t%s" % k: dict(v) for k, v in fillers.items()},
+            ensure_ascii=False), encoding="utf-8")
+        return FILL
+
+    fr_r = guard(gates, _write_frames, what="case_frames.json")
+    fi_r = guard(gates, _write_fillers, what="frame_fillers.json")
+    out["gate_report"] = fr_r
+    out["saved"] = fr_r.get("wrote")
+    out["fillers_saved"] = fi_r.get("wrote")
+    if out["fillers_saved"]:
+        out["fillers_mb"] = round(FILL.stat().st_size / 1048576, 1)
     return out
 
 
