@@ -146,6 +146,21 @@ class Conversation:
             {"turn": t.index, "speaker": t.speaker}
             for t in self.turns if topic in t.cores
         ]
+        # The turn log is the fallback the core index cannot give. Measured
+        # twice on 2026-08-18 while seeding the operator's clone: 事前登録
+        # was stored as a FACET of core 測定, and muse-glimmer sat inside a
+        # turn whose core was something else — both answered ABSENT about
+        # rules the operator had just stated. ABSENT is the one verdict this
+        # module must never get wrong, and a verbatim substring of a turn's
+        # own text is exact evidence of mention, not a guess.
+        if not mentions:
+            for t in self.turns:
+                if topic and topic in t.text:
+                    mentions.append({"turn": t.index, "speaker": t.speaker,
+                                     "via": "turn_text"})
+        if mentions and loc.get("state") == "ABSENT":
+            loc["state"] = "ACTIVE"
+            loc["via"] = "turn_text"
         loc["mentions"] = mentions
         return loc
 
