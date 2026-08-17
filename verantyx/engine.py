@@ -254,13 +254,37 @@ def ask(query: str, vera: Any, *, last_core: str = "",
         # Cut to the expression itself before handing over — a hand-off
         # normalisation, not an interpretation: if no run of arithmetic
         # characters is present, nothing is passed and nothing is claimed.
-        _mx = _re.search(r"[0-9０-９][-+*/^=()0-9０-９xX\s.,]*", q)
-        m = math_ask(_mx.group(0).strip()) if _mx else {"verdict": "UNKNOWN_NO_EXPR"}
+        # Closed operator words, normalised BEFORE the expression is cut.
+        # Measured 2026-08-18 over the chat door: 「3たす4は」 matched only
+        # the leading 「3」 (たす breaks the character class), math_ask("3")
+        # answered ANSWER 3, and the engine asserted a wrong number with a
+        # straight face. Two rules close the class:
+        #   1. たす/ひく/かける/わる (and kanji forms) become +-*/ first —
+        #      a hand-off normalisation from a closed table, no parsing.
+        #   2. an expression with NO operator is not an arithmetic question.
+        #      A lone number is what the old regex fabricated from; nothing
+        #      is passed and the stages below get their turn.
+        _qm = q
+        for _w, _op in (("たす", "+"), ("足す", "+"), ("プラス", "+"),
+                        ("ひく", "-"), ("引く", "-"), ("マイナス", "-"),
+                        ("かける", "*"), ("掛ける", "*"),
+                        ("わる", "/"), ("割る", "/")):
+            _qm = _qm.replace(_w, _op)
+        _mx = _re.search(r"[0-9０-９][-+*/^=()0-9０-９xX\s.,]*", _qm)
+        _expr = _mx.group(0).strip() if _mx else ""
+        if _expr and not _re.search(r"[-+*/^=]", _expr):
+            _expr = ""
+        m = math_ask(_expr) if _expr else {"verdict": "UNKNOWN_NO_EXPR"}
         if not str(m.get("verdict", "UNKNOWN")).startswith("UNKNOWN"):
             t.note("math", True, str(m.get("verdict")), changed=True)
             t.raw, t.door = m, "math_sim"
             t.verdict = str(m.get("verdict"))
-            t.text = str(m.get("text") or m.get("answer") or "")
+            # math_ask answers in `value`; an empty text made the chat
+            # door print the verdict name instead of the number.
+            _val = m.get("text") or m.get("answer")
+            if _val in (None, "") and m.get("value") is not None:
+                _val = m.get("value")
+            t.text = str(_val if _val is not None else "")
             return t.as_dict()
         t.note("math", True, str(m.get("verdict")))
     except Exception as exc:

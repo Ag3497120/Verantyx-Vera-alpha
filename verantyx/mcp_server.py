@@ -1288,6 +1288,100 @@ def serve(store_path: str) -> int:
              "agenda": agenda(parent, alts)},
             ensure_ascii=False, default=str)
 
+    # ── vera_chat: 会話そのものを扉にする ─────────────────────────────
+    #
+    # The IDE used to LOAD a model to hold a conversation, and used MCP only
+    # for lookups. This door inverts that: the conversation lives HERE, the
+    # client renders text, and no model exists on either side. MCP's
+    # `sampling` capability — the server asking the client's LLM to generate
+    # — is deliberately never invoked: the whole point of this engine is
+    # that nothing needs to be sampled. A reply is composed, typed, and
+    # sourced, or it is a typed refusal.
+    #
+    # State: the conversation is the SAME persistent one the other doors
+    # read (`add_conversation_turn` / `check_context_drift`), so what is
+    # said here is recallable there, and covenants set there bind replies
+    # here. `last_core` rides per-server-process so 「その刑は」 resolves.
+    _chat_state: Dict[str, Any] = {"last_core": ""}
+
+    @mcp.tool()
+    def vera_chat(text: str, store_first: bool = False,
+                  reset_topic: bool = False) -> str:
+        """Talk with the whole engine — stateful, model-free, audited.
+
+        One call = one turn. What happens inside, in the measured layering
+        order (束ねず重ねる — each stage hands off, none votes twice):
+
+          1. your words enter the conversation SPACE (content-addressed,
+             no window, cannot silently overflow)
+          2. `engine.ask` composes: intent, staging, typo repair,
+             arithmetic, theorem witness, difference, census, context
+             completion, meaning descent, arm placement, gap ledger,
+             frame composition — with `last_core` carried from the
+             previous turn, so 「その刑は」 resolves
+          3. the reply is audited BESIDE the answer, never as a gate:
+             covenant check (rules you set earlier) and context-drift
+             check (is it ignoring what this conversation settled)
+          4. the reply enters the conversation space too, so later turns
+             can hold this one to account
+
+        `store_first` prefers your loaded documents over the federation
+        when both answer. `reset_topic` drops the carried subject (start a
+        new thread without forgetting the conversation).
+
+        Deterministic, and no model is called — not here, not via MCP
+        sampling, not anywhere."""
+        from .engine import ask as _engine_ask
+
+        if reset_topic:
+            _chat_state["last_core"] = ""
+        q = (text or "").strip()
+        if not q:
+            return json.dumps({"verdict": "UNKNOWN_EMPTY_TURN"},
+                              ensure_ascii=False)
+
+        _conversation.add_turn("user", q)
+
+        r = _engine_ask(q, _vera(), last_core=_chat_state["last_core"],
+                        store_path=path, store=store,
+                        store_first=store_first)
+
+        reply = (r.get("text") or "").strip()
+        # A typed refusal is a real reply: name the verdict rather than
+        # inventing prose around it.
+        if not reply:
+            reply = "（%s）" % (r.get("verdict") or "UNKNOWN")
+
+        audits: Dict[str, Any] = {}
+        try:
+            audits["covenants"] = _register.check(reply, asked=q, store=store)
+        except Exception as e:      # 監査の故障は答えを潰さず名指しする
+            audits["covenants"] = {"error": str(e)}
+        try:
+            audits["context_drift"] = _collapse(_conversation, reply)
+        except Exception as e:
+            audits["context_drift"] = {"error": str(e)}
+
+        _conversation.add_turn("vera", reply)
+        _conversation.memory.save(_conv_path)
+        if r.get("core"):
+            _chat_state["last_core"] = str(r["core"])
+
+        stages = r.get("stages")
+        return json.dumps({
+            "reply": reply,
+            "verdict": r.get("verdict"),
+            "door": r.get("door"),
+            "core": r.get("core"),
+            "last_core": _chat_state["last_core"],
+            "witnesses": r.get("witnesses"),
+            "origins": r.get("origins"),
+            "sections": r.get("sections"),
+            "stages": stages,
+            "audits": audits,
+            "conversation": _conversation.stats(),
+        }, ensure_ascii=False)
+
     @mcp.tool()
     def vera_engine(query: str, last_core: str = "", domain: str = "",
                     store_first: bool = False) -> str:
