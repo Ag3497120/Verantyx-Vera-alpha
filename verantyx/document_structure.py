@@ -366,6 +366,110 @@ def _stair_pick(lines: List[str], subject: str) -> Optional[str]:
     return lines[votes[0]]
 
 
+def _doc_vocab(book: Dict[str, Any]) -> set:
+    """文書が実際に書いている語だけ。外の辞書は持ち込まない。"""
+    v: set = set()
+    for d in book.get("documents", []):
+        for sec in d.get("sections", []):
+            v |= set(content_terms(sec.get("heading") or ""))
+            for line in sec.get("lines") or []:
+                v |= set(content_terms(line))
+        for name, val in (d.get("labels") or {}).items():
+            v |= set(content_terms(name)) | set(content_terms(val))
+    return {w for w in v if len(w) >= 2}
+
+
+def typo_hint(book: Dict[str, Any], term: str) -> List[str]:
+    """この語は、文書が書いている別の語の打ち損じか。訂正はしない。
+
+    誤字回復は測定済み(回復@5 84.8%、実在語への誤発火 0/500)なのに、
+    文書の経路からは一度も呼ばれていなかった。実測 2026-08-18、
+    「時間害労働の割増賃金は」は拒否文で「時間害労働」という非語を名指す
+    だけで、文書が 時間外労働 を持っていることには触れなかった。
+
+    語彙は文書自身のものに限る。外の辞書を積むと、文書に無い語を「在る」
+    側に数えてしまう。3規程133語で 時間害労働→時間外労働、割増賃銀→
+    割増賃金、宿泊日→宿泊費 を回復し、実在語4件への誤発火は 0。
+    片仮名は位置単位を持たないので棄権する(インシデソト)。
+
+    返すのは候補だけで、問いは書き換えない。どれを意味していたかを決める
+    のは読み手であって、この関数ではない。
+    """
+    try:
+        from . import lattice as _lat, typo_recovery as _tr
+    except Exception:
+        return []
+    vocab = book.get("_vocab")
+    if vocab is None:
+        vocab = _doc_vocab(book)
+        try:
+            book["_vocab"] = vocab
+            book["_lattice"] = _lat.build(vocab)
+        except Exception:
+            return []
+    lat = book.get("_lattice")
+    if lat is None or not vocab:
+        return []
+    try:
+        r = _tr.recover(term, lattice=lat, vocab=vocab)
+    except Exception:
+        return []
+    if r.get("verdict") != "TYPO_CANDIDATE":
+        return []
+    return [c.get("word") for c in (r.get("candidates") or [])[:3] if c.get("word")]
+
+
+def _title_descent(book: Dict[str, Any], subject: str):
+    """題名で文書へ降り、別の語で節へ降りる。二語とも文書自身の言葉。
+
+    棚が一件のうちは要らない。増えた途端に効く — 実測 2026-08-18、3規程・
+    7問で「出張の申請はいつまでに」が就業規則の第5条 出張へ降りた。正しい
+    文書は出張旅費規程だが、その見出しは 申請/上限/期限 で、出張 はどこにも
+    無い。題名にしかない。見出しだけを見る読み手には、文書の名前が見えて
+    いなかった。
+
+    conduct_tree を先に当てたが、この規模では移らなかった(7問中5問が
+    UNKNOWN_NO_ROUTE)。あれは36法令の連合で測った器官で、核が13〜35しか
+    ない文書には伝導の流れる先が無い。検証済みとは「その規模・その形で」
+    であって、移送は無料ではない。だからここは器官を持ち込まず、book が
+    既に持っている source を経路に載せるだけにしてある。
+
+    二語を要求するのは、題名一致だけで文書を決め打ちしないため。出張 が
+    題名に当たっても、節を選ぶ語が別に要る。片方しか無ければ何も返さず、
+    従来の順路がそのまま動く。
+
+    実測: 複数文書 6/7 → 7/7、単一文書の回帰 誤答 0。
+    """
+    terms = content_terms(subject)
+    if len(terms) < 2:
+        return None
+    for doc in book.get("documents", []):
+        stem = _norm(str(doc.get("source", "")).rsplit(".", 1)[0])
+        if not stem:
+            continue
+        by_title = [t for t in terms if _norm(t) and _norm(t) in stem]
+        if not by_title:
+            continue
+        rest = [t for t in terms if t not in by_title]
+        for sec in doc.get("sections", []):
+            head = _norm(sec.get("heading") or "")
+            if not head or not sec.get("lines"):
+                continue
+            for t in rest:
+                if _norm(t) and _norm(t) in head:
+                    lines = list(sec["lines"])
+                    one = _stair_pick(lines, subject)
+                    return {"verdict": "DOCUMENT_LINE" if one else "DOCUMENT_SECTION",
+                            "subject": sec.get("heading"),
+                            "text": one or "\n".join(lines),
+                            "lines": lines,
+                            "source": doc.get("source"), "quoted": True,
+                            "reached_via": "%s→%s" % (by_title[0], t),
+                            "note": "題名「%s」で文書に降り、「%s」で節に降りた"
+                                    % (doc.get("source"), t)}
+    return None
+
+
 def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     """What the loaded documents say about this subject, verbatim.
 
@@ -425,6 +529,11 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                         "source": doc.get("source"),
                         "quoted": True,
                         "note": "文書の該当節をそのまま引用。並び順は原文のまま"}
+    # 棚が複数になった時点で、文書の名前が経路の一部になる。
+    descended = _title_descent(book, subject)
+    if descended is not None:
+        return descended
+
     # ── ここから後退。すべて閉じた規則で、置換は必ず名乗る ──────────────
     #
     # Measured 2026-08-18 on a company-regulation probe: 「宿泊費の上限は」
@@ -544,6 +653,7 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                             "text": "文書は「%s」を明記していない。「%s」の定め（%s）: %s"
                                     % (_earlier_absent[0], probe,
                                        sec.get("heading"), " / ".join(hit[:3])),
+                            "typo_candidates": typo_hint(book, _earlier_absent[0]),
                             "note": "不在は部分文字列検査で追試可能。近い語の定めを"
                                     "引用しただけで、「%s」の答えではない" % _earlier_absent[0]}
                 if hit:
