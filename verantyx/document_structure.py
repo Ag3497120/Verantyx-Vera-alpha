@@ -545,13 +545,20 @@ def _title_descent(book: Dict[str, Any], subject: str):
     terms = content_terms(subject)
     if len(terms) < 2:
         return None
-    for doc in book.get("documents", []):
+
+    docs = book.get("documents", []) or []
+    matched: List[Tuple[Dict[str, Any], List[str]]] = []
+    for doc in docs:
         stem = _norm(str(doc.get("source", "")).rsplit(".", 1)[0])
         if not stem:
             continue
         by_title = [t for t in terms if _norm(t) and _norm(t) in stem]
-        if not by_title:
-            continue
+        if by_title:
+            matched.append((doc, by_title))
+    if not matched:
+        return None
+
+    for doc, by_title in matched:
         rest = rank_probes(subject, [t for t in terms if t not in by_title], book)
         # 最優先の探査語(rest[0])が不発なら次を試す — DOCUMENT_MULTI と
         # 同じ「最優先語が複数節に独立着地したら列挙する」規律を、題名で
@@ -596,7 +603,60 @@ def _title_descent(book: Dict[str, Any], subject: str):
                     "reached_via": "%s→%s" % (by_title[0], t),
                     "note": "題名「%s」で文書に降り、「%s」で節に降りた"
                             % (doc.get("source"), t)}
-    return None
+
+        # 見出しには当たらなかった。題名で1文書に絞り込めているのに
+        # ここで諦めて後段の全文書検索に処理を渡すと、無関係な——時には
+        # 矛盾する——別文書の答えを拾ってしまう。実測 2026-08-18:
+        # 「本社のグリーン車は使えますか」は by_title=['本社'] で
+        # 本社経費精算規程.txt 一件に正しく絞り込めたが、その文書では
+        # グリーン車の定めが見出しではなく「第5条 交通費の上限」の
+        # 本文行にしかなく、ここまでは本文行を見ていなかったため
+        # None を返し、後段が名古屋支社経費規程.txt(グリーン車を許可する
+        # 矛盾した規程)の見出しを拾って誤答した。見出しの次は、この
+        # 文書の中だけで本文行も見る——他の文書の本文には触れない。
+        for t in rest:
+            pn = _norm(t)
+            if not pn:
+                continue
+            line_hits: List[Dict[str, Any]] = []
+            for sec in doc.get("sections", []):
+                for ln in (sec.get("lines") or []):
+                    if pn in ln:
+                        line_hits.append({"section": sec.get("heading"),
+                                           "text": ln, "source": doc.get("source")})
+            if not line_hits:
+                continue
+            if len(line_hits) >= 2:
+                joined = "\n".join(
+                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    for h in line_hits)
+                return {"verdict": "DOCUMENT_MULTI", "subject": subject,
+                        "items": line_hits, "text": joined, "quoted": True,
+                        "reached_via": "%s→%s" % (by_title[0], t),
+                        "note": "題名「%s」に降りた後、「%s」を含む本文行が"
+                                "%d件見つかった。1つに絞らず全部を引用する"
+                                % (doc.get("source"), t, len(line_hits))}
+            h = line_hits[0]
+            return {"verdict": "DOCUMENT_LINE", "subject": h["section"],
+                    "text": h["text"], "lines": [h["text"]],
+                    "source": h["source"], "quoted": True,
+                    "reached_via": "%s→%s" % (by_title[0], t),
+                    "note": "題名「%s」で文書に降り、本文行で「%s」に当たった"
+                            % (doc.get("source"), t)}
+
+    # 題名で名指しされた文書(たち)の、見出しにも本文行にも当たらなかった。
+    # ここで DOCUMENT_NOT_SPECIFIED_IN_TITLE のような固有の型を返して
+    # 打ち切ると、単一文書の時から使ってきた「明記なしの型」(governing
+    # 文・誤字候補つき、絶対不在の昇格)を素通りさせてしまう — 実測
+    # 2026-08-18: 経費精算規程.txt 一件だけの場面で「精算」が題名にも
+    # 当たるため、以前は _lookup 本体の absence-promotion まで届いて
+    # いた「3万円の食事代は精算できますか」が、ここで素っ気ない拒否に
+    # 化けて後退した。答えを返すのではなく、探す範囲だけをこの文書
+    # (たち)に絞って呼び出し元(_lookup)へ渡す — 未指名の文書へは
+    # 渡さないという規律は保ったまま、既存の型は生かす。
+    sources = [d.get("source") for d, _ in matched]
+    return {"verdict": "_TITLE_SCOPE_ONLY", "sources": sources,
+            "by_title": matched[0][1]}
 
 
 _ARTICLE_RE = re.compile(r"^第\s*[0-9０-９一二三四五六七八九十百]+\s*[条章節項編款]\s*(.*)$")
@@ -720,7 +780,20 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     # 棚が複数になった時点で、文書の名前が経路の一部になる。
     descended = _title_descent(book, subject)
     if descended is not None:
-        return descended
+        if descended.get("verdict") == "_TITLE_SCOPE_ONLY":
+            # 題名で1文書(たち)に絞り込めたが、その中に答えは無かった。
+            # ここで諦めて未指名の文書へ処理を渡すと、矛盾する別文書の
+            # 答えを拾ってしまう(実測 2026-08-18: 「本社のグリーン車は
+            # 使えますか」が名古屋支社経費規程.txtの答えを返した)。
+            # 以降の後退段(0〜3)は既存のまま——ただし探す範囲を、この
+            # 題名で絞り込んだ文書だけに narrow する。文書が元々1件しか
+            # 無い場面では絞り込み後も同じ1件のままなので、単一文書の
+            # 挙動は変わらない。
+            scope = set(descended.get("sources") or [])
+            book = {"documents": [d for d in book.get("documents", [])
+                                   if d.get("source") in scope]}
+        else:
+            return descended
 
     # ── ここから後退。すべて閉じた規則で、置換は必ず名乗る ──────────────
     #
@@ -817,6 +890,7 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
         pn0 = _norm(top)
         if pn0:
             hits: List[Dict[str, Any]] = []
+            hit_docs: set = set()
             for doc in book.get("documents", []):
                 for sec in doc.get("sections", []):
                     raw_head = sec.get("heading", "") or ""
@@ -828,6 +902,39 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                         hits.append({"section": sec.get("heading"),
                                      "text": one or "\n".join(lines),
                                      "source": doc.get("source")})
+                        hit_docs.add(doc.get("source"))
+            # 見出しに一件も当たらなかった文書にも、本文行にしか書いて
+            # いない矛盾する定めがあり得る。見出しだけを比べると、その
+            # 文書は最初から候補にすら入らず、矛盾を見落として片方だけを
+            # 答えてしまう。実測 2026-08-18:「グリーン車は使えますか」
+            # — 名古屋支社経費規程.txtは見出し「第4条 グリーン車」で
+            # 許可するが、本社経費精算規程.txtは同じ語を「第5条 交通費の
+            # 上限」の本文行で禁じる。見出しに無い文書を1文書1件までの
+            # 補完で拾い、既存の節ごと列挙(見出し側)は壊さない。
+            #
+            # ただし、見出し側に候補が1件も無いなら、この補完は動かさ
+            # ない。実測 2026-08-18(corp2/5類似文書):「宿泊費の上限は」
+            # は見出しに1件も独立着地せず、この補完だけが動いて
+            # 経費精算規程.txtの「対象経費に宿泊費を含む」という無関係な
+            # 行まで候補に混ぜ、単一の正しい答え(出張旅費規程.txt)を
+            # 無意味な列挙に変えて後退させた。本文行の補完は「見出しで
+            # 見つかった矛盾に、もう一件の文書を足す」安全網であって、
+            # 候補をゼロから作る役ではない。
+            if hits:
+                for doc in book.get("documents", []):
+                    if doc.get("source") in hit_docs:
+                        continue
+                    found = False
+                    for sec in doc.get("sections", []):
+                        for ln in (sec.get("lines") or []):
+                            if pn0 in ln:
+                                hits.append({"section": sec.get("heading"),
+                                             "text": ln, "source": doc.get("source")})
+                                hit_docs.add(doc.get("source"))
+                                found = True
+                                break
+                    if found:
+                        break
             if len(hits) >= 2:
                 joined = "\n".join(
                     "[%s／%s] %s" % (h["source"], h["section"], h["text"])
