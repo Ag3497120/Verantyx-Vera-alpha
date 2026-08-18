@@ -599,7 +599,66 @@ def _title_descent(book: Dict[str, Any], subject: str):
     return None
 
 
+_ARTICLE_RE = re.compile(r"^第\s*[0-9０-９一二三四五六七八九十百]+\s*[条章節項編款]\s*(.*)$")
+
+
+def _heading_only(heading: str) -> str:
+    """「第2条 交通費の上限」→「交通費の上限」。条番号は監査に要らない。"""
+    m = _ARTICLE_RE.match(heading or "")
+    return (m.group(1).strip() if m and m.group(1).strip() else heading or "")
+
+
+def _reference_summary(result: Dict[str, Any]) -> Optional[str]:
+    """引用の隣に添える、見出しだけの構成的要約。新しい語は一切作らない。
+
+    実測 2026-08-18: 一般知識のWriter(jawiki由来の文型)を文書の内容語に
+    流用したら、「精算は、グリーンをグリーン車さない。」「精算は、グリーン
+    （がいしょくほう）である。」という意味不明・汚染混じりの文が出た —
+    文書モードの大原則(文書に無いことは答えない)に反する危険な結果。
+
+    安全なのは、見出し(条項名)をそのまま繋ぐことだけ。DOCUMENT_MULTI
+    (経費の上限は→交通費/会議費/宿泊費の3件)を「〜についてそれぞれ
+    定めがあります」と目次化する。単一の答えには、根拠の節名を
+    「この定めは〜にあります」と添える。どちらも文書自身の見出し文字列
+    以外の語を一つも使わない。
+    """
+    verdict = result.get("verdict")
+    if verdict == "DOCUMENT_MULTI":
+        heads = [_heading_only(it.get("section") or "")
+                 for it in (result.get("items") or [])]
+        heads = [h for h in heads if h]
+        if heads:
+            return "、".join(heads) + "についてそれぞれ定めがあります。"
+    elif verdict in ("DOCUMENT_LINE", "DOCUMENT_SECTION"):
+        # section(節見出し)を優先する。subject は本文行への直接マッチ
+        # (605行目以降、探査語そのもの)のときは節見出しではなく探査語
+        # そのもの("グリーン")が入る — 実測、それを見出しと誤認して
+        # 「この定めは「グリーン」にあります」という不完全な参考文に
+        # なった。DOCUMENT_SECTION 側は section を持たず subject に
+        # 見出しを持つので、両方を順に試す。
+        head = _heading_only(str(result.get("section") or
+                                  result.get("subject") or ""))
+        if head:
+            return "この定めは「%s」にあります。" % head
+    return None
+
+
 def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
+    """``_lookup`` に見出しベースの参考要約(reference)を重ねた薄い皮。
+
+    証拠(verdict/text)は _lookup がそのまま持つ。reference は見出しの
+    並びだけで作る構成的な文で、新しい主張は一つも含まない —
+    constructed:True を付け、証言と混同させない。
+    """
+    result = _lookup(subject, book)
+    ref = _reference_summary(result)
+    if ref:
+        result["reference"] = ref
+        result["reference_constructed"] = True
+    return result
+
+
+def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     """What the loaded documents say about this subject, verbatim.
 
     Labels are consulted before headings: 「提出期限」 is a labelled value
