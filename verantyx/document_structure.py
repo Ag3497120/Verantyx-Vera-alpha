@@ -311,6 +311,66 @@ def _ngrams(text: str, n: int) -> set:
 _GRAINS = (0, 2, 3)
 
 
+def _section_spread(book: Dict[str, Any], term: str) -> int:
+    """探査語が何節にまたがって現れるか。少ないほど集中的で特定的。
+
+    「集中度」こそが実際の特定性の指標だった。長さでも主辞性でもない。
+    """
+    pn = _norm(term)
+    if not pn:
+        return 10 ** 6
+    n = 0
+    for d in book.get("documents", []):
+        for sec in d.get("sections", []):
+            text = (sec.get("heading", "") or "") + "\n" + \
+                   "\n".join(sec.get("lines") or [])
+            if pn in _norm(text):
+                n += 1
+    return n
+    # n==0(どの節にも無い語)は最小値のまま返す。最初は「一度も現れない
+    # 語は最後尾に送る」つもりで大きな値を返していたが、それは既存の
+    # 不在昇格(_earlier_absent)の前提と正面衝突した。あの仕組みは
+    # 「より特定的な語を先に試し、不在なら記録しておいて、後で一般語が
+    # ヒットしたときにその不在を名乗る」という設計で、不在の語こそ
+    # 先頭に来る必要がある。実測: 大きな値を返すと「飛行機のチケット代
+    # は精算できますか」で不在の探査語(飛行機・チケット・代)が最後に
+    # 送られ、実在する「精算」が先に試されて不在昇格が起きないまま
+    # DOCUMENT_LINE で確定してしまった(3/9 が新たに壊れた)。
+
+
+def rank_probes(subject: str, terms: List[str], book: Dict[str, Any]) -> List[str]:
+    """探査語を、文書内での集中度(特定性)優先で並べる。
+
+    実測 2026-08-18、二つの対立するケースで「AのB は B が主辞」という
+    構文規則(主要部後置)だけでは決着がつかないと分かった:
+
+        出張旅費の精算はいつまでに → 主辞は精算。文書内でも精算(1節)は
+            出張旅費(2節: 見出しと第2条本文の両方に出る一般語)より集中
+            的 — 主辞と集中度が一致し、どちらでも正解に届く
+
+        減給の上限は → 主辞は上限。だが上限は文書内で2節(繰越上限・
+            宿泊費の上限)にまたがる一般語で、減給は1節(懲戒)に集中。
+            主辞優先だけを採ると「繰越上限は20日とする。」という無関係
+            な行を返した — 主辞性と集中度が逆を向いた実例
+
+        書留の料金は → 書留(不在)・料金(1節)。両方とも集中度は測れる
+            が、不在昇格の判定(_absent)は別の仕組みで、ここでは触れない
+
+    集中度が本体、主辞性は同点の時だけの補助にした。長さや原文の出現
+    位置に頼っていた旧版より、二つの実例の両方が同時に通る。
+    """
+    def is_modifier(t: str) -> bool:
+        i = subject.find(t)
+        while i != -1:
+            if subject[i + len(t):i + len(t) + 1] == "の":
+                return True
+            i = subject.find(t, i + 1)
+        return False
+    key = lambda t: (_section_spread(book, t), is_modifier(t),
+                     -len(t), subject.find(t))
+    return sorted(terms, key=key)
+
+
 def _independent_in(probe: str, text: str) -> bool:
     """探査語 probe は text の中で、複合語の一部ではなく独立して立つか。
 
@@ -482,13 +542,15 @@ def _title_descent(book: Dict[str, Any], subject: str):
         by_title = [t for t in terms if _norm(t) and _norm(t) in stem]
         if not by_title:
             continue
-        rest = [t for t in terms if t not in by_title]
+        rest = rank_probes(subject, [t for t in terms if t not in by_title], book)
         for sec in doc.get("sections", []):
             head = _norm(sec.get("heading") or "")
+            raw_head = sec.get("heading") or ""
             if not head or not sec.get("lines"):
                 continue
             for t in rest:
-                if _norm(t) and _norm(t) in head:
+                if _norm(t) and _norm(t) in head \
+                        and _independent_in(_norm(t), raw_head):
                     lines = list(sec["lines"])
                     one = _stair_pick(lines, subject)
                     return {"verdict": "DOCUMENT_LINE" if one else "DOCUMENT_SECTION",
@@ -620,7 +682,7 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
         if run not in _HIRA_STOP:
             cand.add(run)
     probes: List[str] = []
-    for run in sorted(cand, key=lambda r: (-len(r), subject.find(r))):
+    for run in rank_probes(subject, sorted(cand, key=lambda r: (-len(r), subject.find(r))), book):
         # 主題自身も探査語に含める。以前は _norm(run) != q で除外して
         # いた — 完全一致の段が先に引いたから、という理由だが、その段が
         # 引くのはラベルと見出しだけで、行は一度も主題そのもので引かれて
