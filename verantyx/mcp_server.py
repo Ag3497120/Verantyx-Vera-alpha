@@ -2596,6 +2596,53 @@ def serve(store_path: str) -> int:
         return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()
+    def vera_multi_party(sentence: str) -> str:
+        """Split a multi-actor sentence into events, and look up each
+        actor's act against the loaded documents independently.
+
+        「AがBを脅してBがCを傷つけた場合、誰がどのような罪を犯したか」 is
+        not one subject but two events, with the object of the first
+        (B) becoming the actor of the second — feeding the whole sentence
+        to `vera_ask_documents` either matches no heading at all or blends
+        the two acts into one answer. This door splits on the closed
+        surface form 「Xが Yを V(て/た/で/だ/る形)」 and calls the document
+        lookup once per event, so each actor's act is answered from the
+        document's own words for THAT act alone.
+
+        No legal reasoning happens here — no culpability, intent, or
+        justification is weighed. Each event's act is looked up on its
+        own; if the document does not hold that word (even under a
+        one-character stem fallback), that event stays a typed refusal
+        rather than a guess. Pronouns, elided subjects, and non-conforming
+        grammar are not decomposed — DECOMPOSE_NO_EVENTS says so honestly
+        rather than guessing at structure."""
+        from . import document_structure as _ds
+        from .multi_party import analyze_multi_party
+
+        book = _ds.load(store_path)
+        if not book.get("documents"):
+            return json.dumps(
+                {"verdict": "UNKNOWN_NO_DOCUMENTS", "sentence": sentence,
+                 "note": "この面は取り込んだ文書だけを引く。まだ一つも無い"},
+                ensure_ascii=False)
+        out = analyze_multi_party(sentence, book)
+        if out.get("verdict") == "MULTI_PARTY_ANALYSIS" and out.get("unresolved_count"):
+            # 未解決の行為が残るなら、その行為語についても domain_hint と
+            # 同じ実測(薄く広げたfederation)を添える — 単一質問の拒否と
+            # 同じ扱い。
+            for ev in out["per_event"]:
+                v = str(ev.get("crime_verdict") or "")
+                if v.startswith("UNKNOWN"):
+                    try:
+                        from .coverage import document_needed as _document_needed
+                        ev["domain_hint"] = _document_needed(
+                            _atlas(), ev["verb"], v, aliases=_aliases())
+                    except Exception as e:
+                        ev["domain_hint"] = {"verdict": "UNKNOWN_COVERAGE_UNAVAILABLE",
+                                             "note": str(e)[:120]}
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
     def vera_documents(forget: str = "") -> str:
         """What documents this terminal has loaded, and a way to drop one.
 
