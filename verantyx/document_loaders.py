@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import unicodedata
 import io
 import json
 import re
@@ -420,6 +421,60 @@ def unwrap_layout(text: str) -> str:
     return _normalized("\n".join(out))
 
 
+
+#: Scripts a normal document mixes freely without meaning anything by it.
+#: Everything else is counted, and a document that draws on four or more
+#: of those is not multilingual — it is broken.
+_ORDINARY_SCRIPTS = frozenset({
+    "LATIN", "DIGIT", "SPACE", "CJK", "HIRAGANA", "KATAKANA", "IDEOGRAPHIC",
+    "FULLWIDTH", "HALFWIDTH", "KATAKANA-HIRAGANA", "NO-BREAK", "ZERO",
+    "LEFT", "RIGHT", "HORIZONTAL", "VERTICAL", "BOX", "EM", "EN", "HYPHEN",
+    "COMMA", "QUESTION", "EXCLAMATION", "BULLET", "MIDDLE", "WAVE",
+    "REPLACEMENT", "BLACK", "WHITE", "UPWARDS", "DOWNWARDS", "LEFTWARDS",
+    "RIGHTWARDS", "HEAVY", "LIGHT", "DOUBLE", "SUPERSCRIPT", "SUBSCRIPT",
+    "DEGREE", "MICRO", "SECTION", "PILCROW", "DAGGER", "ELLIPSIS", "PRIME",
+    "MINUS", "MULTIPLICATION", "DIVISION", "NOT", "PLUS", "INFINITY",
+    "PARTIAL", "INCREMENT", "NABLA", "ELEMENT", "INTEGRAL", "ALMOST",
+    "IDENTICAL", "LESS-THAN", "GREATER-THAN", "SQUARE", "CIRCLED",
+    "PARENTHESIZED", "NUMBER",
+})
+
+#: Four, not two. A Russian paper carrying maths mixes Cyrillic with Greek
+#: and Latin and is perfectly legible; the measured break is far above it.
+ILLEGIBLE_SCRIPT_COUNT = 4
+
+
+def script_mix(text: str) -> Dict[str, int]:
+    """Which unusual scripts this text draws on, and how heavily.
+
+    A PDF whose embedded font carries no ToUnicode map extracts as a
+    character-for-character substitution into whatever blocks the CIDs
+    happen to land in. Measured on one real 12,336-line PDF: pypdf
+    returned Greek, Tibetan, Oriya, Coptic, Devanagari and Arabic *in the
+    same document* — 20 scripts — where PDFKit read the same file as clean
+    Japanese. Nothing about the bytes said "failure": `extract_text`
+    returned a long, confident string, and 10,191 sentences and 2,032
+    cores went into the store before anyone read one.
+
+    Simpler tests were measured first and rejected. The share of odd
+    characters puts a Japanese maths note (0.15) *above* the broken PDF
+    (0.048), and counting runs of them puts ordinary Russian (0.81) above
+    it too. What actually separates the two is that a real document
+    commits to one or two scripts, and a mis-decoded one draws from every
+    block at once.
+    """
+    counts: Dict[str, int] = {}
+    for ch in text:
+        if ch.isspace() or ord(ch) < 128:
+            continue
+        token = unicodedata.name(ch, "UNNAMED").split()[0]
+        if token in _ORDINARY_SCRIPTS:
+            continue
+        counts[token] = counts.get(token, 0) + 1
+    floor = max(1, int(len(text) * 0.0005))
+    return {k: v for k, v in counts.items() if v >= floor}
+
+
 def _from_pdf(path: Path) -> str:
     if importlib.util.find_spec("pypdf") is None:
         # `name=` matters: the caller distinguishes this from any other
@@ -510,6 +565,23 @@ def load_path(path: str, source: Optional[str] = None) -> Dict[str, Any]:
 
     if laid_out:
         text = unwrap_layout(text)
+
+    # 読めない文字列は、読めなかったことより悪い。長く自信ありげな
+    # 文字列が返るので、誰も読まないまま店に入る。実測: この門が無い間に
+    # 1件のPDFが連合の核 2,140 のうち 937 を化けで埋めた。
+    mixed = script_mix(text)
+    if len(mixed) >= ILLEGIBLE_SCRIPT_COUNT:
+        top = sorted(mixed.items(), key=lambda kv: -kv[1])[:6]
+        return {"verdict": "UNKNOWN_ILLEGIBLE_TEXT", "path": str(p),
+                "scripts": len(mixed),
+                "sample": [k for k, _ in top],
+                "reason": "%d の異なる文字体系が混在している — 埋め込み"
+                          "フォントに ToUnicode 対応表が無く、字が別の"
+                          "ブロックへ写ったまま出てきた疑いが濃い"
+                          % len(mixed),
+                "note": "取り込みは行っていない。原文をテキストに書き出して"
+                        "から渡すか、PDFKit のように CID を解ける読取器を"
+                        "通したものを渡すこと"}
 
     if not text.strip():
         # Distinct from a parse failure, and it matters: a scanned PDF is an

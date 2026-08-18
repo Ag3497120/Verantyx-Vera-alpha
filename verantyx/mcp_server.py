@@ -2492,6 +2492,50 @@ def serve(store_path: str) -> int:
         return render_quickstart() if quickstart else render_guide()
 
     @mcp.tool()
+    def vera_documents(forget: str = "") -> str:
+        """What documents this terminal has loaded, and a way to drop one.
+
+        The domain shelf (`vera_domains`) and this one are different stores
+        and neither one lists the other: a domain is vocabulary — the words
+        of a field, so a sentence can be built in its register — while a
+        document is text kept verbatim so a line can be quoted back. A
+        person who loads a document and then looks for it on the domain
+        shelf will not find it, which is a fault of the shelves, not of
+        their memory. This is the missing shelf.
+
+        `forget` drops one document by source name. Nothing is removed
+        silently and nothing is merged: the sentences that ingest put into
+        the federation are a separate act with its own record.
+        """
+        from . import document_structure as _ds
+        book = _ds.load(store_path)
+        docs = book.get("documents", [])
+        if forget:
+            kept = [d for d in docs if d.get("source") != forget]
+            if len(kept) == len(docs):
+                return json.dumps({"verdict": "UNKNOWN_NO_SUCH_DOCUMENT",
+                                   "source": forget,
+                                   "have": [d.get("source") for d in docs]},
+                                  ensure_ascii=False)
+            book["documents"] = kept
+            _ds.sidecar_path(store_path).write_text(
+                json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
+            return json.dumps({"verdict": "FORGOT", "source": forget,
+                               "documents": len(kept),
+                               "note": "構造索引から外した。取り込みの際に"
+                                       "連合へ入った文はここでは消えない"},
+                              ensure_ascii=False)
+        return json.dumps(
+            {"verdict": "ANSWER",
+             "documents": [{"source": d.get("source"),
+                            "sections": len(d.get("sections") or []),
+                            "labels": len(d.get("labels") or {}),
+                            "lines": d.get("lines")} for d in docs],
+             "note": "文書は逐語引用のための棚。分野(語彙)とは別で、"
+                     "合体しない"},
+            ensure_ascii=False)
+
+    @mcp.tool()
     def load_documents(paths: str, ingest: bool = True) -> str:
         """Read files (or a folder) into the store — PDF, Word, HTML, CSV,
         JSON, plain text.
