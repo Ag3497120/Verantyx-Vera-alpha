@@ -285,6 +285,92 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                         "source": doc.get("source"),
                         "quoted": True,
                         "note": "文書の該当節をそのまま引用。並び順は原文のまま"}
+    # ── ここから後退。すべて閉じた規則で、置換は必ず名乗る ──────────────
+    #
+    # Measured 2026-08-18 on a company-regulation probe: 「宿泊費の上限は」
+    # fell through — 宿泊費 is a line under the 精算上限 heading, not a
+    # heading itself — and 「グリーン車は使えますか」 has no heading at all,
+    # yet the honest answer exists in the document: the governing section,
+    # plus the checkable fact that the term is never mentioned. An engine
+    # whose claim is "the document's own words or a typed refusal" owes
+    # exactly those two shapes, and owed them since 2026-08-16, when
+    # 「指定された要件は」 was recorded as the modified-noun-phrase hole.
+
+    from .lang import ja_content_runs
+    import re as _re
+
+    # 探査語。ja_content_runs は文字種境界で割る（グリーン車 → グリーン+車）
+    # ので、複合語の形も原文から直接拾う。閉じた2形だけ:
+    # カタカナ/ラテン+漢字尾（グリーン車・エコノミークラス）と漢字連。
+    cand = set(ja_content_runs(subject))
+    cand |= {m.group(0) for m in _re.finditer(r"[ァ-ヶーA-Za-z0-9]+[一-龥]{0,2}", subject)}
+    cand |= {m.group(0) for m in _re.finditer(r"[一-龥]{2,}", subject)}
+    probes: List[str] = []
+    for run in sorted(cand, key=lambda r: (-len(r), subject.find(r))):
+        if len(run) >= 2 and _norm(run) != q:
+            probes.append(run)
+
+    # 1. 内容語で、ラベル→見出し→本文行の順に照合（主辞抽出を包含する形）
+    for probe in probes:
+        pn = _norm(probe)
+        for doc in book.get("documents", []):
+            for name, value in (doc.get("labels") or {}).items():
+                if _norm(name) == pn:
+                    return {"verdict": "DOCUMENT_LABEL", "subject": name,
+                            "text": "%s: %s" % (name, value), "value": value,
+                            "source": doc.get("source"), "quoted": True,
+                            "reached_via": probe,
+                            "note": "「%s」の記載は無いが、内容語「%s」がラベルに一致。引用のみ"
+                                    % (subject, probe)}
+            for sec in doc.get("sections", []):
+                if pn and pn in _norm(sec.get("heading", "")) and sec.get("lines"):
+                    return {"verdict": "DOCUMENT_SECTION",
+                            "subject": sec.get("heading"),
+                            "text": "\n".join(sec.get("lines") or []),
+                            "lines": list(sec.get("lines") or []),
+                            "source": doc.get("source"), "quoted": True,
+                            "reached_via": probe,
+                            "note": "内容語「%s」で見出しに到達。該当節をそのまま引用" % probe}
+        # 2. 本文の行そのもの。行は文書の最小の定めで、引用に要約は要らない
+        for doc in book.get("documents", []):
+            for sec in doc.get("sections", []):
+                hit = [ln for ln in (sec.get("lines") or []) if probe in ln]
+                if hit:
+                    return {"verdict": "DOCUMENT_LINE",
+                            "subject": probe,
+                            "section": sec.get("heading"),
+                            "text": "\n".join(hit),
+                            "lines": hit,
+                            "source": doc.get("source"), "quoted": True,
+                            "note": "「%s」を含む行をそのまま引用（節: %s）"
+                                    % (probe, sec.get("heading"))}
+
+    # 3. 明記なしの型。語そのものは文書のどこにも無い（部分文字列検査 —
+    #    機械で追試できる主張）が、文字種境界の尾単位（グリーン車→車）を
+    #    共有する定めがあるなら、それが「最も近い定め」。可否は言わない —
+    #    沈黙の判定と、支配する条文の引用だけが、この構造に言える全部です。
+    tails: List[str] = []
+    for probe in probes or [q]:
+        m = _re.search(r"[ァ-ヶーA-Za-z]+([一-龥]{1,2})$", probe)
+        if m:
+            tails.append(m.group(1))
+    for tail in tails:
+        for doc in book.get("documents", []):
+            for sec in doc.get("sections", []):
+                hit = [ln for ln in (sec.get("lines") or []) if tail in ln]
+                if hit:
+                    term = probes[0] if probes else subject
+                    return {"verdict": "DOCUMENT_NOT_SPECIFIED",
+                            "subject": term,
+                            "section": sec.get("heading"),
+                            "term_absent": True,
+                            "governing": hit,
+                            "source": doc.get("source"), "quoted": True,
+                            "text": "文書は「%s」を明記していない。最も近い定め（%s）: %s"
+                                    % (term, sec.get("heading"), " / ".join(hit)),
+                            "note": "不在は部分文字列検査で追試可能。可否の判断はしていない — "
+                                    "明記が無いという事実と、支配する定めの引用のみ"}
+
     return {"verdict": "UNKNOWN_NOT_IN_DOCUMENTS", "subject": subject}
 
 

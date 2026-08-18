@@ -1288,6 +1288,83 @@ def serve(store_path: str) -> int:
              "agenda": agenda(parent, alts)},
             ensure_ascii=False, default=str)
 
+    @mcp.tool()
+    def vera_compare_spaces(topic: str) -> str:
+        """この端末の文書と、公開連合（一般知識）が、同じ主題について何を
+        言うかの差分。「この規程は一般的な考え方と比べて特殊か」の答えが
+        立つ場所で、社内文書だけのモデルには構造的に作れない比較です。
+
+        規律は structural_diff と同じ防御線に従う:
+          ・語彙は「実測あり / 実測なし」のみ。否定文は組み立てない —
+            「一般側に無い」は「一般ではそうでない」ではない
+          ・両側の被覆数を必ず併記。薄い側が差分の信頼度を決める
+          ・どちらかが3項目未満なら型付き棄権（どちらが薄いかを名指す）
+          ・列挙は各束8件まで+数えた尻尾
+
+        比較は合議ではない。二つの空間は今までどおり合流しない — 並べて
+        読めるようにするだけで、票はどちらにも入らない。"""
+        t = (topic or "").strip()
+        if not t:
+            return json.dumps({"verdict": "UNKNOWN_NO_SUBJECT"}, ensure_ascii=False)
+
+        # 文書側: 個人ストアの facet + 構造側車の該当行
+        doc_items: Dict[str, int] = {}
+        cr = getattr(store, "crosses", {}).get(t)
+        if cr:
+            for f, n in cr.items():
+                doc_items[f] = doc_items.get(f, 0) + int(n or 1)
+        try:
+            from .document_structure import load as _dl
+            for doc in _dl(path).get("documents", []):
+                for sec in doc.get("sections", []):
+                    for ln in (sec.get("lines") or []):
+                        if t in ln:
+                            doc_items[ln[:48]] = doc_items.get(ln[:48], 0) + 1
+        except Exception:
+            pass
+
+        # 一般側: 連合の facet
+        base_items: Dict[str, int] = {}
+        try:
+            v = _vera()
+            for lang in ("ja", "en"):
+                st_ = getattr(v, "stores", {}).get(lang)
+                c2 = getattr(st_, "crosses", {}).get(t) if st_ else None
+                if c2:
+                    for f, n in c2.items():
+                        base_items[f] = base_items.get(f, 0) + int(n or 1)
+        except Exception:
+            pass
+
+        nd, nb = len(doc_items), len(base_items)
+        if nd < 3 or nb < 3:
+            thin = []
+            if nd < 3: thin.append("document")
+            if nb < 3: thin.append("base")
+            return json.dumps({
+                "verdict": "INSUFFICIENT_PROFILE",
+                "topic": t, "thin_side": thin,
+                "coverage": {"document": nd, "base": nb},
+                "note": "薄い側が差分の信頼度を決める。%s側の被覆が3未満 — "
+                        "比較は基礎データ/文書の成長と共に立つ" % "・".join(thin),
+            }, ensure_ascii=False)
+
+        dset, bset = set(doc_items), set(base_items)
+        cap = 8
+        def bucket(keys, src):
+            ks = sorted(keys, key=lambda k: (-src[k], k))
+            return {"items": ks[:cap], "more": max(0, len(ks) - cap)}
+        return json.dumps({
+            "verdict": "SPACE_DIFF",
+            "topic": t,
+            "coverage": {"document": nd, "base": nb},
+            "shared":    bucket(dset & bset, doc_items),
+            "doc_only":  bucket(dset - bset, doc_items),
+            "base_only": bucket(bset - dset, base_items),
+            "note": "文書側に実測あり/一般側に実測なし、の対比のみ。可否や"
+                    "優劣の判断はしていない。二空間は合流していない",
+        }, ensure_ascii=False)
+
     # ── vera_chat: 会話そのものを扉にする ─────────────────────────────
     #
     # The IDE used to LOAD a model to hold a conversation, and used MCP only

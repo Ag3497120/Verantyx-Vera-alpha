@@ -330,7 +330,8 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                         break
                 dr = _docs_lookup(subj, book)
                 dv = str(dr.get("verdict", ""))
-                if dv in ("DOCUMENT_SECTION", "DOCUMENT_LABEL"):
+                if dv in ("DOCUMENT_SECTION", "DOCUMENT_LABEL",
+                          "DOCUMENT_LINE", "DOCUMENT_NOT_SPECIFIED"):
                     t.note("document", True,
                            "%s ← %s" % (dv, dr.get("source")), changed=True)
                     t.raw, t.door = dr, "document"
