@@ -1306,7 +1306,8 @@ def serve(store_path: str) -> int:
         `sources_json` は [{"url":…, "title":…, "text":…}, …]。返答は
         逐語引用+出典URL。頁が主題を明記しないときは、支配する近傍の
         定めと「明記なし」の型（部分文字列検査で追試可能）。"""
-        from .document_structure import index as _dx, lookup as _dlook, rejoin as _rejoin
+        from .document_structure import (index as _dx, lookup as _dlook,
+                                         rejoin as _rejoin, load as _dload)
         from .engine import _TOPIC_SUFFIXES
 
         try:
@@ -1354,6 +1355,23 @@ def serve(store_path: str) -> int:
             "discarded": True,
             "note": "一時知識。返答と同時に破棄済み — 店・文書・会話のどこにも残っていない",
         }
+        # 比較のため、この端末が既に持つ文書側の答えも横に並べる。
+        # 二空間の不合流則は守ったまま — 一つの verdict に混ぜず、
+        # 読み手がその場で見比べられるよう別フィールドで返すだけ。
+        # 文書側が既に答えを持つ主題でウェブへ聞き直した場合に、どちらが
+        # 何を言っているかを読み手が自分で比較できる。
+        try:
+            doc_book = _dload(store_path)
+            if doc_book.get("documents"):
+                dr = _dlook(subj, doc_book)
+                out["document_side"] = {
+                    "verdict": dr.get("verdict"),
+                    "text": dr.get("text") or "",
+                    "source": dr.get("source"),
+                    "quoted": bool(dr.get("quoted")),
+                }
+        except Exception:
+            pass
         return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()
@@ -1976,6 +1994,38 @@ def serve(store_path: str) -> int:
         quarantine.save(qpath)
         return json.dumps(
             {"proposed": [e.text for e in added], "quarantine": str(qpath)},
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def propose_web_evidence(text: str, source: str) -> str:
+        """Quarantine ONE raw web-search excerpt, verbatim, for human review
+        — the interactive counterpart of what `heartbeat(cognition_mode=
+        "sleep")` already does automatically for gap-resolution nodes.
+
+        `propose_ai_facts` runs the text through `candidate_sentences()`,
+        which is tuned for an assistant's spoken reply (drops hedge words,
+        meta-commentary, questions) — confirmed directly that running a
+        real fetched excerpt through it produced ZERO surviving candidates,
+        silently losing the evidence. This door instead calls
+        `propose_raw()`, which keeps the excerpt whole so a reviewer sees
+        exactly what was retrieved.
+
+        Use this after `vera_fresh` (or any web_search + fetch_url pair)
+        surfaced something worth keeping: `vera_fresh` itself has no write
+        path by design (that is the point of it being a discardable third
+        space) — this is the separate, explicit action that puts ONE
+        excerpt up for review. Nothing here is queryable via `ask()` until
+        a human calls `accept_ai_fact`; review with
+        `list_pending_ai_facts` / `accept_ai_fact` / `reject_ai_fact` — the
+        SAME queue `propose_ai_facts` already uses."""
+        entry = quarantine.propose_raw(text, source=source)
+        quarantine.save(qpath)
+        return json.dumps(
+            {"proposed": entry.text[:400], "source": entry.source,
+             "quarantine": str(qpath),
+             "note": "承認待ち。list_pending_ai_facts→accept_ai_fact/reject_ai_fact"
+                     "で人が決めるまで、ask()からは見えない"},
             ensure_ascii=False,
         )
 
