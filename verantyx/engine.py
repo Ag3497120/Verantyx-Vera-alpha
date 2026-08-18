@@ -434,8 +434,63 @@ def ask(query: str, vera: Any, *, last_core: str = "",
         _ck["circulation"] = circulation
     if observe:
         _ck["placement_invariant"] = True
-    obj = dict(vera.ask(q, **_ck))
+
+    # ── 推論核が主席に座る ────────────────────────────────────────────
+    # 断面が縁から入り、エネルギー比率が経路を決め、安定状態で一致した
+    # 断面の軸語が連結される — consensus.py。この器官は 2026-08-18 まで
+    # engine.ask から一度も呼ばれていなかった。実装から到達可能なのに、
+    # 主経路は census(stacked) を通り、SEEDED は同じ節の言い直しを3つ
+    # 並べていた。「未接続だと書いたのは私です」の同じ形。
+    #
+    # 配線の前に二つ測った。① 本番連合(ja 89,369核)で核は 0.03秒で動き、
+    # census より濃い: 正当防衛とは → 「行為、防衛、成立、他人」(4断面)
+    # 対 census「行為の成立です/となる/をもたらした」(1節×3)。② ただし
+    # 問い側に取り込み側と同じ複合語の盗みが残っており、蔵書外8語で
+    # 6件捏造した(クワンタムフラックス炉 → 核 炉 → ANSWER)。門を先に
+    # 立て(捏造 6→0、蔵書内 6/7 不変、forks 153/153)、それからここに
+    # 座らせた。順序が逆なら、103,599件の修理で回復した「連邦は嘘を
+    # つかない」を問い側から壊すところだった。
+    #
+    # 束ねず重ねる: 核が ANSWER のときだけ主席。型付き沈黙なら census
+    # (階段の種・SEEDED)が従来どおり受ける — 「殺人罪の刑は」は核が
+    # 二主題の不収束で正直に棄権し、階段が 殺人罪 を種に SEEDED で
+    # 答える。二つの器官は同じ選挙で投票しない。
+    obj: Dict[str, Any] = {}
     t.door = "vera_ask"
+    try:
+        _ja = getattr(vera, "stores", {}).get("ja") if hasattr(vera, "stores") else None
+        if _ja is not None:
+            from .consensus_store import ja_consensus_ask as _core_ask
+            _c = _core_ask(_ja, q, placement_invariant=bool(observe))
+            if str(_c.get("verdict")) == "ANSWER":
+                obj = dict(_c)
+                t.door = "consensus_core"
+                t.note("core", True, "断面収束 " + str(_c.get("retrieved"))[:40],
+                       changed=True)
+    except Exception as _e:  # 核の障害は沈黙ではなく後段へ渡す
+        t.note("core", False, type(_e).__name__)
+    if not obj:
+        # 盗まれた部品で選挙を開かない。核の門が「この問いの主題は店に
+        # 無い」と言ったのに census へ落とすと、census が同じ一片を種に
+        # して答えを作る。実測: ぷにゃぷにゃ理論とは で核は正しく棄権し、
+        # 後退路が SEEDED「理論や問題が説明である」を返した — 捏造が
+        # 門の下をくぐった。主題が一つも立たない日本語の問いは census を
+        # 飛ばし、型付き沈黙のまま降下段(単位・棚定義)へ渡す。
+        _skip_census = False
+        if _ja is not None:
+            try:
+                from .consensus_store import ja_subject_runs as _jsr
+                from .lang import ja_content_runs as _jcr
+                if _jcr(q) and not _jsr(_ja, q):
+                    _skip_census = True
+            except Exception:
+                pass
+        if _skip_census:
+            obj = {"verdict": "UNKNOWN_NO_EVIDENCE",
+                   "note": "問いの主題として独立に立つ連が店に無い。"
+                           "複合語の一片では選挙を開かない"}
+        else:
+            obj = dict(vera.ask(q, **_ck))
     t.note("ask", True, str(obj.get("verdict")))
 
     # Context as a VISIBLE operation. A short follow-up, or one opening

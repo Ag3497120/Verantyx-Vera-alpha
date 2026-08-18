@@ -589,7 +589,15 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
             cand.add(run)
     probes: List[str] = []
     for run in sorted(cand, key=lambda r: (-len(r), subject.find(r))):
-        if len(run) >= 2 and _norm(run) != q:
+        # 主題自身も探査語に含める。以前は _norm(run) != q で除外して
+        # いた — 完全一致の段が先に引いたから、という理由だが、その段が
+        # 引くのはラベルと見出しだけで、行は一度も主題そのもので引かれて
+        # いなかった。実測 2026-08-18: lookup("繰越上限は") は行に届き、
+        # lookup("繰越上限") は UNKNOWN。engine は助詞を剥いでから引く
+        # ので、裸の名詞主題が全部この穴に落ちていた。問い形の主題は
+        # どの run とも一致しない(qに助詞が残る)ので、この変更は裸形
+        # だけに効く。
+        if len(run) >= 2:
             probes.append(run)
 
     # 不在の昇格: 最も特定的な探査語が文書のどこにも無いなら、より汎用の

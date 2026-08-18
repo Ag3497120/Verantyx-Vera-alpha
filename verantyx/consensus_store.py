@@ -436,6 +436,55 @@ def _apply_coverage_gate(out: Dict[str, Any], query: str) -> None:
                 return
 
 
+#: 閉じた機能語尾。内容連の隣接に数えない — 時効とは の とは、
+#: 殺人罪の刑は の の・は。開いた賢さは持ち込まない。
+_JA_FUNC_TAILS = ("の", "とは", "は", "が", "を", "に", "で", "へ", "と",
+                  "や", "も", "から", "まで", "より", "です", "ですか",
+                  "について", "ますか", "でしょうか")
+
+
+def ja_whole_subject(query: str, r: str) -> bool:
+    """この連は問いの主題として独立に立っているか。
+
+    ja_content_runs は文字種の境界で割るので、店に無い複合語の問いは
+    「店に在る一片」に化ける(クワンタムフラックス炉 → 炉)。独立とは、
+    元の問いの中でこの連の両隣が 空白か機能語尾 であること。内容字が
+    隣接していれば、それは複合語の途中 — 主題ではなく盗まれた部品。
+    """
+    i = query.find(r)
+    while i != -1:
+        left_ok = True
+        j = i - 1
+        if j >= 0 and not query[j].isspace():
+            left_ok = any(query[max(0, i - len(f)):i] == f
+                          for f in _JA_FUNC_TAILS)
+        right_ok = True
+        j = i + len(r)
+        if j < len(query) and not query[j].isspace():
+            c = query[j]
+            if "ぁ" <= c <= "ん":
+                right_ok = any(query[j:j + len(f)] == f
+                               for f in _JA_FUNC_TAILS)
+            else:
+                right_ok = False
+        if left_ok and right_ok:
+            return True
+        i = query.find(r, i + 1)
+    return False
+
+
+def ja_subject_runs(store: CrossStore, query: str) -> List[str]:
+    """店に在り、かつ問いの主題として独立に立つ連。空なら、この問いの
+    主題は店に無い — 一片で選挙を開いてはならない、という合図。"""
+    from .lang import ja_content_runs
+    out = []
+    for r in ja_content_runs(query):
+        if ja_whole_subject(query, r) and (
+                store.has(r) or store.has(r + PROPER_SUFFIX)):
+            out.append(r)
+    return out
+
+
 def ja_consensus_ask(
     store: CrossStore,
     query: str,
@@ -455,10 +504,29 @@ def ja_consensus_ask(
     if not runs:
         return {"verdict": "UNKNOWN_UNPARSED", "lang": "ja"}
     qset = set(runs)
+    # 複合語の一片を核にしない — 取り込み側 (ja_chosen_core, 2026-08-14 の
+    # 連邦修理 103,599件) と同じ規則族を、問い側に。
+    #
+    # ja_content_runs は文字種の境界で割るので、店に無い複合語の問いは
+    # 「店に在る一片」に化ける。実測 2026-08-18、蔵書外8語の探針で:
+    #
+    #     クワンタムフラックス炉 → 核 炉   → ANSWER 炉はd-d、ev、m3
+    #     ヴァンデルグラーフ猫   → 核 猫   → ANSWER 猫は元プロレスラー
+    #     ぷにゃぷにゃ理論       → 核 理論 → ANSWER 理論は説明、xバー
+    #
+    # 8件中6件が捏造。取り込み側は「核は同定可能な単一名詞主題のみ、
+    # それ以外は型付き穴」で直した。ここも同じに引く: 元の問いの中で
+    # 別の内容連と直接隣接している連 (間に助詞が無い) は、結合した
+    # 複合語そのものが店に在るときだけ核になれる。無ければその一片は
+    # 問いの主題ではなく、盗まれた部品である。
+    #
+    # 時効とは / 殺人罪の刑は が通り続けるのは、とは・の・は が閉じた
+    # 機能語尾で、内容連の隣接に数えないから。過失 故意 は空白で切れて
+    # いるので両方立つ。
     cores: List[str] = []
     for r in runs:
         for v in (r, r + PROPER_SUFFIX):
-            if store.has(v) and v not in cores:
+            if store.has(v) and v not in cores and ja_whole_subject(query, r):
                 cores.append(v)
     # Facet-overlap fallback — English has had this since candidates_for_query
     # was written and Japanese never did, so the most natural legal question
