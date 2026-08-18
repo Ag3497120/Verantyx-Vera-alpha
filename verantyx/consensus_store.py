@@ -241,6 +241,7 @@ def consensus_over_store(
     carry: str = "A",
     n_layers: int = 3,
     placement_invariant: bool = False,
+    circulation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """End-to-end: retrieve → shell → consensus (typed verdicts).
 
@@ -265,7 +266,9 @@ def consensus_over_store(
             shell, query, carry=carry, n_layers=n_layers, masses=masses
         )
     else:
-        out = run_consensus(shell, query, cfg=cfg, masses=masses).as_dict()
+        _seed = (circulation or {}).get(shell.center)
+        out = run_consensus(shell, query, cfg=cfg, masses=masses,
+                            seed_state=_seed).as_dict()
     out["retrieved"] = cores
     out["core_key"] = out.get("core")
     if out.get("core"):
@@ -298,7 +301,8 @@ def consensus_over_store(
     from .polarity import apply_polarity_gate
     apply_polarity_gate(store, out, query)
     if placement_invariant:
-        _apply_placement_invariance(store, out, query, k=k, cfg=cfg)
+        _apply_placement_invariance(store, out, query, k=k, cfg=cfg,
+                                    circulation=circulation)
     return out
 
 
@@ -310,6 +314,7 @@ def _apply_placement_invariance(
     k: int,
     cfg: Optional[ConsensusConfig],
     ja: bool = False,
+    circulation: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Refuse an ANSWER that a different arbitrary placement would not give.
 
@@ -346,10 +351,12 @@ def _apply_placement_invariance(
     if ja:
         from .lang import ja_content_runs
         alt = run_consensus(shell, query, cfg=cfg, masses=_MassView(store),
+                            seed_state=(circulation or {}).get(shell.center),
                             qset_override=set(ja_content_runs(query))).as_dict()
         alt_core = alt.get("core")
     else:
-        alt = run_consensus(shell, query, cfg=cfg, masses=_MassView(store)).as_dict()
+        alt = run_consensus(shell, query, cfg=cfg, masses=_MassView(store),
+                            seed_state=(circulation or {}).get(shell.center)).as_dict()
         alt_core = display_sym(alt["core"]) if alt.get("core") else None
     if alt.get("verdict") == "ANSWER" and alt_core == out.get("core"):
         out["placement_invariant"] = True

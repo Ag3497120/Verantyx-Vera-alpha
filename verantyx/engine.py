@@ -171,7 +171,8 @@ def _readings(obj: Dict[str, Any]) -> Dict[str, Any]:
 
 def ask(query: str, vera: Any, *, last_core: str = "",
         domain: str = "", store_path: Any = None, store: Any = None,
-        store_first: bool = False, _retry: bool = False) -> Dict[str, Any]:
+        store_first: bool = False, _retry: bool = False,
+        circulation: Any = None, observe: bool = False) -> Dict[str, Any]:
     """Everything the engine knows how to bring, for one question.
 
     `vera` is the loaded stack, passed in rather than loaded here: which
@@ -420,7 +421,19 @@ def ask(query: str, vera: Any, *, last_core: str = "",
 
     # ── the census ───────────────────────────────────────────────────
 
-    obj = dict(vera.ask(q))
+    # ── 巡回と観測 ────────────────────────────────────────────────────
+    # `circulation` is the conversation's terminal arrangements, per core —
+    # the search re-enters the structure where the last turn left it instead
+    # of bare. `observe` turns on the placement-invariance re-ask that has
+    # been implemented and dormant since 8/14: the arbitrary half of the
+    # placement is reversed and an ANSWER the two readings disagree about is
+    # downgraded. Both are inputs; determinism holds.
+    _ck: Dict[str, Any] = {}
+    if circulation:
+        _ck["circulation"] = circulation
+    if observe:
+        _ck["placement_invariant"] = True
+    obj = dict(vera.ask(q, **_ck))
     t.door = "vera_ask"
     t.note("ask", True, str(obj.get("verdict")))
 
@@ -434,7 +447,7 @@ def ask(query: str, vera: Any, *, last_core: str = "",
         for d in _DEICTIC:
             if stripped.startswith(d):
                 stripped = stripped[len(d):]
-        retry = dict(vera.ask("%s %s" % (last_core, stripped)))
+        retry = dict(vera.ask("%s %s" % (last_core, stripped), **_ck))
         if not str(retry.get("verdict", "")).startswith("UNKNOWN"):
             obj = retry
             t.note("context", True,

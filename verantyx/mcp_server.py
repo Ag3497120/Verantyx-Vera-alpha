@@ -1302,11 +1302,23 @@ def serve(store_path: str) -> int:
     # read (`add_conversation_turn` / `check_context_drift`), so what is
     # said here is recallable there, and covenants set there bind replies
     # here. `last_core` rides per-server-process so 「その刑は」 resolves.
+    # The conversation's terminal arrangements, per core. This is what makes
+    # the chat door CIRCULATE instead of re-entering bare each turn: the
+    # search resumes on each cross where the last turn's stable state left
+    # it (rotation, widened view, locks). Kept OUTSIDE the store, like the
+    # walker's trajectory — an arrangement is not knowledge, and a later
+    # reader must not mistake footprints for facts. Persisted beside the
+    # conversation so a restart resumes the same standing.
+    _circ_path = path.with_name(path.stem + ".circulation.json")
+    try:
+        _circulation: Dict[str, Any] = json.loads(_circ_path.read_text("utf-8"))
+    except Exception:
+        _circulation = {}
     _chat_state: Dict[str, Any] = {"last_core": ""}
 
     @mcp.tool()
     def vera_chat(text: str, store_first: bool = False,
-                  reset_topic: bool = False) -> str:
+                  reset_topic: bool = False, observe: bool = True) -> str:
         """Talk with the whole engine — stateful, model-free, audited.
 
         One call = one turn. What happens inside, in the measured layering
@@ -1344,7 +1356,9 @@ def serve(store_path: str) -> int:
 
         r = _engine_ask(q, _vera(), last_core=_chat_state["last_core"],
                         store_path=path, store=store,
-                        store_first=store_first)
+                        store_first=store_first,
+                        circulation=_circulation or None,
+                        observe=observe)
 
         reply = (r.get("text") or "").strip()
         # A typed refusal is a real reply: name the verdict rather than
@@ -1366,6 +1380,15 @@ def serve(store_path: str) -> int:
         _conversation.memory.save(_conv_path)
         if r.get("core"):
             _chat_state["last_core"] = str(r["core"])
+        # The turn's terminal arrangement goes back into the map, keyed by
+        # the core it settled on, and survives a server restart.
+        if r.get("core") and r.get("carry_state"):
+            _circulation[str(r["core"])] = r["carry_state"]
+            try:
+                _circ_path.write_text(
+                    json.dumps(_circulation, ensure_ascii=False), "utf-8")
+            except Exception:
+                pass
 
         stages = r.get("stages")
         return json.dumps({
@@ -1379,6 +1402,20 @@ def serve(store_path: str) -> int:
             "sections": r.get("sections"),
             "stages": stages,
             "audits": audits,
+            "circulation": {
+                "carried_in": bool(_circulation) ,
+                "cores_held": len(_circulation),
+                "this_turn": r.get("carry_state"),
+            },
+            "observation": {
+                "enabled": observe,
+                # placement-invariance downgrades announce themselves in the
+                # verdict/note; surfaced here so a client can show 「観測で
+                # 降格」 without parsing prose.
+                "verdict": r.get("verdict"),
+                "agree_frac": r.get("agree_frac"),
+                "local_stable": r.get("local_stable"),
+            },
             "conversation": _conversation.stats(),
         }, ensure_ascii=False)
 

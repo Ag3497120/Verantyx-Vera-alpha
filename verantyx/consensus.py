@@ -327,6 +327,15 @@ class ConsensusResult:
             "sections": list(self.sections),
             "hypotheses": list(self.hypotheses),
             "local_stable": self.local_stable,
+            # The terminal arrangement, exported so a conversation can hand
+            # it back as seed_state. Absent state (no search ran) is absent,
+            # not zeros — a caller must not mistake "never searched" for
+            # "searched and settled at the origin".
+            "carry_state": ({
+                "rotation": self.state.rotation,
+                "widened": self.state.widened,
+                "locks": sorted(self.state.locks),
+            } if self.state is not None else None),
         }
 
 
@@ -351,6 +360,7 @@ def run_consensus(
     initial_locks: Optional[Sequence[str]] = None,
     mutate: bool = False,
     qset_override: Optional[Set[str]] = None,
+    seed_state: Optional[Dict[str, Any]] = None,
 ) -> ConsensusResult:
     """Run the multi-frontier consensus search on one shell.
 
@@ -363,9 +373,29 @@ def run_consensus(
         qset = set(qset_override)
     else:
         qset, _head = query_content(query)
+    # ── 巡回の持ち越し ────────────────────────────────────────────────
+    #
+    # The original conception (2026-08-16, two utterances) says the search
+    # ends at a stable state where the sections agree. It never says the
+    # stable state is thrown away — and until 2026-08-18 it was: every turn
+    # re-entered the structure bare, and the only thread across turns was
+    # last_core. 「一度構造を通ったらそのまま出てきてまた構造に入る」 is the
+    # operator's exact description of that defect.
+    #
+    # What carries is the ARRANGEMENT — rotation, widened view, locks — and
+    # deliberately not energy or tokens. Carrying the previous answer's
+    # tokens into qset would be two signals in one election, the pooling
+    # move measured at 6 failures out of 6 (束ねず重ねる). The structure
+    # remembering how it was turned is not a second voter.
+    #
+    # Determinism is preserved: seed_state is an input like the query, and
+    # the same (shell, query, seed) gives the same result.
+    _seed = seed_state or {}
     state = SearchState(
         shell=shell if mutate else copy_shell(shell),
-        locks=set(initial_locks or ()),
+        rotation=int(_seed.get("rotation", 0)) % N_SECTIONS,
+        widened=bool(_seed.get("widened", False)),
+        locks=set(initial_locks or ()) | set(_seed.get("locks") or ()),
     )
 
     accepted: List[Dict[str, Any]] = []
