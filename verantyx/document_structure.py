@@ -310,14 +310,31 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     # ことが多い。閉じた除外集合だけを引く。
     _HIRA_STOP = {"について", "ください", "ですか", "でしょう", "および",
                   "または", "ならびに", "こんにちは", "ありがとう"}
+    # 疑問語で始まる連は問いの側であって主題ではない。実測: 「申出はいつ
+    # までに」が探査語「はいつま」を作り、拒否文がその非語を名指した。
+    _HIRA_ASK = ("いつ", "どこ", "どの", "どう", "どちら", "どれ",
+                 "なに", "なぜ", "いく", "だれ")
     for m in _re.finditer(r"[ぁ-ん]{3,}", subject):
         run = m.group(0)
+        # 内容字（漢字・カタカナ・ラテン）の直後に立つ先頭のひらがなは、
+        # その語に付いた助詞である。文頭の「はがき」の は とは違う —
+        # 位置がその二つを分ける。
+        if m.start() > 0 and not ("ぁ" <= subject[m.start() - 1] <= "ん") \
+           and run[0] in "のはがをにでへとも":
+            run = run[1:]
         # 末尾の助詞を剥がす（はがきの → はがき）。主題位置のひらがな連は
         # 助詞まで一続きで取れてしまう。
         while len(run) > 3 and run[-1] in "のはがをにでへとも":
             run = run[:-1]
+        if len(run) < 3:
+            continue
         # 動詞語尾で終わる連（された・している）は形態であって主題ではない
-        if run and run[-1] in "たてる":
+        if run[-1] in "たてる":
+            continue
+        # ひらがなだけで か に終わる連は問いの尾（できますか・でしょうか）。
+        if run[-1] == "か":
+            continue
+        if run.startswith(_HIRA_ASK):
             continue
         if run not in _HIRA_STOP:
             cand.add(run)
