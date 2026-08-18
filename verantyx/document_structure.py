@@ -553,24 +553,49 @@ def _title_descent(book: Dict[str, Any], subject: str):
         if not by_title:
             continue
         rest = rank_probes(subject, [t for t in terms if t not in by_title], book)
-        for sec in doc.get("sections", []):
-            head = _norm(sec.get("heading") or "")
-            raw_head = sec.get("heading") or ""
-            if not head or not sec.get("lines"):
+        # 最優先の探査語(rest[0])が不発なら次を試す — DOCUMENT_MULTI と
+        # 同じ「最優先語が複数節に独立着地したら列挙する」規律を、題名で
+        # 文書に降りた後にも適用する。実測 2026-08-18: 経費精算規程を
+        # 別文書(総務規程)と一緒に読み込むと、「経費の上限は」が
+        # ここ(題名降下)で先に確定し、後段の DOCUMENT_MULTI まで処理が
+        # 届かず、交通費・宿泊費の上限を聞き逃したまま会議費だけ返した。
+        for t in rest:
+            pn = _norm(t)
+            if not pn:
                 continue
-            for t in rest:
-                if _norm(t) and _norm(t) in head \
-                        and _independent_in(_norm(t), raw_head):
+            hits: List[Dict[str, Any]] = []
+            for sec in doc.get("sections", []):
+                head = _norm(sec.get("heading") or "")
+                raw_head = sec.get("heading") or ""
+                if not head or not sec.get("lines"):
+                    continue
+                if pn in head and _independent_in(pn, raw_head):
                     lines = list(sec["lines"])
                     one = _stair_pick(lines, subject)
-                    return {"verdict": "DOCUMENT_LINE" if one else "DOCUMENT_SECTION",
-                            "subject": sec.get("heading"),
-                            "text": one or "\n".join(lines),
-                            "lines": lines,
-                            "source": doc.get("source"), "quoted": True,
-                            "reached_via": "%s→%s" % (by_title[0], t),
-                            "note": "題名「%s」で文書に降り、「%s」で節に降りた"
-                                    % (doc.get("source"), t)}
+                    hits.append({"section": sec.get("heading"),
+                                 "text": one or "\n".join(lines),
+                                 "lines": lines, "source": doc.get("source"),
+                                 "line": one})
+            if not hits:
+                continue
+            if len(hits) >= 2:
+                joined = "\n".join(
+                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    for h in hits)
+                return {"verdict": "DOCUMENT_MULTI", "subject": subject,
+                        "items": hits, "text": joined, "quoted": True,
+                        "reached_via": "%s→%s" % (by_title[0], t),
+                        "note": "題名「%s」に降りた後、「%s」が独立に%d節へ"
+                                "当たった。1つに絞らず全部を引用する"
+                                % (doc.get("source"), t, len(hits))}
+            h = hits[0]
+            return {"verdict": "DOCUMENT_LINE" if h["line"] else "DOCUMENT_SECTION",
+                    "subject": h["section"],
+                    "text": h["text"], "lines": h["lines"],
+                    "source": h["source"], "quoted": True,
+                    "reached_via": "%s→%s" % (by_title[0], t),
+                    "note": "題名「%s」で文書に降り、「%s」で節に降りた"
+                            % (doc.get("source"), t)}
     return None
 
 
