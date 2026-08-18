@@ -188,14 +188,24 @@ def rejoin(text: str) -> List[str]:
     return out
 
 
-def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
-    """(sections, labels) — the document's own structure, verbatim.
+#: 実測 2026-08-19: チャットログ(6,495行、「Verantyx project overview」)を
+#: 通すと、アラビア数字見出し(_HEADING)が本文中の箇条書き(assistantの
+#: 回答に埋め込まれた「1. 」「2. 」…)に反応し、2,222行・2,346行という
+#: 巨大な「節」を作った——見出しテキストも「**時制・時点** — ｢当時の
+#: 首相｣型｡面に時点を持つ設計自体が未」のように文の途中で切れていた。
+#: この規模の節は、この店の規程・仕様書コーパス(第N条は数行、「1.」の
+#: 素直な項目も数十行止まり)には一度も出ない — 番号が単調増加という
+#: 条件だけでは、会話ログの散発的な箇条書きを本物の目次と区別できない。
+_RUNAWAY_SECTION_LINES = 200
 
-    Text before the first heading belongs to no section; it is the
-    document's preamble and is returned as section 0 so a question about
-    the document itself has somewhere to land.
-    """
-    lines = rejoin(text)
+
+def _split_sections(
+    lines: List[str], allow_arabic: bool
+) -> Tuple[List[Section], Dict[str, str]]:
+    """One pass of the split. `allow_arabic` gates `_HEADING`(「1. 」形)
+    only — `_JP_HEADING`(「第N条」)stays on always, since its pattern is
+    narrow enough that it has never been seen to misfire on ordinary
+    prose."""
     secs: List[Section] = [Section(ordinal=0, heading="", lines=[])]
     labels: Dict[str, str] = {}
     #: 番号の単調性は見出しの種類ごとに数える。章と条が交互に現れる規程
@@ -214,7 +224,7 @@ def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
                 # アラビア数字の「1.」とは違って落とせない。
                 secs.append(Section(ordinal=n, heading=head))
                 continue
-        m = _HEADING.match(head)
+        m = _HEADING.match(head) if allow_arabic else None
         if m:
             n = int(m.group(1))
             top = tops.get("", 0)
@@ -239,6 +249,25 @@ def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
                 labels[name] = value
     if not secs[0].lines:
         secs.pop(0)
+    return secs, labels
+
+
+def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
+    """(sections, labels) — the document's own structure, verbatim.
+
+    Text before the first heading belongs to no section; it is the
+    document's preamble and is returned as section 0 so a question about
+    the document itself has somewhere to land.
+    """
+    lines = rejoin(text)
+    secs, labels = _split_sections(lines, allow_arabic=True)
+    # 見出し検出の自己検査: 実際に立った節のどれかが暴走していないか。
+    # 暴走していれば、アラビア数字見出しは信用せず(第N条だけを残して)
+    # 引き直す — 偽の見出し構造より、見出し無しの正直な単一節の方が、
+    # 読み手にとって安全(引用は本文検索でそのまま届き、節名だけが
+    # 「不明」になる)。
+    if any(len(s.lines) > _RUNAWAY_SECTION_LINES for s in secs):
+        secs, labels = _split_sections(lines, allow_arabic=False)
     return secs, labels
 
 
