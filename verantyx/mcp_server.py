@@ -1289,6 +1289,74 @@ def serve(store_path: str) -> int:
             ensure_ascii=False, default=str)
 
     @mcp.tool()
+    def vera_fresh(query: str, sources_json: str) -> str:
+        """検索で得た一般知識を、一時空間で引用し、毎回破棄する。
+
+        第三の空間。店（連合）でも端末の文書でもない — 呼び出し元（IDE の
+        検索実装）が取ってきた頁を、この関数の中だけに索引し、逐語引用で
+        答え、関数と共に消える。**書き込み経路が存在しない**: 店にも
+        文書側車にも会話空間にも一行も書かない。破棄は方針ではなく構造で、
+        追試できる — 直後に同じ主題を vera_chat に聞けば ABSENT が返る。
+
+        なぜ吸収しないか: 検索結果は出典つきの他人の文章であって、この
+        端末の知識ではない。毎回取り直すから最新で、毎回捨てるから
+        「いつの情報か分からない取り込み」が店を汚さない。二空間の
+        不合流則がここでは時間方向に効いている。
+
+        `sources_json` は [{"url":…, "title":…, "text":…}, …]。返答は
+        逐語引用+出典URL。頁が主題を明記しないときは、支配する近傍の
+        定めと「明記なし」の型（部分文字列検査で追試可能）。"""
+        from .document_structure import index as _dx, lookup as _dlook, rejoin as _rejoin
+        from .engine import _TOPIC_SUFFIXES
+
+        try:
+            sources = json.loads(sources_json or "[]")
+        except Exception as e:
+            return json.dumps({"verdict": "UNKNOWN_BAD_SOURCES",
+                               "note": str(e)[:80]}, ensure_ascii=False)
+        if not isinstance(sources, list) or not sources:
+            return json.dumps({"verdict": "UNKNOWN_NO_SOURCES",
+                               "note": "検索結果が渡されていない。この扉は自分では"
+                                       "取得しない — 取得は呼び出し元の仕事"},
+                              ensure_ascii=False)
+
+        # 一時の本。ウェブ本文は番号見出しを持たないことが多いので、節が
+        # 立たなければ本文全体を1節として行に展開する — 行が引用の最小単位。
+        book: Dict[str, Any] = {"documents": []}
+        for src in sources[:5]:
+            text = str((src or {}).get("text") or "")[:20000]
+            label = str((src or {}).get("url") or (src or {}).get("title") or "検索結果")
+            if not text.strip():
+                continue
+            d = _dx(text, label)
+            if not d.get("sections") and not d.get("labels"):
+                lines = [ln for ln in _rejoin(text) if len(ln.strip()) >= 8][:200]
+                d["sections"] = [{"heading": str((src or {}).get("title") or "本文"),
+                                  "lines": lines, "ordinal": None}]
+            book["documents"].append(d)
+        if not book["documents"]:
+            return json.dumps({"verdict": "UNKNOWN_EMPTY_SOURCES"}, ensure_ascii=False)
+
+        subj = (query or "").strip()
+        for suf in _TOPIC_SUFFIXES:
+            if subj.endswith(suf) and len(subj) > len(suf):
+                subj = subj[: -len(suf)]
+                break
+        r = _dlook(subj, book)
+        out = {
+            "verdict": r.get("verdict"),
+            "reply": r.get("text") or "",
+            "subject": r.get("subject"),
+            "source": r.get("source"),
+            "sources_offered": [str((s0 or {}).get("url") or (s0 or {}).get("title") or "?")
+                                 for s0 in sources[:5]],
+            "quoted": bool(r.get("quoted")),
+            "discarded": True,
+            "note": "一時知識。返答と同時に破棄済み — 店・文書・会話のどこにも残っていない",
+        }
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
     def vera_compare_spaces(topic: str) -> str:
         """この端末の文書と、公開連合（一般知識）が、同じ主題について何を
         言うかの差分。「この規程は一般的な考え方と比べて特殊か」の答えが

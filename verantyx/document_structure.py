@@ -305,13 +305,40 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     cand = set(ja_content_runs(subject))
     cand |= {m.group(0) for m in _re.finditer(r"[ァ-ヶーA-Za-z0-9]+[一-龥]{0,2}", subject)}
     cand |= {m.group(0) for m in _re.finditer(r"[一-龥]{2,}", subject)}
+    # ひらがなの内容語（はがき・きっぷ）。ja_content_runs は機能語を避ける
+    # ためにひらがな連を捨てるが、主題の位置に立つ3字以上は内容語である
+    # ことが多い。閉じた除外集合だけを引く。
+    _HIRA_STOP = {"について", "ください", "ですか", "でしょう", "および",
+                  "または", "ならびに", "こんにちは", "ありがとう"}
+    for m in _re.finditer(r"[ぁ-ん]{3,}", subject):
+        run = m.group(0)
+        # 末尾の助詞を剥がす（はがきの → はがき）。主題位置のひらがな連は
+        # 助詞まで一続きで取れてしまう。
+        while len(run) > 3 and run[-1] in "のはがをにでへとも":
+            run = run[:-1]
+        # 動詞語尾で終わる連（された・している）は形態であって主題ではない
+        if run and run[-1] in "たてる":
+            continue
+        if run not in _HIRA_STOP:
+            cand.add(run)
     probes: List[str] = []
     for run in sorted(cand, key=lambda r: (-len(r), subject.find(r))):
         if len(run) >= 2 and _norm(run) != q:
             probes.append(run)
 
+    # 不在の昇格: 最も特定的な探査語が文書のどこにも無いなら、より汎用の
+    # 語の行で「答えたふり」をしてはならない。グリーン車で入れた型の一般化 —
+    # 「書留の料金は」に対し、書留の不在を名乗った上で料金の定めを支配則
+    # として引用する。不在は部分文字列検査で追試できる。
+    _all_text = "\n".join(
+        "\n".join(ln for sec in doc.get("sections", []) for ln in (sec.get("lines") or []))
+        + "\n" + "\n".join("%s %s" % (k, v) for k, v in (doc.get("labels") or {}).items())
+        + "\n" + "\n".join(sec.get("heading", "") for sec in doc.get("sections", []))
+        for doc in book.get("documents", []))
+    _absent = {pr for pr in probes if pr not in _all_text}
+
     # 1. 内容語で、ラベル→見出し→本文行の順に照合（主辞抽出を包含する形）
-    for probe in probes:
+    for _pi, probe in enumerate(probes):
         pn = _norm(probe)
         for doc in book.get("documents", []):
             for name, value in (doc.get("labels") or {}).items():
@@ -335,6 +362,23 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
         for doc in book.get("documents", []):
             for sec in doc.get("sections", []):
                 hit = [ln for ln in (sec.get("lines") or []) if probe in ln]
+                _earlier_absent = [probes[j] for j in range(_pi)
+                                   if probes[j] in _absent]
+                if hit and _earlier_absent:
+                    # 特定語（書留）は不在で、汎用語（料金）だけが当たった。
+                    # 汎用の行を答えとして出せば、聞かれていない物の値段で
+                    # 聞かれた物に答える捏造になる。
+                    return {"verdict": "DOCUMENT_NOT_SPECIFIED",
+                            "subject": _earlier_absent[0],
+                            "section": sec.get("heading"),
+                            "term_absent": True,
+                            "governing": hit[:3],
+                            "source": doc.get("source"), "quoted": True,
+                            "text": "文書は「%s」を明記していない。「%s」の定め（%s）: %s"
+                                    % (_earlier_absent[0], probe,
+                                       sec.get("heading"), " / ".join(hit[:3])),
+                            "note": "不在は部分文字列検査で追試可能。近い語の定めを"
+                                    "引用しただけで、「%s」の答えではない" % _earlier_absent[0]}
                 if hit:
                     return {"verdict": "DOCUMENT_LINE",
                             "subject": probe,
