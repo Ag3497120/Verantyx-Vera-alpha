@@ -286,6 +286,86 @@ def _norm(s: str) -> str:
     return re.sub(r"[\s　]+", "", s or "")
 
 
+def content_terms(subject: str) -> List[str]:
+    """The subject's own content words — no morphology, no guessing.
+
+    Shared by the two places that need to know what a question is about:
+    the fallback probe below, and the narrowing inside a matched section.
+    """
+    import re as _re
+    from .lang import ja_content_runs
+    out = set(ja_content_runs(subject))
+    out |= {m.group(0) for m in _re.finditer(r"[ァ-ヶーA-Za-z0-9]+[一-龥]{0,2}", subject)}
+    out |= {m.group(0) for m in _re.finditer(r"[一-龥]{2,}", subject)}
+    return [t for t in out if len(t) >= 2]
+
+
+def _ngrams(text: str, n: int) -> set:
+    t = _norm(text)
+    return {t[i:i + n] for i in range(max(0, len(t) - n + 1))}
+
+
+#: 語段・2字段・3字段。concord の階段と同じ考えで、同じ行集合を別の解像度で
+#: 読む。段を分割にしてはならない（語長で仕分けると各語が1段にしか入らず、
+#: 一致は低いのではなく起こり得ない）ので、全段が全行を自分の粒度で見る。
+_GRAINS = (0, 2, 3)
+
+
+def _stair_pick(lines: List[str], subject: str) -> Optional[str]:
+    """節の中で、問いが実際に指している行。段が一致したときだけ返す。
+
+    見出しに一致すると節が丸ごと返る。それは問いが節そのもののとき
+    （「第5条は」）は正しく、一行が答えるときは危ない。実測 2026-08-18、
+    就業規則20問で17答のうち6答が節ごとで、最悪の形がこれだった:
+
+        「時間外労働の割増賃金は」→ 第3条の3行
+          時間外労働を命じる場合は、事前に所属長の承認を得るものとする。
+          時間外労働の割増賃金は、通常賃金の25パーセント増しとする。  ← 答え
+          深夜労働の割増賃金は、通常賃金の50パーセント増しとする。    ← 別の問いの答え
+
+    25と50が同じ重さで並び、どちらが問いの答えかを読み手が選ぶ。
+
+    先に手製の数え上げ（問いの語を最も多く含む行）を書いたが、これは誤り
+    が二重だった。一つ、測定済みの機構があるのに手で書いた。二つ、直した
+    分岐がこれらの問いの通る分岐ではなく、一度も発火せずに測定値が変わら
+    なかった — にもかかわらず同じ数字を見て先へ進んだ。
+
+    採るのは concord の階段の規律そのもの:
+
+    * 段は分割ではなく解像度。全段が全行を、自分の粒度で見る
+    * 同点の段は棄権する。全段が同点なら全段が同じ最小要素を選ぶので、
+      証拠と無関係な一致が作られる（実測 全一致 73.3% → 辞書順で 23.7%、
+      3対1 より悪い）
+    * 2段以上が答えたうえで全一致したときだけ行を指す。割れたら節のまま
+
+    合算はしない。段は独立に投票し、一致だけが信号になる — 重みを一つの
+    数に畳むと、なぜその行かが数字に潰れて追試できなくなる。
+    """
+    if len(lines) < 2:
+        return None
+    votes: List[int] = []
+    for g in _GRAINS:
+        if g == 0:
+            probe = set(content_terms(subject))
+            units = lambda line: set(content_terms(line))  # noqa: E731
+        else:
+            probe = _ngrams(subject, g)
+            units = lambda line, g=g: _ngrams(line, g)     # noqa: E731
+        if not probe:
+            continue
+        scored = [(len(probe & units(l)), i) for i, l in enumerate(lines)]
+        best = max(scored)[0]
+        if best == 0:
+            continue
+        winners = [i for n, i in scored if n == best]
+        if len(winners) != 1:
+            continue
+        votes.append(winners[0])
+    if len(votes) < 2 or len(set(votes)) != 1:
+        return None
+    return lines[votes[0]]
+
+
 def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     """What the loaded documents say about this subject, verbatim.
 
@@ -327,6 +407,16 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                             "subject": sec.get("heading"),
                             "source": doc.get("source"),
                             "note": "見出しはあるが、その下に記載が無い"}
+                one = _stair_pick(lines, subject)
+                if one is not None:
+                    return {"verdict": "DOCUMENT_LINE",
+                            "subject": sec.get("heading"),
+                            "text": one,
+                            "section": sec.get("heading"),
+                            "source": doc.get("source"),
+                            "quoted": True,
+                            "note": "節の中で、問いの語を最も多く含む行。"
+                                    "同数の行があれば節のまま返す"}
                 return {"verdict": "DOCUMENT_SECTION",
                         "subject": sec.get("heading"),
                         "text": "\n".join(lines),
@@ -418,6 +508,16 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                                     % (subject, probe)}
             for sec in doc.get("sections", []):
                 if pn and pn in _norm(sec.get("heading", "")) and sec.get("lines"):
+                    one = _stair_pick(list(sec.get("lines") or []), subject)
+                    if one is not None:
+                        return {"verdict": "DOCUMENT_LINE",
+                                "subject": sec.get("heading"),
+                                "text": one, "section": sec.get("heading"),
+                                "source": doc.get("source"), "quoted": True,
+                                "reached_via": probe,
+                                "note": "内容語「%s」で見出しに到達し、節の中で"
+                                        "全段が一致した行。割れれば節のまま返す"
+                                        % probe}
                     return {"verdict": "DOCUMENT_SECTION",
                             "subject": sec.get("heading"),
                             "text": "\n".join(sec.get("lines") or []),
