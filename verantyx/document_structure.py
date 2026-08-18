@@ -311,6 +311,38 @@ def _ngrams(text: str, n: int) -> set:
 _GRAINS = (0, 2, 3)
 
 
+def _independent_in(probe: str, text: str) -> bool:
+    """探査語 probe は text の中で、複合語の一部ではなく独立して立つか。
+
+    実測 2026-08-18、経費精算規程で「飛行機のチケット代は精算できますか」
+    に対し、より特定的な探査語(飛行機・チケット・食事代)は文書のどこにも
+    無いので順に空振りし、最後に残った探査語「精算」が見出し「第7条
+    不正精算」の部分文字列として一致した。「精算」は文書中に4回現れる
+    一般語で、「不正精算」の中では「不正」に直接続く複合語の一部 —
+    独立した主題ではない。無関係な条文(懲戒)が「精算できますか」の答え
+    として返っていた。
+
+    独立とは、text の中で probe の両隣が文字列の端か、内容字でない
+    ことを言う。「不正精算」の「精算」は左隣が内容字(正)なので不合格、
+    「精算方法」の「精算」も右隣が内容字(方)なので不合格。「経費精算
+    規程」全体を探査語として引くのとは違う話 — ここは一片の話。
+    """
+    i = text.find(probe)
+    while i != -1:
+        left_ok = i == 0 or not _is_content_char(text[i - 1])
+        j = i + len(probe)
+        right_ok = j == len(text) or not _is_content_char(text[j])
+        if left_ok and right_ok:
+            return True
+        i = text.find(probe, i + 1)
+    return False
+
+
+def _is_content_char(c: str) -> bool:
+    return ("一" <= c <= "龥" or "ぁ" <= c <= "ん" or "ァ" <= c <= "ヶ"
+            or c == "ー" or c.isalnum())
+
+
 def _stair_pick(lines: List[str], subject: str) -> Optional[str]:
     """節の中で、問いが実際に指している行。段が一致したときだけ返す。
 
@@ -624,7 +656,18 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                             "note": "「%s」の記載は無いが、内容語「%s」がラベルに一致。引用のみ"
                                     % (subject, probe)}
             for sec in doc.get("sections", []):
-                if pn and pn in _norm(sec.get("heading", "")) and sec.get("lines"):
+                head = _norm(sec.get("heading", ""))
+                # 独立性は空白を保持した元の見出しで判定する。_norm は
+                # PDFの余分な空白を吸収するために全空白を消すが、それは
+                # 「第5条 交通費の上限」の条番号とタイトルの間という
+                # "意味のある区切り" も一緒に消していた。実測: 独立性を
+                # 正規化後の head に対して判定すると「第5条」の右隣が
+                # 「交」(内容字)に見えて不合格になり、正しい節到達
+                # (第5条は)まで巻き添えで壊れた。空白を残した見出しで
+                # 見れば、区切りは区切りのまま残る。
+                raw_head = sec.get("heading", "") or ""
+                if pn and pn in head and sec.get("lines") \
+                        and _independent_in(pn, raw_head):
                     one = _stair_pick(list(sec.get("lines") or []), subject)
                     if one is not None:
                         return {"verdict": "DOCUMENT_LINE",
@@ -700,7 +743,21 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                             "note": "不在は部分文字列検査で追試可能。可否の判断はしていない — "
                                     "明記が無いという事実と、支配する定めの引用のみ"}
 
-    return {"verdict": "UNKNOWN_NOT_IN_DOCUMENTS", "subject": subject}
+    # 最終の型付き沈黙にも誤字候補を添える。実測: 「経比精算とは」
+    # (経費精算の誤字)は、不在昇格の対象になる行が無いのでここまで
+    # 落ちてきて、以前は候補なしの沈黙だった。文書自身の語彙で候補が
+    # 引ければ添える — 訂正はしない、答えたことにもしない。
+    # subject そのもの("経比精算とは")ではなく、探査語(内容語だけを
+    # 切り出したもの)を渡す。lattice は助詞付きの生文では回復できない。
+    hint: List[str] = []
+    for pr in probes:
+        hint = typo_hint(book, pr)
+        if hint:
+            break
+    out = {"verdict": "UNKNOWN_NOT_IN_DOCUMENTS", "subject": subject}
+    if hint:
+        out["typo_candidates"] = hint
+    return out
 
 
 #: WITHDRAWN 2026-08-17 — kept only so the failure is legible. Do not
