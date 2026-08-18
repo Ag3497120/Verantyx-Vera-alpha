@@ -398,7 +398,17 @@ def _independent_in(probe: str, text: str) -> bool:
     return False
 
 
+#: 助詞は機能語であって内容語ではない。実測 2026-08-18、経費精算規程で
+#: 「交通費の上限」の「上限」が「独立していない」と誤判定された —
+#: 左隣の「の」がひらがなという理由だけで内容字扱いされていたため。
+#: 「不正精算」の「精算」の左隣「正」(漢字)とは事情が違う。「の」を
+#: 挟めば A と B は明確に分離可能な構造で、B は独立した主題である。
+_PARTICLE_CHARS = frozenset("のはがをにでへとも")
+
+
 def _is_content_char(c: str) -> bool:
+    if c in _PARTICLE_CHARS:
+        return False
     return ("一" <= c <= "龥" or "ぁ" <= c <= "ん" or "ァ" <= c <= "ヶ"
             or c == "ー" or c.isalnum())
 
@@ -704,6 +714,48 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
         + "\n" + "\n".join(sec.get("heading", "") for sec in doc.get("sections", []))
         for doc in book.get("documents", []))
     _absent = {pr for pr in probes if pr not in _all_text}
+
+    # 0. 複数根拠: 最優先の探査語が独立に複数の節へ着地するなら、
+    # 単一に絞らず全部を列挙する。
+    #
+    # 実測 2026-08-18: 「経費の上限は」の探査語は 上限(spread3)・経費
+    # (spread3) — 同点で、そもそも単一の探査語では絞り込めない状況。
+    # 「上限」は交通費・会議費・宿泊費の3節に均等に独立ヒットする。
+    # 従来はここで1.ループが最初にヒットした節(会議費)を勝手に選び、
+    # 「経費の上限は」に「1人あたり5,000円」とだけ答えていた — 読み手は
+    # 交通費・宿泊費の上限を聞き逃したことにさえ気づけない。
+    #
+    # 同点は棄権、が_stair_pickの規律だったが、ここでの「棄権」は
+    # 「答えない」ではなく「1つに絞らず全部見せる」の方が読み手の役に
+    # 立つ。列挙は捏造ではない — 見つかった節をそのまま並べるだけ。
+    if probes:
+        top = probes[0]
+        pn0 = _norm(top)
+        if pn0:
+            hits: List[Dict[str, Any]] = []
+            for doc in book.get("documents", []):
+                for sec in doc.get("sections", []):
+                    raw_head = sec.get("heading", "") or ""
+                    head = _norm(raw_head)
+                    if head and pn0 in head and sec.get("lines") \
+                            and _independent_in(pn0, raw_head):
+                        lines = list(sec.get("lines") or [])
+                        one = _stair_pick(lines, subject)
+                        hits.append({"section": sec.get("heading"),
+                                     "text": one or "\n".join(lines),
+                                     "source": doc.get("source")})
+            if len(hits) >= 2:
+                joined = "\n".join(
+                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    for h in hits)
+                return {"verdict": "DOCUMENT_MULTI",
+                        "subject": subject,
+                        "reached_via": top,
+                        "items": hits,
+                        "text": joined,
+                        "quoted": True,
+                        "note": "「%s」が独立に%d節へ当たった。1つに絞らず"
+                                "全部を引用する" % (top, len(hits))}
 
     # 1. 内容語で、ラベル→見出し→本文行の順に照合（主辞抽出を包含する形）
     for _pi, probe in enumerate(probes):
