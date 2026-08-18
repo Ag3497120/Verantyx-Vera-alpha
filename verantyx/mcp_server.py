@@ -2529,6 +2529,20 @@ def serve(store_path: str) -> int:
         # 混ざっていないか」を読み手が推測で判断しなければならない面は、
         # 逐語引用の面として意味を成さない。
         out["constructed"] = False
+        # 拒否には型(verdict)だけでなく、どの分野が薄いかも添える。
+        # 「文書に無い」と「連合のどの棚にも近くが無い」は別の主張で、
+        # 後者は薄く広げた federation を coverage.py で読んだだけの
+        # 実測(投票ではない)。which_shelf/coverage_hole は既存の
+        # what_would_close 扉と同じ経路 — 文書面にも同じ実測を渡す。
+        v = str(out.get("verdict") or "")
+        if v.startswith("UNKNOWN") or v == "DOCUMENT_NOT_SPECIFIED":
+            try:
+                from .coverage import document_needed as _document_needed
+                out["domain_hint"] = _document_needed(
+                    _atlas(), question, v, aliases=_aliases())
+            except Exception as e:
+                out["domain_hint"] = {"verdict": "UNKNOWN_COVERAGE_UNAVAILABLE",
+                                      "note": str(e)[:120]}
         return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()
