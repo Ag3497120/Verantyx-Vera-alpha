@@ -467,6 +467,39 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                 t.door = "consensus_core"
                 t.note("core", True, "断面収束 " + str(_c.get("retrieved"))[:40],
                        changed=True)
+
+                # Writer は census 経路(vera.py の Vera.ask)には既に繋がって
+                # いた(in_words)。核をここに座らせた時点でそこを迂回して
+                # おり、核の答えは文にならないまま出ていた。
+                #
+                # in_words は text.split() で空白区切りのトークン列を前提に
+                # する — census の text は元々そう作られている。核の text
+                # は「核+は+読点区切り」の完成文字列("正当防衛は行為、防衛、
+                # 成立、他人")で、split() すると全体が1トークンになり
+                # UNKNOWN_SUBJECT_NOT_A_WORD で毎回沈黙していた(実測5問中
+                # 5問)。核は既に tokens を持つので、それを空白区切りにした
+                # 一時コピーだけを in_words に渡す — obj["text"] 自体は
+                # 変えない。
+                #
+                # 実測: 5/6 が文になった(1件は元の核が AMBIGUOUS で対象外)。
+                #   正当防衛は行為、防衛、成立、他人
+                #     → 正当防衛は、行為の成立です。
+                #   超伝導は発見、現象、オンネス、カメルリング
+                #     → 超伝導も発見されている。
+                # 「時効、成立とよばれることもある」のような不自然な文も
+                # 混じる — 文型と語彙のミスマッチという Writer 既知の限界
+                # で、ここで直すものではない。verdict と text はそのまま。
+                # written は隣に添えるだけで、票にも判定にも入らない。
+                if getattr(vera, "writer", None) is not None and obj.get("tokens"):
+                    try:
+                        from .stacked import in_words as _in_words
+                        _sp = dict(obj)
+                        _sp["text"] = " ".join(obj["tokens"])
+                        _w = _in_words(_ja, _sp, vera.writer, limit=2)
+                        if _w.get("sentences"):
+                            obj["written"] = _w
+                    except Exception:
+                        pass
     except Exception as _e:  # 核の障害は沈黙ではなく後段へ渡す
         t.note("core", False, type(_e).__name__)
     if not obj:
