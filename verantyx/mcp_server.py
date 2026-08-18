@@ -2492,6 +2492,46 @@ def serve(store_path: str) -> int:
         return render_quickstart() if quickstart else render_guide()
 
     @mcp.tool()
+    def vera_ask_documents(question: str) -> str:
+        """Answer from the loaded documents only — quote, or say nothing.
+
+        This is a different surface from `vera_chat`, not a restricted one,
+        and the difference is the point. `vera_chat` runs the whole engine:
+        when no store answers, a sentence is COMPOSED from frames and
+        fillers and returned marked `constructed`. Measured on 2026-08-18,
+        that stage is where every bad answer of the day came from —
+        「こんにちは」 became "こんにちはは、格子の分解単位を持たない",
+        「正当防衛とは」 produced the same hollow clause three times, and
+        「通勤手当は」 returned the word list `通勤手当 合理的な 実費 支給 最`
+        while the loaded document held a clean sentence for it.
+
+        The same engine's document stage, on the same day, answered 4 of 4
+        loaded-document questions with the exact line and its source, and
+        refused 書留 rather than substituting 定形郵便's price.
+
+        So this door runs the strong half and none of the weak one. There
+        is no composer behind it: an answer is a quotation with a source,
+        or a typed silence. A question this surface cannot answer is
+        answered by saying so, never by building a sentence that reads like
+        an answer.
+        """
+        from . import document_structure as _ds
+        book = _ds.load(store_path)
+        if not book.get("documents"):
+            return json.dumps(
+                {"verdict": "UNKNOWN_NO_DOCUMENTS", "question": question,
+                 "note": "この面は取り込んだ文書だけを引く。まだ一つも無い"},
+                ensure_ascii=False)
+        out = dict(_ds.lookup(question, book))
+        out["question"] = question
+        out["surface"] = "documents_only"
+        # 構成段は存在しない。呼ばれていないことを毎回言い切る — 「作文が
+        # 混ざっていないか」を読み手が推測で判断しなければならない面は、
+        # 逐語引用の面として意味を成さない。
+        out["constructed"] = False
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
     def vera_documents(forget: str = "") -> str:
         """What documents this terminal has loaded, and a way to drop one.
 

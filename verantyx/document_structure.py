@@ -57,6 +57,42 @@ from typing import Any, Dict, List, Optional, Tuple
 #: space, or 「1.5倍」 becomes a section.
 _HEADING = re.compile(r"^(\d+)[.．]\s+(\S.*)$")
 
+#: 「第2条 出張旅費」「第三章 総則」。日本語の規程はこの形で区切られるので、
+#: アラビア数字とピリオドしか見ていない読み手には、条文書は一枚の節として
+#: 届く。実測: 4条の社内規程が節1つに畳まれ、「第2条は」に見出し行だけが
+#: 返り、その条の中身は一行も出なかった。
+_JP_HEADING = re.compile(
+    r"^第\s*([0-9０-９一二三四五六七八九十百]+)\s*([条章節項編款])\s*(.*)$")
+
+_KANJI_DIGIT = {"〇": 0, "一": 1, "二": 2, "三": 3, "四": 4,
+                "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _numeral(raw: str) -> Optional[int]:
+    """「12」「１２」「十二」→ 12。読めなければ None。
+
+    見出しの番号は順序の判定にしか使わないので、位取りは十・百まで。
+    それを超える条番号を持つ規程はあるが、そこは番号ではなく本文の
+    並び順で足りる — 読めない番号は見出しとして扱わないだけで、行は
+    直前の節に残る。
+    """
+    t = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    if t.isdigit():
+        return int(t)
+    total, unit = 0, 0
+    for ch in t:
+        if ch in _KANJI_DIGIT:
+            unit = _KANJI_DIGIT[ch]
+        elif ch == "十":
+            total += (unit or 1) * 10
+            unit = 0
+        elif ch == "百":
+            total += (unit or 1) * 100
+            unit = 0
+        else:
+            return None
+    return (total + unit) or None
+
 #: `提出期限: 2026 年 9 月 11 日（金） 23:59 まで` — a labelled value. The
 #: name is short by construction; a long left side is a sentence that
 #: happens to contain a colon.
@@ -162,12 +198,26 @@ def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
     lines = rejoin(text)
     secs: List[Section] = [Section(ordinal=0, heading="", lines=[])]
     labels: Dict[str, str] = {}
-    top = 0
+    #: 番号の単調性は見出しの種類ごとに数える。章と条が交互に現れる規程
+    #: (第1章 → 第1条 第2条 → 第2章 → 第3条) を一本の数列として読むと、
+    #: 章に戻った時点で以降の条が全て節に立たなくなる。
+    tops: Dict[str, int] = {}
     for line in lines:
         head = _BULLET.sub("", line).strip()
+        jm = _JP_HEADING.match(head)
+        if jm:
+            n = _numeral(jm.group(1))
+            kind = jm.group(2)
+            if n is not None and n > tops.get(kind, 0):
+                tops[kind] = n
+                # 見出しは行そのまま。「第2条」は人が引用に使う名前で、
+                # アラビア数字の「1.」とは違って落とせない。
+                secs.append(Section(ordinal=n, heading=head))
+                continue
         m = _HEADING.match(head)
         if m:
             n = int(m.group(1))
+            top = tops.get("", 0)
             # A numbered line whose number does not continue the document's
             # own sequence is a nested list, not a new section. 「6. 提出物
             # および提出期限」 is followed by 「1. プロジェクトフォルダ一式」,
@@ -175,7 +225,7 @@ def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
             # four empty headings — so the section that should answer
             # 「提出物は」 held two lines and none of its four items.
             if n > top:
-                top = n
+                tops[""] = n
                 secs.append(Section(ordinal=n, heading=m.group(2).strip()))
                 continue
         secs[-1].lines.append(line)
