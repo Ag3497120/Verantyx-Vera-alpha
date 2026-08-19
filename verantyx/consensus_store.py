@@ -167,7 +167,7 @@ def candidates_for_query(
         from collections import Counter as _Counter
         _cnt: Dict[str, int] = _Counter()
         for w in qset:
-            for c in _word_index(store).get(w, ()):
+            for c in _word_index(store, names=False).get(w, ()):
                 _cnt[c] += 1
         # 同じ重なり数の中は**特定性**で並べる(2026-08-19、PREREG3)。
         # 質量順は 89k/740k 核では効いたが、jawiki 本文で 1.19M 核になると
@@ -360,20 +360,35 @@ def frame_stripped(query: str, runs: List[str]) -> Set[str]:
     return out
 
 
-def _word_index(store: CrossStore) -> Dict[str, List[str]]:
+def _word_index(store: CrossStore, *, names: bool = True) -> Dict[str, List[str]]:
     """語→core の転置索引。store に一度だけ築く(89k核0.2秒/740k核9秒)。
 
     核が増えても照会は増えない — 遅かったのは全核走査という実装の欠陥で
-    あって構造ではない(操作者指摘 2026-08-19)。名前語も facet と同様に
-    引ける(core は自分の名前を facet に持たない)。"""
+    あって構造ではない(操作者指摘 2026-08-19)。
+
+    ``names`` は**名前語を引けるか**。二つの読み手が別のものを要る:
+
+      direction_band  名前も要る。core は自分の名前を facet に持たないので、
+                      名前を数えないと「正当防衛とは」の帯から core 正当防衛
+                      自身が構造的に脱落する(実測で門が正当な当選を全滅)。
+      候補追記         facet だけ。元の実装は `qset & set(cross)` で
+                      **facet しか見ていなかった**。索引化のとき名前を混ぜて
+                      しまい、"what is the sun" に sun_tzu#p が名前の sun で
+                      入り、腕が2本になって AMBIGUOUS に割れた
+                      (COMPOUND_SENSE_CHANNELS が落ちて発覚、2026-08-19)。
+                      「head が店に居るなら非 head の単独語は候補にしない」
+                      という既存規則を、追記が裏口から破っていた。
+    """
     from .lex_filters import norm_words
-    idx = getattr(store, "_word_to_cores", None)
+    attr = "_word_to_cores" if names else "_facet_to_cores"
+    idx = getattr(store, attr, None)
     if idx is None:
         idx = {}
         for core, cross in store.crosses.items():
-            for w in set(cross) | norm_words(core):
+            keys = (set(cross) | norm_words(core)) if names else set(cross)
+            for w in keys:
                 idx.setdefault(w, []).append(core)
-        store._word_to_cores = idx
+        setattr(store, attr, idx)
     return idx
 
 
