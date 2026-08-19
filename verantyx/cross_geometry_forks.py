@@ -507,6 +507,73 @@ def reverse_unique_fork() -> Dict[str, Any]:
                        "verdict": r.get("verdict")}}
 
 
+def reverse_specific_fork() -> Dict[str, Any]:
+    """帯割れの特定性裁定は、孤立した核だけを、根拠ごと名乗って立てる。
+
+    順方向の敗因は証拠の不到達ではない(実測: 正解は候補に92%居て236敗、
+    全facet重なりの反実仮想でも8勝) — axis_energy の 質量×名前一致 が
+    被覆信号を溺れさせる。分離するのは特定性(被覆/面数)の孤立度で、
+    正解時のマージン中央値21.3 vs 誤答時1.14。しきい値5.0は第三の
+    核集合で確認(46/0×2族、experiments/forward_win_mechanism/PREREG2)。
+
+    3点固定: (a) 帯が割れ、特定性が次点の5倍以上で孤立した核は
+    REVERSE_SPECIFIC として立ち、margin と次点を名乗る。(b) 僅差
+    (5倍未満)の帯は棄権のまま — 問いが核を特定していない。
+    (c) 帯唯一の REVERSE_UNIQUE は不変。
+    """
+    from .consensus_store import ja_consensus_ask
+
+    # 数字混じり("雑面0号")は facet に取り込まれない — 汎用核の面は
+    # 漢字だけで28本作る。「甲徴 has 別物」は reverse_unique_fork と同じ
+    # 治具: 弱い直接ヒット核を立てて順方向を棄権させる(逆裁定は順方向
+    # 非ANSWERの後ろでしか発火しない)。
+    _digits = ("一", "二", "三", "四", "五", "六")
+    _junk = [f"雑{a}{b}" for a in _digits for b in _digits][:28]
+
+    st = CrossStore()
+    st.ingest_sentence("甲徴 has 別物")
+    # 特定核: 3面のうち2面が問いに当たる(特定性 2/3)。
+    for a in ("甲徴", "乙徴", "丙徴"):
+        st.ingest_sentence(f"特定核 has {a}")
+    # 汎用核: 同じ2語を含む30面(特定性 2/30)— 帯は割れ、margin は 10。
+    for a in ["甲徴", "乙徴"] + _junk:
+        st.ingest_sentence(f"汎用核 has {a}")
+
+    q = "甲徴と乙徴に関係するのは何ですか"
+    r = ja_consensus_ask(st, q, placement_invariant=True)
+    fired = (r.get("verdict") == "REVERSE_SPECIFIC"
+             and r.get("core") == "特定核"
+             and (r.get("specificity_margin") or 0) >= 5.0
+             and r.get("runner_up") == "汎用核")
+
+    # (b) 僅差: 3面 vs 4面(margin 4/3 < 5)は棄権のまま。
+    close = CrossStore()
+    close.ingest_sentence("甲徴 has 別物")
+    for a in ("甲徴", "乙徴", "丙徴"):
+        close.ingest_sentence(f"特定核 has {a}")
+    for a in ("甲徴", "乙徴", "丁徴", "戊徴"):
+        close.ingest_sentence(f"次点核 has {a}")
+    r2 = ja_consensus_ask(close, q, placement_invariant=True)
+    abstained = r2.get("verdict") not in ("REVERSE_SPECIFIC", "ANSWER")
+
+    # (c) 帯唯一なら従来どおり REVERSE_UNIQUE。
+    uniq = CrossStore()
+    uniq.ingest_sentence("甲徴 has 別物")
+    for a in ("甲徴", "乙徴", "丙徴"):
+        uniq.ingest_sentence(f"特定核 has {a}")
+    r3 = ja_consensus_ask(uniq, q, placement_invariant=True)
+    unique_kept = (r3.get("verdict") == "REVERSE_UNIQUE"
+                   and r3.get("core") == "特定核")
+
+    ok = bool(fired and abstained and unique_kept)
+    return {"fork": "REVERSE_SPECIFIC", "pass": ok,
+            "result": {"fired": bool(fired),
+                       "margin": r.get("specificity_margin"),
+                       "close_abstained": bool(abstained),
+                       "close_verdict": r2.get("verdict"),
+                       "unique_kept": bool(unique_kept)}}
+
+
 def norm_vs_record_fork() -> Dict[str, Any]:
     """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
 
@@ -973,6 +1040,12 @@ def document_draft_is_licensed_fork() -> Dict[str, Any]:
       1. 下書きの充填語は全て、引用行の内容連∪主語に含まれる(発明ゼロ)。
       2. 語彙を通る語が主語+1つ無ければ、下書きは None(断片より沈黙)。
       3. verdict・引用本文には一切触れない。
+      4. **否定の行では黙る**(2026-08-19追加)。speakable は positive 形
+         しか持たないので、「精算の対象としない」から下書きを作ると
+         「対象する」— 行の主張の反転 — しか出せない。この契約が入る前は
+         この fork 自身が否定行を固定具に使っており、反転した下書きが
+         出ることを「合格」として守っていた。固定具を肯定行へ替え、
+         否定行は沈黙の側で押さえる。
     """
     from pathlib import Path as _P
 
@@ -988,7 +1061,7 @@ def document_draft_is_licensed_fork() -> Dict[str, Any]:
                 "pass": True, "result": {"skipped": "no writer.json"}}
     w = Writer.load(wpath)
 
-    line = "グリーン車および指定席の追加料金は、精算の対象としない。"
+    line = "グリーン車および指定席の追加料金は、精算の対象とする。"
     r = {"verdict": "DOCUMENT_LINE", "subject": "精算",
          "section": "交通費の上限", "lines": [line], "text": line}
     qw = quote_in_words(r, w)
@@ -1005,8 +1078,13 @@ def document_draft_is_licensed_fork() -> Dict[str, Any]:
           "lines": ["ぷにゃぷにゃとぽよぽよのこと。"],
           "text": "ぷにゃぷにゃとぽよぽよのこと。"}
     qw2 = quote_in_words(r2, w)
+    # 4. 否定の行は沈黙 — 反転した主張を作らない。
+    neg = "グリーン車および指定席の追加料金は、精算の対象としない。"
+    qw3 = quote_in_words({"verdict": "DOCUMENT_LINE", "subject": "精算",
+                          "section": "交通費の上限", "lines": [neg],
+                          "text": neg}, w)
     ok = (qw is not None and licensed and qw.get("constructed") is True
-          and qw2 is None
+          and qw2 is None and qw3 is None
           and r["verdict"] == "DOCUMENT_LINE" and r["text"] == line)
     return {
         "experiment": "cross_geometry",
@@ -1014,7 +1092,8 @@ def document_draft_is_licensed_fork() -> Dict[str, Any]:
         "pass": bool(ok),
         "result": {"draft": (qw or {}).get("sentences", [{}])[0].get("text"),
                    "licensed": licensed,
-                   "silent_on_nonwords": qw2 is None},
+                   "silent_on_nonwords": qw2 is None,
+                   "silent_on_negation": qw3 is None},
     }
 
 
@@ -4476,6 +4555,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_invariance_fork(),
         direction_invariance_fork(),
         reverse_unique_fork(),
+        reverse_specific_fork(),
         norm_vs_record_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),

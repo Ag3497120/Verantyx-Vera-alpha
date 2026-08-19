@@ -167,11 +167,21 @@ def candidates_for_query(
         from collections import Counter as _Counter
         _cnt: Dict[str, int] = _Counter()
         for w in qset:
-            for c in _word_index(store).get(w, ()):
+            for c in _word_index(store, names=False).get(w, ()):
                 _cnt[c] += 1
-        extra = sorted((-(ov * 1000 + store.mass(c)), c)
-                       for c, ov in _cnt.items() if c not in out)
-        out = out + [c for _s, c in extra[:k - len(out)]]
+        # 同じ重なり数の中は**特定性**で並べる(2026-08-19、PREREG3)。
+        # 質量順は 89k/740k 核では効いたが、jawiki 本文で 1.19M 核になると
+        # overlap=3 の核が数千あり、その中で汎用核の巨大質量が正解の中頻度
+        # 核を6枠から押し出した — 同一300問で reachable 171→15、
+        # wrong 206→223。docstring が警告していた "tokyo vs film" が規模で
+        # 顕在化した形。特定性 = 重なり / その核の面数 は「自分の面のうち
+        # 何割がこの問いに当たるか」で、店が持つ実測だけで決まる。
+        # 直接ヒット(名前一致)の順位はここでは一切触らない。
+        extra = sorted(
+            (-ov, -(ov / max(1, len(store.crosses.get(c) or ()))),
+             -store.mass(c), c)
+            for c, ov in _cnt.items() if c not in out)
+        out = out + [t[-1] for t in extra[:k - len(out)]]
     return out[:k]
 
 
@@ -350,20 +360,35 @@ def frame_stripped(query: str, runs: List[str]) -> Set[str]:
     return out
 
 
-def _word_index(store: CrossStore) -> Dict[str, List[str]]:
+def _word_index(store: CrossStore, *, names: bool = True) -> Dict[str, List[str]]:
     """語→core の転置索引。store に一度だけ築く(89k核0.2秒/740k核9秒)。
 
     核が増えても照会は増えない — 遅かったのは全核走査という実装の欠陥で
-    あって構造ではない(操作者指摘 2026-08-19)。名前語も facet と同様に
-    引ける(core は自分の名前を facet に持たない)。"""
+    あって構造ではない(操作者指摘 2026-08-19)。
+
+    ``names`` は**名前語を引けるか**。二つの読み手が別のものを要る:
+
+      direction_band  名前も要る。core は自分の名前を facet に持たないので、
+                      名前を数えないと「正当防衛とは」の帯から core 正当防衛
+                      自身が構造的に脱落する(実測で門が正当な当選を全滅)。
+      候補追記         facet だけ。元の実装は `qset & set(cross)` で
+                      **facet しか見ていなかった**。索引化のとき名前を混ぜて
+                      しまい、"what is the sun" に sun_tzu#p が名前の sun で
+                      入り、腕が2本になって AMBIGUOUS に割れた
+                      (COMPOUND_SENSE_CHANNELS が落ちて発覚、2026-08-19)。
+                      「head が店に居るなら非 head の単独語は候補にしない」
+                      という既存規則を、追記が裏口から破っていた。
+    """
     from .lex_filters import norm_words
-    idx = getattr(store, "_word_to_cores", None)
+    attr = "_word_to_cores" if names else "_facet_to_cores"
+    idx = getattr(store, attr, None)
     if idx is None:
         idx = {}
         for core, cross in store.crosses.items():
-            for w in set(cross) | norm_words(core):
+            keys = (set(cross) | norm_words(core)) if names else set(cross)
+            for w in keys:
                 idx.setdefault(w, []).append(core)
-        store._word_to_cores = idx
+        setattr(store, attr, idx)
     return idx
 
 
@@ -729,6 +754,46 @@ def ja_consensus_ask(
         _q2 = frame_stripped(query, runs)
         if _q2:
             _band, _best = direction_band(store, _q2)
+            # 帯割れの特定性裁定(REVERSE_SPECIFIC、2026-08-19)。順方向の
+            # 敗因は証拠の不到達ではなく axis_energy の 質量×名前一致 が
+            # 被覆信号を溺れさせること(実測: 正解は候補に92%居るのに
+            # 236敗、全facet重なりの反実仮想でも8勝のみ)。分離する信号は
+            # 特定性 = 被覆語数/面数 の孤立度: 正解時のマージン中央値21.3
+            # vs 誤答時1.14。しきい値5.0は第三の核集合で確認(46/0×2族、
+            # PREREG2)。3.0は確認集合で誤答1が出て事前登録どおり棄却した。
+            # 僅差の帯は問いが核を特定していない — 棄権が正しい。
+            if len(_band) > 1 and _best >= 2:
+                _sp = sorted(
+                    ((len([w for w in _q2
+                           if w in (store.crosses.get(c) or {})
+                           or w in _nw(c)])
+                      / max(1, len(store.crosses.get(c) or {})), c)
+                     for c in _band), reverse=True)
+                if _sp[0][0] != _sp[1][0] and _sp[0][0] / _sp[1][0] >= 5.0:
+                    _c = _sp[0][1]
+                    _cov = sorted(_q2 & (set(store.crosses.get(_c) or {})
+                                         | _nw(_c)))
+                    out = dict(out)
+                    out["forward_verdict"] = out.get("verdict")
+                    out["verdict"] = "REVERSE_SPECIFIC"
+                    out["core"] = display_sym(_c)
+                    out["core_key"] = _c
+                    out["reverse_coverage"] = _best
+                    out["covered"] = _cov
+                    out["specificity_margin"] = round(_sp[0][0] / _sp[1][0], 2)
+                    out["runner_up"] = display_sym(_sp[1][1])
+                    _fs = [t for t, _n in store.top_facets(_c, k=4)]
+                    out["text"] = display_sym(_c) + (
+                        "は" + "、".join(display_sym(x) for x in _fs)
+                        if _fs else "")
+                    out["note"] = ("順方向は棄権。逆方向の被覆最大帯は割れて"
+                                   "いるが、特定性(被覆/面数)が次点の"
+                                   f"{out['specificity_margin']}倍で孤立 — "
+                                   "覆った語: " + "、".join(_cov)
+                                   + "。次点: " + out["runner_up"]
+                                   + "。ANSWERではなく、裁定根拠ごと示す"
+                                     "型付き回答")
+                    return out
             if len(_band) == 1 and _best >= 2:
                 _c = next(iter(_band))
                 _cov = sorted(_q2 & (set(store.crosses.get(_c) or {})
