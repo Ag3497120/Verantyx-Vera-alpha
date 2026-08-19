@@ -338,6 +338,24 @@ def _apply_placement_invariance(
     answers survived — correctly. Demand-scored facets are not tied, so they
     survive, and simulated placement keeps some of its answers.
 
+    Real-store confirmation, 2026-08-19 (this was the open question when the
+    gate landed — all earlier numbers were synthetic). vera.db ja, 89,369
+    cores, 300 mid-frequency facet probes with planted source cores
+    (experiments/placement_matryoshka_recheck/):
+
+        demotions fired          4 of 546 ANSWERs (~0.7%)
+        of those, wrong answers  4 / 4
+        correct answers demoted  0
+
+    Two honest notes travel with that. Real mass distributions rarely tie,
+    so the gate fires far less often than on the all-counts-equal synthetic
+    store — it is cheap insurance, not a large effect. And an independent
+    synthetic replication the same day (n=62, different store) found the
+    same shape: fabrications 4 -> 0 with the single justified answer
+    untouched, while AXIS rearrangement (rotation/reversal) caught nothing
+    — the search is already axis-robust; the arbitrariness lives in the
+    tie-break, exactly where this gate looks.
+
     It costs recall, and the cost is real: justified answers fall too. This
     is a dial, and it is off by default, because a caller who has not decided
     that refusal beats a wrong answer should not have it decided for them.
