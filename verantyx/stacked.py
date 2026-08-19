@@ -263,6 +263,13 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
                  str(result.get("section") or "")]
 
     def draft_of(line: str):
+        # 否定の行は黙る(2026-08-19実測)。speakable は positive 形のみ
+        # (presence 証拠は ない を許可しない)なので、「対象としない」の
+        # 行から下書きを作ると「対象する」— 行の主張の反転 — しか出せない。
+        # 引用がそのまま立っている; 反転した下書きより沈黙。
+        if _re.search(r"(しない|されない|できない|ではない|はない|認めない"
+                      r"|ならない|ません)(。|$)", line.rstrip()):
+            return None
         runs = [r for r in (ja_content_runs(line) or []) if 2 <= len(r) <= 10]
         words = [r for r in runs if r in writer.vocab]
         # 係り受けの搬送: 行の中で各語の直後に立つ助詞を読む。閉じた

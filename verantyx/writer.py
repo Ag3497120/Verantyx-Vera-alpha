@@ -221,7 +221,10 @@ class Writer:
             # 引き直せるので、積み込み時に再導出する。データの主張は
             # 変えない — 同じ文字列を今の読み手で読み直すだけ。
             import re as _re
-            for _i in range(1, len(form.cases)):
+            # 穴0も対象(2026-08-19): range(1,…) が主語穴を飛ばし、
+            # 「<0>されているのは…」に 領収書 が入った(される に続く穴は
+            # する名詞しか立てない)。
+            for _i in range(0, len(form.cases)):
                 if form.cases[_i] != "free":
                     continue
                 _m = _re.search("<%d>" % _i, form.template)
