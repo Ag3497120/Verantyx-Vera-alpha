@@ -72,9 +72,19 @@ def lookup(name: str, *, path: Optional[Path] = None) -> Dict[str, Any]:
     matches = [q] if hit is not None else [
         k for k in crosses if k == q or k.endswith("." + q)]
     if not matches:
+        # 被覆を名乗る(2026-08-19実測)。この店は mathlib の**一部**で、
+        # 75,171宣言・出所メタデータなし。core Lean の宣言(Nat.add_comm)
+        # とクラスのフィールド(add_comm)は構造上入っていない。
+        # 「この店に無い」と「mathlib に無い」は違う — 前者しか言えない。
         return {"verdict": "UNKNOWN_NOT_IN_MATHLIB_STORE", "name": name,
-                "note": "no declaration by this name or trailing segment; "
-                        "absence of a witness is not a claim of falsehood"}
+                "store_declarations": len(crosses),
+                "note": "no declaration by this name or trailing segment. "
+                        "This store holds %d declarations and is a SUBSET of "
+                        "mathlib with no provenance metadata: core-Lean "
+                        "declarations and class fields are absent by "
+                        "construction. Absent here is not absent from "
+                        "mathlib, and neither is a claim of falsehood."
+                        % len(crosses)}
     if len(matches) > 12:
         return {"verdict": "UNKNOWN_AMBIGUOUS_NAME", "name": name,
                 "candidates": len(matches), "sample": sorted(matches)[:12]}
