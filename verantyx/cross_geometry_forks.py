@@ -467,6 +467,46 @@ def ja_coverage_gate_fork() -> Dict[str, Any]:
     }
 
 
+def reverse_unique_fork() -> Dict[str, Any]:
+    """逆方向の唯一候補は、順方向の棄権の後ろでだけ、名乗って立つ。
+
+    3点: (a) 枠語(〜に関係するのは何ですか)は主題に入らない — 混入は
+    逆方向の誤答を0→23.7%に跳ねさせた実測がある(枠剥がし後163/0)。
+    (b) 発火は 順方向非ANSWER ∧ 帯唯一 ∧ 被覆≥2 の全部AND。verdict は
+    REVERSE_UNIQUE であって ANSWER ではなく、覆った語を名乗る。
+    (c) 順方向が ANSWER の問いには一切触れない。
+    """
+    from .consensus_store import (direction_band, frame_stripped,
+                                  ja_consensus_ask)
+    from .lang import ja_content_runs
+
+    st = CrossStore()
+    # 唯一の2語被覆核。日本語の run になるよう漢字語で作る。
+    for a in ("甲要素", "乙要素", "丙要素"):
+        st.ingest_sentence(f"標的核 has {a}")
+    st.ingest_sentence("甲要素 has 別物")
+
+    q = "甲要素と乙要素に関係するのは何ですか"
+    runs = ja_content_runs(q)
+    qs = frame_stripped(q, runs)
+    stripped_ok = "関係" not in qs and {"甲要素", "乙要素"} <= qs
+    band, best = direction_band(st, qs)
+    r = ja_consensus_ask(st, q, placement_invariant=True)
+    fired = (r.get("verdict") == "REVERSE_UNIQUE"
+             and r.get("core") == "標的核"
+             and r.get("reverse_coverage") == 2
+             and r.get("covered"))
+    # (c) 名前形は順方向 ANSWER のまま(REVERSE_UNIQUE が触らない)
+    r2 = ja_consensus_ask(st, "標的核とは", placement_invariant=True)
+    untouched = r2.get("verdict") != "REVERSE_UNIQUE"
+    ok = bool(stripped_ok and fired and untouched)
+    return {"fork": "REVERSE_UNIQUE", "pass": ok,
+            "result": {"stripped": bool(stripped_ok), "fired": bool(fired),
+                       "forward_untouched": bool(untouched),
+                       "band": sorted(band), "best": best,
+                       "verdict": r.get("verdict")}}
+
+
 def direction_invariance_fork() -> Dict[str, Any]:
     """向きの不変性: 読む向きを変えると消える当選は立ってはならない。
 
@@ -4384,6 +4424,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_cannot_manufacture_confidence_fork(),
         placement_invariance_fork(),
         direction_invariance_fork(),
+        reverse_unique_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),
         event_extractor_refuses_statute_prose_fork(),

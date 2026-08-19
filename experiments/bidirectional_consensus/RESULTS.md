@@ -39,3 +39,23 @@ direction_invariant: True の証明書つき。過失 故意 の AMBIGUOUS は�
 逆方向単独 158/0 はこの探針(問い=core の facet 3語)に有利な形。自然文の
 問いでの単独精度は未測定なので、回答チャネルへの昇格は別の事前登録で。
 今回は門(相殺)だけを本体に入れた。
+
+## 追補: REVERSE_UNIQUE 昇格(PREREG_PROMOTION/2、2026-08-19)
+
+3族探針(results_promotion.json):
+  (a) 裸3語:      REVERSE_UNIQUE 163正答/誤答0(沈黙137)
+  (b) 自然文包装: 初回は誤答23/97で**棄却** — 原因は枠語(〜に関係する)の
+      qset混入。枠剥がし(閉パターン、パターン外出現は残す)を事前登録2で
+      変分 → **163/0、裸3語と完全一致**
+  (c) 名前形100本: 順方向ANSWER 100/100不変
+
+発火規則(AND): 順方向非ANSWER ∧ 被覆最大帯が唯一 ∧ 被覆≥2語。
+verdict=REVERSE_UNIQUE(ANSWERではない、SEEDEDと同じ非昇格の型)、
+覆った語を名乗る。帯が割れれば沈黙(時効/消滅時効/対立の3すくみ等 —
+規則どおりの正直な棄権)。
+
+配線: consensus_store.frame_stripped(向き門の被覆にも適用)+
+ja_consensus_ask末尾の昇格、engine.askに door=reverse_coverage の座席
+(censusへ落とさない — 逆方向が到達経路ごと名乗っており二重投票になる)。
+エンジン端実測3/3正解。fork 156本目 REVERSE_UNIQUE(枠剥がし・発火3条件・
+順方向不可侵)。forks 156/156。

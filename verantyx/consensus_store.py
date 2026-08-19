@@ -328,6 +328,29 @@ def consensus_over_store(
     return out
 
 
+_FRAME = re.compile(r"(に関係する|に関する|について|とは何|は何|を教えて"
+                    r"|ですか|でしょうか|ってなに|って何)")
+
+
+def frame_stripped(query: str, runs: List[str]) -> Set[str]:
+    """問いの枠パターンの中にしか現れない run を主題から外す(閉じた規則)。
+
+    実測(2026-08-19、PREREG_PROMOTION): 「〜に関係するのは何ですか」の
+    関係 が内容語として被覆に入り、逆方向の誤答が 0→23.7% に跳ねた。
+    枠組み語は問いの装置であって主題ではない。パターン外にも現れる語
+    (「親子関係の解消」の 関係)は残る — 位置が枠か主題かを分ける。
+    枠剥がし後の再測: 自然文包装 163正答/誤答0(裸3語と完全一致)。
+    """
+    spans = [m.span() for m in _FRAME.finditer(query or "")]
+    out: Set[str] = set()
+    for r in runs:
+        for m in re.finditer(re.escape(r), query or ""):
+            if not any(a <= m.start() and m.end() <= b for a, b in spans):
+                out.add(r)
+                break
+    return out
+
+
 def direction_band(store: CrossStore, qset: Set[str]) -> Tuple[Set[str], int]:
     """逆方向の読み: 問いの内容語を最も多く覆う core の同点帯。
 
@@ -673,7 +696,37 @@ def ja_consensus_ask(
     if placement_invariant:
         _apply_placement_invariance(store, out, query, k=k, cfg=cfg, ja=True)
         # 向きの不変性も同じ observe 傘の下(単一ソブリン: 同じ門を全扉で)。
-        _apply_direction_invariance(store, out, set(runs))
+        # 被覆は枠剥がし後の主題で数える — 枠語(〜に関係する)混入は
+        # 逆方向の誤答を 0→23.7% に跳ねさせた実測がある。
+        _apply_direction_invariance(store, out, frame_stripped(query, runs))
+    # 逆方向の唯一候補(REVERSE_UNIQUE、2026-08-19)。順方向が棄権した
+    # 問いに限り、被覆最大帯が唯一で被覆≥2語なら、型付き回答として出す。
+    # ANSWER ではない — SEEDED と同じ非昇格の型で、到達経路(覆った語)を
+    # 名乗る。実測(PREREG_PROMOTION/2): 裸3語 163/0、自然文包装 163/0
+    # (枠剥がし後)、名前形100本の順方向 ANSWER は不変。
+    if out.get("verdict") != "ANSWER":
+        from .lex_filters import norm_words as _nw
+        _q2 = frame_stripped(query, runs)
+        if _q2:
+            _band, _best = direction_band(store, _q2)
+            if len(_band) == 1 and _best >= 2:
+                _c = next(iter(_band))
+                _cov = sorted(_q2 & (set(store.crosses.get(_c) or {})
+                                     | _nw(_c)))
+                out = dict(out)
+                out["forward_verdict"] = out.get("verdict")
+                out["verdict"] = "REVERSE_UNIQUE"
+                out["core"] = display_sym(_c)
+                out["core_key"] = _c
+                out["reverse_coverage"] = _best
+                out["covered"] = _cov
+                _fs = [t for t, _n in store.top_facets(_c, k=4)]
+                out["text"] = display_sym(_c) + (
+                    "は" + "、".join(display_sym(x) for x in _fs) if _fs else "")
+                out["note"] = ("順方向は棄権。逆方向(問いを最も覆う核)の"
+                               "唯一候補 — 覆った語: " + "、".join(_cov)
+                               + "。ANSWERではなく、被覆という到達経路ごと"
+                                 "示す型付き回答")
     return out
 
 
