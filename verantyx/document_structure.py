@@ -853,6 +853,24 @@ def _reference_summary(result: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+_DEF_EDGES: Optional[Dict[str, List[str]]] = None
+
+
+def _def_edges() -> Dict[str, List[str]]:
+    """辞書辺(2026-08-19、experiments/def_edges)。jawiki 1,419,406定義文
+    から、二重ライセンス(漢字の区切りを共有 ∧ 異なる定義文で2回以上
+    同一文共起)で収穫した語→隣語。欠点↔弱点 の類。順位づけ・経路にだけ
+    使い、票と本文には入れない(jgen辞書実験: 順位可・主張54.8%不可)。"""
+    global _DEF_EDGES
+    if _DEF_EDGES is None:
+        p = Path.home() / "Projects" / "vera-corpus" / "build" / "def_edges.json"
+        try:
+            _DEF_EDGES = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _DEF_EDGES = {}
+    return _DEF_EDGES
+
+
 def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     """``_lookup`` に見出しベースの参考要約(reference)を重ねた薄い皮。
 
@@ -881,6 +899,38 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     active.sort(key=lambda d: -int(d.get("priority") or 0))
     book = {**book, "documents": active}
     result = _lookup(subject, book)
+    # 辞書辺の後退(2026-08-19、experiments/def_edges)。明記なし・不在が
+    # 確定した後でだけ動く: 不在語の辞書隣語(欠点→弱点)が文書に実在する
+    # なら、その引用を**置換を名乗って**返す。主題取りこぼし門(賢者の石)
+    # の後ろの席なので、複合語不在はここに来ても隣語を持たず不変。
+    if result.get("verdict") in ("DOCUMENT_NOT_SPECIFIED",
+                                 "UNKNOWN_NOT_IN_DOCUMENTS"):
+        absent = str(result.get("subject") or "").strip()
+        for partner in (_def_edges().get(absent) or [])[:4]:
+            # 置換形(veraの弱点)が題名絞り込み等で落ちる場合に備え、
+            # 裸の隣語でも引く — どちらも同じ門を全て通る。
+            _qs = []
+            if absent and absent in subject:
+                _qs.append(subject.replace(absent, partner))
+            _qs.append(partner)
+            r2 = None
+            for q2 in _qs:
+                _r = _lookup(q2, book)
+                if str(_r.get("verdict") or "").startswith("DOCUMENT") and \
+                        _r.get("verdict") != "DOCUMENT_NOT_SPECIFIED":
+                    r2 = _r
+                    break
+            if r2 is not None:
+                r2 = dict(r2)
+                r2["substituted"] = {"asked": absent, "used": partner,
+                                     "licence": "def_edge"}
+                r2["reached_via"] = "%s→辞書辺→%s" % (absent, partner)
+                r2["note"] = ("「%s」の記載は無い。辞書の定義文で繰り返し"
+                              "並記される隣語「%s」の記載を引用する — "
+                              "同義の主張ではなく、辺の隣という実測。%s"
+                              % (absent, partner, r2.get("note") or ""))
+                result = r2
+                break
     if result.get("source"):
         for d in active:
             if d.get("source") == result.get("source") and d.get("date"):
