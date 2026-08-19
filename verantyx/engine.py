@@ -322,6 +322,33 @@ def ask(query: str, vera: Any, *, last_core: str = "",
             from .document_structure import load as _docs_load
             from .document_structure import lookup as _docs_lookup
             book = _docs_load(store_path)
+            # 多者間の複合文は単一主題の経路では扱えない — 事象分解が先。
+            # 実測 2026-08-19: 「aがbを脅してbがcを傷つけたbに科される
+            # 罪名は」が meaning_descent へ落ち、「…罪名はは、格子の分解
+            # 単位を持たない」という無意味な出力になっていた。2事象以上を
+            # 検出したらここで引き受け、当事者の名指し(bに科される)にも
+            # 応じる。文書が無ければ各事象が型付き拒否のまま並ぶ — それが
+            # 「刑法等を投入すれば答わる」という正直な案内になる。
+            try:
+                from .multi_party import analyze_for_engine as _mp
+                _m = _mp(q, book)
+            except Exception:
+                _m = None
+            if _m is not None:
+                t.note("multi_party", True,
+                       "%d事象%s" % (len(_m.get("events") or []),
+                                    "・%s名指し" % _m["asked_actor"]
+                                    if _m.get("asked_actor") else ""),
+                       changed=True)
+                t.raw, t.door = _m, "multi_party"
+                t.verdict = str(_m.get("verdict"))
+                t.core = str(_m.get("asked_actor") or "")
+                t.text = str(_m.get("text") or "")
+                t.origins = sorted({str(e.get("source"))
+                                    for e in _m.get("per_event") or []
+                                    if e.get("source")}) or []
+                t.readings = {"quoted": True}
+                return t.as_dict()
             if book.get("documents"):
                 subj = q
                 for suf in _TOPIC_SUFFIXES:

@@ -637,6 +637,7 @@ def compose(
     content_from: Optional[Sequence[str]] = None,
     vocab: Optional[Any] = None,
     licence: str = "unknown",
+    roles: Optional[Dict[str, str]] = None,
 ) -> List[Draft]:
     """Sentences about ``subject`` using ``facets``, best-supported first.
 
@@ -690,12 +691,31 @@ def compose(
         for hole, case in enumerate(form.cases[1:], start=1):
             slot = form.slots[hole] if hole < len(form.slots) else None
             cand = [t for t in pool if t not in used and fits(t, case)]
+            # 係り受けの搬送(2026-08-19): 引用行で語が担っていた助詞
+            # (新幹線**の**・利用**は**・移動**に**)を roles として受け、
+            # 穴の助詞と一致する語を先に。順位であって門ではない —
+            # 一致が無ければ従来の並びのまま。「新幹線と利用を移動する」
+            # (行では 移動に だったのに を の穴へ入った)型の役割逆転を、
+            # 行自身の読みで抑える。
+            if roles and slot:
+                part = slot[0]
+                matched = [t for t in cand if roles.get(t) == part]
+                others = [t for t in cand if roles.get(t) != part]
+                cand = matched + others
             if slot:
                 # Attested first, unknown next, never one the corpus rejects.
                 yes = [t for t in cand if selects(t, slot[0], slot[1]) is True]
                 maybe = [t for t in cand if selects(t, slot[0], slot[1]) is None]
-                cand = yes + maybe
-                if yes and cand and cand[0] == yes[0]:
+                if roles:
+                    # 役割一致は選択実証より先 — 行が実際に書いた役割は、
+                    # コーパス統計より強いライセンス。
+                    part = slot[0] if slot else ""
+                    rm = [t for t in (yes + maybe) if roles.get(t) == part]
+                    ro = [t for t in (yes + maybe) if roles.get(t) != part]
+                    cand = rm + ro
+                else:
+                    cand = yes + maybe
+                if yes and cand and cand[0] in yes:
                     n_attested += 1
             if not cand:
                 ok = False

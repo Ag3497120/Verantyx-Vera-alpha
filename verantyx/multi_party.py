@@ -95,6 +95,79 @@ def _crime_for_verb(verb: str, book: Dict[str, Any]) -> Dict[str, Any]:
     return r
 
 
+#: 「<X>に科される」「<X>の罪」— 問いが特定の当事者を名指す形。閉じた
+#: 2形のみ。名指しがあれば per_event をその当事者に絞り、他の事象は
+#: 省略された事実として note に残す。
+_ASKED_ACTOR_RE = re.compile(
+    r"([^\s、。がをはにでとへも]{1,6})(?:に科され|の罪名|の罪[はを]?)")
+
+
+def asked_actor(sentence: str) -> Optional[str]:
+    m = _ASKED_ACTOR_RE.search(sentence)
+    if not m:
+        return None
+    a = m.group(1)
+    return None if a.startswith(_QUESTION_ACTORS) else a
+
+
+def analyze_for_engine(sentence: str,
+                       book: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """engine.ask 用の入口: 2事象以上の複合文だけを引き受ける。
+
+    実測 2026-08-19: 「aがbを脅してbがcを傷つけたbに科される罪名は」が
+    engine では meaning_descent へ落ち、「…罪名はは、格子の分解単位を
+    持たない」という無意味な構成的説明が出ていた。複合文は単一主題の
+    経路では扱えない — 事象分解が先に立つ必要がある。
+
+    問いが当事者を名指していれば(bに科される)、その当事者の事象だけを
+    表に出し、他の事象は数を添えて残す。法的評価(強要による責任の減免
+    など)は一切しない — 各行為に対応する条文の引用と、評価をしていない
+    という明示だけ。
+    """
+    events = decompose_events(sentence)
+    if len(events) < 2:
+        return None
+    out = analyze_multi_party(sentence, book)
+    if out.get("verdict") != "MULTI_PARTY_ANALYSIS":
+        return None
+    actor = asked_actor(sentence)
+    # 名指しの切り出しは貪欲に流れる(「傷つけたbに科され」→ 傷つけたb)。
+    # 事象の実行者として実在する接尾だけを名指しと認める — 候補は
+    # 分解済みの actor 名に閉じているので、これは推測ではなく照合。
+    if actor:
+        actors = {e["actor"] for e in events}
+        if actor not in actors:
+            for i in range(1, len(actor)):
+                if actor[i:] in actors:
+                    actor = actor[i:]
+                    break
+            else:
+                actor = None
+    per = out["per_event"]
+    omitted = 0
+    if actor:
+        mine = [e for e in per if e["actor"] == actor]
+        if mine:
+            omitted = len(per) - len(mine)
+            per = mine
+    lines = []
+    for e in per:
+        if e.get("quoted"):
+            lines.append("%s→%s(%s): %s — %s" % (
+                e["actor"], e["target"], e["verb"],
+                e.get("crime_section") or "", (e.get("crime_text") or "").split("\n")[0]))
+        else:
+            lines.append("%s→%s(%s): 文書に該当の定めが見当たらない(%s)" % (
+                e["actor"], e["target"], e["verb"], e.get("crime_verdict")))
+    note = out["note"]
+    if actor:
+        note = ("問いは「%s」を名指しているので、その行為だけを表に出した"
+                "(他に%d事象)。" % (actor, omitted)) + note
+    return {**out, "per_event": per, "asked_actor": actor,
+            "omitted_events": omitted,
+            "text": "\n".join(lines), "note": note}
+
+
 def analyze_multi_party(sentence: str, book: Dict[str, Any]) -> Dict[str, Any]:
     """出来事に分解し、当事者ごとに罪(文書の該当条)を引いて並べる。
 

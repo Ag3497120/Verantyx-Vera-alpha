@@ -274,10 +274,31 @@ def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
 def index(text: str, source: str) -> Dict[str, Any]:
     """The whole document, indexed by what a person would ask about."""
     secs, labels = sections(text)
-    return {"source": source,
-            "sections": [s.as_dict() for s in secs],
-            "labels": labels,
-            "lines": len(rejoin(text))}
+    out = {"source": source,
+           "sections": [s.as_dict() for s in secs],
+           "labels": labels,
+           "lines": len(rejoin(text))}
+    # 文書側の辺(2026-08-19): 同じ行に書かれた内容連の対。連合の辺
+    # (同一文共起、経路0/60→43回復・誤答0の実測)と同じ規則を、この
+    # 文書自身に。節ごとに持ち、lookup が引用へ注釈として添える —
+    # 「この文書はAとBを一つの行で関係づけている」という、追試可能な
+    # 主張だけを運ぶ。票には入らない。
+    try:
+        from .lang import ja_content_runs
+        for sec in out["sections"]:
+            pairs = []
+            for ln in (sec.get("lines") or []):
+                runs = sorted({r for r in (ja_content_runs(ln) or [])
+                               if 2 <= len(r) <= 10})
+                if 2 <= len(runs) <= 12:
+                    pairs += [(runs[i], runs[j])
+                              for i in range(len(runs))
+                              for j in range(i + 1, len(runs))]
+            if pairs:
+                sec["edges"] = sorted(set(pairs))[:64]
+    except Exception:
+        pass
+    return out
 
 
 def sidecar_path(store_path: Path) -> Path:
@@ -757,6 +778,16 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     if ref:
         result["reference"] = ref
         result["reference_constructed"] = True
+    # 引用が立った節の辺(行内共起)を注釈として添える。判定は変えない。
+    if result.get("verdict") in ("DOCUMENT_LINE", "DOCUMENT_SECTION"):
+        sec_name = str(result.get("section") or result.get("subject") or "")
+        for doc in book.get("documents", []):
+            if result.get("source") and doc.get("source") != result.get("source"):
+                continue
+            for sec in doc.get("sections", []):
+                if sec.get("heading") == sec_name and sec.get("edges"):
+                    result["edge_pairs"] = sec["edges"][:16]
+                    break
     return result
 
 

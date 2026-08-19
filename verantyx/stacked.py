@@ -246,49 +246,67 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
     verdict = str(result.get("verdict") or "")
     if verdict not in ("DOCUMENT_LINE", "DOCUMENT_SECTION"):
         return None
-    lines = result.get("lines") or []
-    line = str(lines[0] if lines else result.get("text") or "").strip()
-    line = line.split("\n")[0]
-    if not line:
+    lines = [str(x).strip() for x in (result.get("lines") or []) if str(x).strip()]
+    if not lines:
+        line0 = str(result.get("text") or "").strip().split("\n")[0]
+        lines = [line0] if line0 else []
+    if not lines:
         return None
     from .compose_ja import compose, slot_boundary_ok
     from .lang import ja_content_runs
+    import re as _re
 
-    runs = [r for r in (ja_content_runs(line) or []) if 2 <= len(r) <= 10]
-    words = [r for r in runs if r in writer.vocab]
-    # 主語は問いの主題を優先し、行に無い語は使わない(発明ゼロの検査が
-    # 「引用行∪主語」なのは、主語だけが行の外から来得るため — それも
-    # 文書が節見出し・探査で名指した語に限る)。
-    subj_cand = [str(result.get("subject") or ""),
-                 str(result.get("section") or "")]
-    subject = ""
-    for s in subj_cand:
-        s = s.strip()
-        if s and s in writer.vocab and len(s) <= 10:
-            subject = s
-            break
-    if not subject:
-        if not words:
-            return None
-        subject = words[0]
-    rest = [w for w in words if w != subject]
-    if not rest:
-        return None
     speakable = {k: f for k, f in writer.forms.items()
                  if f.modality == "none" and f.polarity == "positive"
                  and slot_boundary_ok(f.template)}
-    drafts = compose(speakable, subject, rest, limit=limit,
-                     content_from=[subject], vocab=writer.vocab,
-                     licence="unknown")
-    if not drafts:
+    subj_cand = [str(result.get("subject") or ""),
+                 str(result.get("section") or "")]
+
+    def draft_of(line: str):
+        runs = [r for r in (ja_content_runs(line) or []) if 2 <= len(r) <= 10]
+        words = [r for r in runs if r in writer.vocab]
+        # 係り受けの搬送: 行の中で各語の直後に立つ助詞を読む。閉じた
+        # 1文字集合のみ — 解析器ではなく、行が書いた役割の写し。
+        roles: Dict[str, str] = {}
+        for w in words:
+            m = _re.search(_re.escape(w) + r"([のをにがはとでへ])", line)
+            if m:
+                roles[w] = m.group(1)
+        # 主語は問いの主題を優先。無ければ行が は/が を付けた語 — 行の
+        # 主語をそのまま継ぐ。それも無ければ先頭の語彙語。
+        subject = ""
+        for s in subj_cand:
+            s = s.strip()
+            if s and s in writer.vocab and len(s) <= 10:
+                subject = s
+                break
+        if not subject:
+            marked = [w for w in words if roles.get(w) in ("は", "が")]
+            subject = marked[0] if marked else (words[0] if words else "")
+        if not subject:
+            return None
+        rest = [w for w in words if w != subject]
+        if not rest:
+            return None
+        drafts = compose(speakable, subject, rest, limit=limit,
+                         content_from=[subject], vocab=writer.vocab,
+                         licence="unknown", roles=roles)
+        return [dict(d.as_dict(), line=line) for d in drafts] or None
+
+    sentences: List[Dict[str, Any]] = []
+    for ln in lines[:2]:   # 節なら行ごとに1文まで — 各行が各文のライセンス
+        ds = draft_of(ln)
+        if ds:
+            sentences.extend(ds[:1])
+    if not sentences:
         return None
     return {
-        "sentences": [d.as_dict() for d in drafts],
+        "sentences": sentences,
         "constructed": True,
         "licence": "quoted_line",
-        "line": line,
-        "note": "引用行の言葉だけで紡いだ下書き。内容の出典は引用行、"
-                "形の出典は文型 — どちらもこの文を真にはしない",
+        "line": lines[0],
+        "note": "引用行の言葉だけで紡いだ下書き(行ごとに1文)。内容の"
+                "出典は各引用行、形の出典は文型 — どちらも文を真にはしない",
     }
 
 
