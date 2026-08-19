@@ -676,10 +676,28 @@ def _title_descent(book: Dict[str, Any], subject: str):
     実測: 複数文書 6/7 → 7/7、単一文書の回帰 誤答 0。
     """
     terms = content_terms(subject)
+    docs = book.get("documents", []) or []
+
+    # 題名そのものを名指した問い(2026-08-19、P4修理)。「多型」に対し
+    # 多型.txt が在るなら、その文書がこの問いの主題である — 部分一致の
+    # 積み重ねではなく、題名の完全一致という最強の証拠。二語要求は
+    # 「題名一致だけで文書を決め打ちしない」ための規律だが、完全一致は
+    # 決め打ちではなく同定なので、その規律の対象外。実測(60文書):
+    # 「多型」が多型.txt を素通りしてバイオマーカー(医学).txt の本文行に
+    # 当たっていた。返すのは絞り込み(_TITLE_SCOPE_ONLY)だけ — 節を選ぶ
+    # のは従来の順路で、ここは範囲を狭めるだけに留める。
+    q_norm = _norm(subject)
+    if q_norm:
+        exact = [d for d in docs
+                 if _norm(str(d.get("source", "")).rsplit(".", 1)[0]) == q_norm]
+        if exact:
+            return {"verdict": "_TITLE_SCOPE_ONLY",
+                    "sources": [d.get("source") for d in exact],
+                    "note": "問いが文書の題名そのもの — この文書の中だけを見る"}
+
     if len(terms) < 2:
         return None
 
-    docs = book.get("documents", []) or []
     matched: List[Tuple[Dict[str, Any], List[str]]] = []
     for doc in docs:
         stem = _norm(str(doc.get("source", "")).rsplit(".", 1)[0])
@@ -690,6 +708,17 @@ def _title_descent(book: Dict[str, Any], subject: str):
             matched.append((doc, by_title))
     if not matched:
         return None
+
+    # 題名一致の強さで並べる(2026-08-19、P4修理)。従来は文書順の最初の
+    # 一致がそのまま経路になり、「哲学の庭」が 哲学.txt へ、「ハドロン
+    # 物理学」が プロジェクト:物理学.txt へ降りていた(60文書実測 3/30)。
+    # 問いをより多く覆う題名の方が良い経路である、というだけの順位づけ —
+    # 門ではないので、一致が一件しかない従来の場面では並びは変わらない。
+    # 覆う量は「一致した語の文字数の合計」で測る: 語数だけでは
+    # ハドロン/ハドロン物理/物理学 のような重なる切片が水増しになる。
+    matched.sort(key=lambda m: (-sum(len(_norm(t)) for t in m[1]),
+                                -len(m[1]),
+                                str(m[0].get("source"))))
 
     for doc, by_title in matched:
         rest = rank_probes(subject, [t for t in terms if t not in by_title], book)
