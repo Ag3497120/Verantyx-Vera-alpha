@@ -61,6 +61,7 @@ def in_words(
     writer: Any,
     *,
     limit: int = 2,
+    edge_partners: Any = None,
 ) -> Dict[str, Any]:
     """Put the answer into sentences, using the PATH as the content.
 
@@ -146,13 +147,53 @@ def in_words(
     # 「法律　ｃｍは、規定の目的とする。」 put a full-width unit fragment in
     # a sentence because the SUBJECT was vocabulary-gated and the content
     # slots were not. Filtering all content to words would silence most
-    # answers (facets are 7.4% words), so the sieve applies only when at
-    # least two words remain — otherwise the unfiltered rest stands and
-    # the fragment risk is preferred to the silence.
+    # answers (facets are 7.4% words), so the sieve historically applied
+    # only when at least two words remained — otherwise the unfiltered
+    # rest stood, and the fragment risk was preferred to the silence.
+    # 「窃盗罪とは」→「窃盗罪とともに使用の不法領得つである。」 is that
+    # fallback speaking: 不法領得つ is a facet clipped mid-word.
+    #
+    # 2026-08-19: the two-way trade (fragments or silence) dissolves when
+    # the word supply grows, so two closed supplies are consulted first:
+    #
+    #   repair   a non-word facet is trimmed to the LONGEST vocabulary
+    #            word it contains (不法領得つ → 不法領得, ≥2 chars).
+    #            The unit-decomposition direction, applied at the mouth:
+    #            nothing is invented, a clipped word is unclipped.
+    #   edges    the core's edge endpoints — pairs some sentence actually
+    #            wrote (窃盗罪: 他人/財物/使用/故意/不法領得…) — vocab-
+    #            gated. Corpus-derived, so "placement cannot add
+    #            information" is not violated; and unlike the facet bag
+    #            (7.4% words) the endpoints are overwhelmingly words.
+    #
+    # Path words still come first — the path is the citation and the
+    # edge supply only ever appends. With ≥1 word in hand the fragments
+    # are dropped; with none, the old fallback stands unchanged.
+    edge_supply: List[str] = []
     if rest:
         worded = [f for f in rest if f in writer.vocab]
-        if len(worded) >= 2:
-            rest = worded
+        for f in rest:
+            if f in writer.vocab:
+                continue
+            best = ""
+            for i in range(len(f)):
+                for j in range(len(f), i + 1, -1):
+                    if j - i >= 2 and j - i > len(best) and f[i:j] in writer.vocab:
+                        best = f[i:j]
+            if best and best not in worded:
+                worded.append(best)
+        if edge_partners is not None and len(worded) < 4:
+            try:
+                for w in (edge_partners(path[0]) or []):
+                    if w in writer.vocab and w not in worded and w != subject:
+                        worded.append(w)
+                        edge_supply.append(w)
+                    if len(worded) >= 8:
+                        break
+            except Exception:
+                pass
+        if worded:
+            rest = worded[:8]
 
     # Path-driven speech carries PRESENCE evidence only — counts, edges,
     # co-occurrence — and presence licenses neither negation nor a norm.
@@ -161,8 +202,10 @@ def in_words(
     # 「時効と期間を援用してはならない」 prohibited what nobody prohibits.
     # Same move as the modality licence (unlicensed norms 49 -> 0), one
     # gate further in: descriptive, positive forms only.
+    from .compose_ja import slot_boundary_ok
     speakable = {k: f for k, f in writer.forms.items()
-                 if f.modality == "none" and f.polarity == "positive"}
+                 if f.modality == "none" and f.polarity == "positive"
+                 and slot_boundary_ok(f.template)}
     drafts = compose(speakable, subject, rest, limit=limit,
                      content_from=[subject], vocab=writer.vocab,
                      licence=writer.licence(subject))
@@ -173,6 +216,10 @@ def in_words(
         "note": "content from the converged path, form from a harvested "
                 "template; neither makes it true",
     }
+    if edge_supply:
+        # 辺から補われた語は名指しで見える — 経路(引用)と供給(辺)を
+        # 読み手が区別できるように。
+        out["edge_supply"] = edge_supply
     if "spoken_via" in dict(locals()):
         out["surface_center"] = locals()["spoken_via"]
     return out

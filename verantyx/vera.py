@@ -132,7 +132,9 @@ class Vera:
                     out["edge_pairs"] = self.edges(str(out["core_key"]), shown)
                 except Exception:
                     pass
-            out["written"] = in_words(store, out, self.writer, limit=limit)
+            out["written"] = in_words(store, out, self.writer, limit=limit,
+                                      edge_partners=getattr(
+                                          self, "edge_partners", None))
 
         # Nothing was held. Try to land NEAR the terms rather than refuse
         # outright, and say by which route — the two are not the same claim.
