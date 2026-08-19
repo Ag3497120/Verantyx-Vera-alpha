@@ -76,6 +76,13 @@ class Node:
     children: Dict[str, "Node"] = field(default_factory=dict)
     #: Arms = child names, facets = terms that distinguish that child.
     router: Optional[CrossStore] = None
+    #: 子ごとの辺語彙 — その子のコーパスが同一文の中で関係として書いた語
+    #: の集合。面(router の24語)の外にある語へ経路を伸ばす後退路の材料。
+    #: 実測 2026-08-19 (experiments/edge_routing/): 面のみでは 0/187 だった
+    #: 面外の語が、面∪辺で 正43・誤0・棄権0。top-32→64 でも +2 に留まり、
+    #: 誤答0は両方で保たれた — 天井は辺の本数ではなく同一文共起という
+    #: 規則自身にあり、その範囲では安全に効く。
+    edge_vocab: Dict[str, set] = field(default_factory=dict)
 
     @property
     def is_leaf(self) -> bool:
@@ -229,11 +236,37 @@ def _merged(node: "Node") -> CrossStore:
     return out
 
 
+def edge_vocab_of(store: CrossStore, *, top: int = 32,
+                  max_group: int = 12) -> set:
+    """この店が同一文の中で関係として書いた語の集合。
+
+    export_edges と同じ規則(出所スニペットで束ね、核あたり top-N の
+    facet に限る)を、サイドカーではなく集合として返す — 経路選択は
+    対ではなく所属だけを見るため。"""
+    out: set = set()
+    prov = getattr(store, "provenance", None) or {}
+    for core, by_facet in prov.items():
+        cr = store.crosses.get(core) or {}
+        kp = set(sorted(cr, key=lambda f: (-cr[f], f))[:top])
+        groups: Dict[str, List[str]] = {}
+        for f, rec in by_facet.items():
+            snip = (rec[2] if isinstance(rec, (list, tuple))
+                    and len(rec) > 2 else None)
+            if snip:
+                groups.setdefault(snip, []).append(f)
+        for fs in groups.values():
+            fs = sorted(set(fs) & kp)
+            if 2 <= len(fs) <= max_group:
+                out.update(fs)
+    return out
+
+
 def build(name: str, domains: Dict[str, CrossStore]) -> Node:
     """One router over leaf domains. The unit the tree is grown from."""
     children = {n: Node(name=n, store=st) for n, st in domains.items()}
     node = Node(name=name, children=children)
     node.router = build_router(children)
+    node.edge_vocab = {n: edge_vocab_of(st) for n, st in domains.items()}
     return node
 
 
@@ -311,6 +344,32 @@ def route(node: Node, query: str) -> Dict[str, Any]:
     verdict = out.get("verdict", "UNKNOWN_NO_EVIDENCE")
     if verdict == "ANSWER":
         verdict = "UNKNOWN_ROUTE_OFF_TREE"
+
+    # ── 辺の後退路 ───────────────────────────────────────────────
+    # 合議が枝を選べなかったときだけ動く(加算のみ — 面上の挙動 H8 は
+    # 不変)。問いの内容連のうち、ちょうど1つの子の辺語彙だけが持つ語
+    # (一意所有)で枝を選ぶ。共有語は識別に使わない(適格性の規則と同じ)、
+    # 一意所有語どうしが別の子を指せば棄権 — 同点は棄権の規律。
+    # 実測: 面外 正43/誤0/棄0 (質量順)・正16/誤0 (法律)。誤答ゼロが
+    # 配線の根拠で、回復が部分的(〜24%)なことは後退路である理由。
+    if node.edge_vocab:
+        from .lang import ja_content_runs
+        runs = ja_content_runs(query) or []
+        picked: Dict[str, List[str]] = {}
+        for w in runs:
+            owners = [c for c, vocab in node.edge_vocab.items()
+                      if w in vocab and c in node.children]
+            if len(owners) == 1:
+                picked.setdefault(owners[0], []).append(w)
+        if len(picked) == 1:
+            child = next(iter(picked))
+            return {"verdict": "ANSWER", "child": child,
+                    "node": node.name, "via": "edges",
+                    "routed_on": picked[child],
+                    "note": "面の合議は棄権し、辺語彙の一意所有で枝を"
+                            "選んだ。辺は同一文共起の実測で、誤答0が"
+                            "測定済みの後退路"}
+
     return {
         "verdict": verdict,
         "node": node.name,
