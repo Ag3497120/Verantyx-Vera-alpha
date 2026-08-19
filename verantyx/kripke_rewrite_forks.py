@@ -90,6 +90,202 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+
+
+
+def generalisation_two_phase_fork() -> Dict[str, Any]:
+    """汎化した命題は通る。ただし**仮定を後に当てる**順序が要る。
+
+    古典例 `rev(l) = revacc(l, nil)` は帰納が通らず、汎化
+    `app(rev(l), a) = revacc(l, a)` なら通る。だが最初はその汎化も
+    落ちた — 原因は汎化ではなく**仮定の適用時期**だった(2026-08-19)。
+
+    IH を最初から規則に混ぜると leftmost-innermost が内側で早く発火し、
+    定義による整形(結合律)を妨げる。**①定義だけで正規形へ落とし、
+    ②その後に IH を当てる**と閉じる。探索ではなく段の固定された順序。
+
+    **正しい汎化を与えても、適用順が悪ければ閉じない** — 汎化の失敗と
+    戦略の失敗は別物である。
+
+    2点: (a) IH を混ぜた一段では閉じない (b) 二段階なら閉じる。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    DEFS = [("rev_nil", "rev(nil)", "nil"),
+            ("rev_cons", "rev(cons(?h, ?t))", "app(rev(?t), cons(?h, nil))"),
+            ("acc_nil", "revacc(nil, ?a)", "?a"),
+            ("acc_cons", "revacc(cons(?h, ?t), ?a)", "revacc(?t, cons(?h, ?a))"),
+            ("app_nil", "app(nil, ?l)", "?l"),
+            ("app_cons", "app(cons(?h, ?t), ?l)", "cons(?h, app(?t, ?l))"),
+            ("app_assoc", "app(app(?x, ?y), ?z)", "app(?x, app(?y, ?z))")]
+    IH = ("IH", "app(rev(?t), ?a)", "revacc(?t, ?a)")
+
+    def nf(e, rules):
+        rs = RuleStore()
+        for n, l, r in rules:
+            rs.add(n, l, r)
+        r = simplify(e, rs, budget=400)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    L = "app(rev(cons(h, t)), a)"
+    R = "revacc(cons(h, t), a)"
+
+    one = (nf(L, DEFS + [IH]), nf(R, DEFS + [IH]))
+    one_closes = one[0] is not None and one[0] == one[1]
+
+    p0, p1 = nf(L, DEFS), nf(R, DEFS)
+    two = (nf(p0, DEFS + [IH]) if p0 else None,
+           nf(p1, DEFS + [IH]) if p1 else None)
+    two_closes = two[0] is not None and two[0] == two[1]
+
+    ok = bool(two_closes and not one_closes)
+    return {"experiment": "rewrite", "fork": "GENERALISATION_TWO_PHASE",
+            "pass": ok,
+            "result": {"one_phase_closes": bool(one_closes),
+                       "two_phase_closes": bool(two_closes),
+                       "one_phase": list(one), "two_phase": list(two)}}
+
+
+def false_equation_canary_fork() -> Dict[str, Any]:
+    """壊れた規則集合では、偽の等式が証明できてしまう — それを検知する。
+
+    今日、駆動層が予算切れ同士を一致と読み、真の命題を空虚に「証明」した
+    (報告した 8/8 は偽で本当は 5/8)。Lean は捕まえられない — 独立検査は
+    主張の真偽を見るのであって導出の本物さは見ない。同じ**形**の穴は
+    「規則集合が壊れて何でも等しくなる」場合にも開く。
+
+    番犬は偽の等式が証明できないことを確かめる。**番犬自身を二度作り
+    直した**(experiments/vacuity): 構成子だけの偽(`0 = s(0)`)では
+    `add(?x,?y) → 0` を見逃し、閉じた項の偽(`add(s(0),0) = 0`)でも
+    まだ見逃した — 正しい規則が先に発火して壊れた規則が**影に隠れる**
+    からで、**変数を含む偽**(`add(x,y) = 0`)で初めて捕らえた。
+
+    2点: (a) 健全な定義では偽が証明できない (b) 壊れた規則を混ぜると
+    証明できてしまい、番犬が鳴く。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    def nf(e, rules):
+        rs = RuleStore()
+        for n, l, r in rules:
+            rs.add(n, l, r)
+        r = simplify(e, rs, budget=200)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    def provable(l, r, rules):
+        a, b = nf(l, rules), nf(r, rules)
+        return a is not None and b is not None and a == b
+
+    DEFS = [("add_0", "add(?x, 0)", "?x"),
+            ("add_s", "add(?x, s(?y))", "s(add(?x, ?y))")]
+    FALSE = [("0", "s(0)"), ("add(s(0), 0)", "0"), ("add(x, y)", "0")]
+
+    quiet = not any(provable(l, r, DEFS) for l, r in FALSE)
+    broken = DEFS + [("BROKEN", "add(?x, ?y)", "0")]
+    barks = [f"{l} = {r}" for l, r in FALSE if provable(l, r, broken)]
+
+    ok = bool(quiet and barks)
+    return {"experiment": "rewrite", "fork": "FALSE_EQUATION_CANARY",
+            "pass": ok,
+            "result": {"healthy_is_quiet": bool(quiet), "barks": barks}}
+
+
+def terminating_is_not_confluent_fork() -> Dict[str, Any]:
+    """停止することと、同じ形に落ちることは別である。
+
+    ordered_rewrite で「a+b+c の12通りが単一の正規形に落ちる=正準化」と
+    測り、私はそれを AC 一般の性質のように書いた。**それは固定具に限った
+    話だった**(2026-08-19、訂正)。反例:
+
+        A = s(add(k, add(x, mul(x, k))))
+        B = s(add(mul(x, k), add(k, x)))       ← A の並べ替え
+
+    可換律と結合律を**両方向き付けて**与えると、両者は停止する(ANSWER)が
+    **別々の正規形**に落ちる。項順序による向き付けは**停止性**を与えるが、
+    **合流性(AC正準性)は与えない**。
+
+    実務上の帰結: 等式の同値判定を正規形の一致だけで行うと、AC変種を
+    取りこぼす。比較の側に AC 正規化(平坦化+整列)が要る — これを足すと
+    探索は 6/8 → 8/8 になった(experiments/search)。
+
+    2点: (a) 両辺とも停止する (b) それでも正規形が異なる。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    # 固定具は実際に発散した形をそのまま使う。**記法で結果が変わる**ため
+    # 中置(`?a + ?b`)に書き換えると偶然一致してしまい、現象を再現しない —
+    # `order_key` が `term_to_str` の印字に依存しているからで、これ自体が
+    # 「印字に基づく順序は脆い」という所見である。
+    rs = RuleStore()
+    rs.add("add_comm", "add(?a, ?b)", "add(?b, ?a)")
+    rs.add("add_assoc", "add(add(?a, ?b), ?c)", "add(?a, add(?b, ?c))")
+    names = ["add_comm", "add_assoc"]
+
+    A = "s(add(k, add(x, mul(x, k))))"
+    B = "s(add(mul(x, k), add(k, x)))"
+    ra = simplify(A, rs, oriented=names, budget=600)
+    rb = simplify(B, rs, oriented=names, budget=600)
+
+    both_stop = (str(ra.get("verdict")) == "ANSWER"
+                 and str(rb.get("verdict")) == "ANSWER")
+    differ = ra.get("term") != rb.get("term")
+
+    ok = bool(both_stop and differ)
+    return {"experiment": "rewrite", "fork": "TERMINATING_IS_NOT_CONFLUENT",
+            "pass": ok,
+            "result": {"both_terminate": bool(both_stop),
+                       "normal_forms_differ": bool(differ),
+                       "A": ra.get("term"), "B": rb.get("term")}}
+
+
+def budget_is_not_agreement_fork() -> Dict[str, Any]:
+    """予算切れは「一致」ではない — 空虚な証明を作らせない。
+
+    2026-08-19、探索の駆動層に健全性の穴が見つかった。基底の検査を
+    `if nf(lhs) != nf(rhs): continue` と書いていたため、**両側が予算切れ
+    (None)のとき None != None が False になり、基底が閉じたことにされて
+    いた**。可換律を無向きで規則に昇格して系が停止しなくなった後、3本の
+    目標が**空虚に「証明」された**(報告した 8/8 は偽で、実際は 5/8)。
+
+    **Lean はこれを捕まえられない** — 命題自体は真だからである。
+    独立検査は「主張が真か」を見るのであって「導出が本物か」は見ない。
+    真の命題を空虚に証明しても検査は通る。導出側の健全性は導出側で
+    守るしかない。
+
+    ここで固定するのは、この構造の一般規則である:
+    **`simplify` が ANSWER 以外を返した項は、他の何とも一致しない。**
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    rs = RuleStore()
+    rs.add("comm", "?a + ?b", "?b + ?a")      # 無向き = 停止しない
+
+    left = simplify("x + y", rs, budget=50)
+    right = simplify("y + x", rs, budget=50)
+
+    both_budget = (str(left.get("verdict")) == "UNKNOWN_BUDGET"
+                   and str(right.get("verdict")) == "UNKNOWN_BUDGET")
+
+    # 誤った読み方: term どうしを比べると None 同士で「一致」しうる
+    def bad_nf(r):
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+    naive_says_equal = (bad_nf(left) == bad_nf(right))   # None == None
+
+    # 正しい読み方: ANSWER でないものは一致に数えない
+    def good_eq(a, b):
+        ta, tb = bad_nf(a), bad_nf(b)
+        return ta is not None and tb is not None and ta == tb
+    strict_says_equal = good_eq(left, right)
+
+    ok = bool(both_budget and naive_says_equal and not strict_says_equal)
+    return {"experiment": "rewrite", "fork": "BUDGET_IS_NOT_AGREEMENT",
+            "pass": ok,
+            "result": {"both_exhausted": bool(both_budget),
+                       "naive_comparison_says_equal": bool(naive_says_equal),
+                       "strict_comparison_says_equal": bool(strict_says_equal)}}
+
+
 def inductive_search_fork() -> Dict[str, Any]:
     """帰納する変数も補題の順序も、駆動層が自分で選べる。
 
@@ -415,6 +611,10 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         completion_derives_laws_fork(),
         induction_by_rewriting_fork(),
         inductive_search_fork(),
+        budget_is_not_agreement_fork(),
+        terminating_is_not_confluent_fork(),
+        false_equation_canary_fork(),
+        generalisation_two_phase_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
