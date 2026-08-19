@@ -340,9 +340,27 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
         # 下書きも norm 形を継いでよい: 内容源が主張した登録だけを形が
         # 主張する、という一方向の規則そのまま。modality の門(義務・禁止・
         # 許可の形)は speakable の段で従来どおり閉じたまま。
+        # 文体を行に従わせる(2026-08-19)。speakable 594本のうち25本が
+        # 丁寧体で、法文の引用の隣で「新幹線は利用が移動にありました。」が
+        # 勝っていた。文体の混合は束ねる操作なので、**行が選んだ文体**を
+        # 継ぐ — 層であって併合ではない。行が丁寧体(です/ます)なら丁寧体の
+        # 文型を先に、常体なら常体を先に。順位であって門ではないので、
+        # 一致する文型が無ければ従来の並びのまま。
+        _POLITE_TAIL = ("です", "ます", "ました", "でした", "ません",
+                        "ください", "ですね", "でしょう")
+        _line_polite = _stripped.endswith(_POLITE_TAIL)
+
+        def _is_polite(tpl: str) -> bool:
+            return tpl.rstrip("。").endswith(_POLITE_TAIL)
+
+        speakable_r = {k: f for k, f in speakable.items()
+                       if _is_polite(k) == _line_polite}
+        if not speakable_r:
+            speakable_r = speakable
+
         from .fusion import register_of
         _lic = register_of(line)
-        drafts = compose(speakable, subject, rest, limit=limit,
+        drafts = compose(speakable_r, subject, rest, limit=limit,
                          content_from=[subject], vocab=writer.vocab,
                          licence=("norm" if _lic == "norm" else "unknown"),
                          roles=roles, order=order, tail=tail)
