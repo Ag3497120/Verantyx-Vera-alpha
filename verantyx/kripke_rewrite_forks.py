@@ -87,6 +87,63 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def completion_derives_laws_fork() -> Dict[str, Any]:
+    """完備化は、公理に無い等式を導く — そしてそれは真である。
+
+    群の公理3本(結合・左単位元・**左**逆元)から臨界対を計算して
+    完備化すると、公理に無い `x * i(x) → e`(**右**逆元)と
+    `i(i(x)) * z → x * z`(対合)が導かれる。実測 2026-08-19:
+    12本導出、Lean が整数の加法として解釈して **12/12 VERIFIED**、偽0。
+
+    これは帰納法ではない。**格納された規則の帰結を明示化する**操作で、
+    根拠は全て格納済み — 閉包の内側。ただし導けるのは与えた公理の
+    帰結だけで、`n + m = m + n` のように再帰的定義から帰納法でしか
+    出ない等式は出ない。experiments/completion。
+
+    2点: (a) 公理に無い等式が導かれる (b) 導かれた等式が真である
+    (整数の加法として Lean が検査)。
+    """
+    import sys as _sys
+    from pathlib import Path as _P
+
+    _sys.path.insert(0, str(_P(__file__).resolve().parents[1]
+                            / "experiments" / "completion"))
+    try:
+        from run_completion import complete, to_int_expr
+    except Exception as exc:      # 実験ファイルが無い配布形では報告して抜ける
+        return {"experiment": "rewrite", "fork": "COMPLETION_DERIVES_LAWS",
+                "skipped": "run_completion not importable: %s" % type(exc).__name__}
+    from .lean_witness import lean_binary, verify
+    from .rewrite_kernel import RuleStore
+
+    if lean_binary() is None:
+        return {"experiment": "rewrite", "fork": "COMPLETION_DERIVES_LAWS",
+                "skipped": "no lean toolchain on this machine"}
+
+    rs = RuleStore()
+    rs.add("assoc", "(?x * ?y) * ?z", "?x * (?y * ?z)")
+    rs.add("unit", "e * ?x", "?x")
+    rs.add("inv", "i(?x) * ?x", "e")
+    added, log, _done = complete(rs, max_rules=8, rounds=8)
+
+    derived = added > 0
+    ver = 0
+    for e in log:
+        lhs = to_int_expr(e["lhs"]).replace("?", "")
+        rhs = to_int_expr(e["rhs"]).replace("?", "")
+        v = verify("theorem t (x y z : Int) : %s = %s := by omega"
+                   % (lhs, rhs))
+        if str(v.get("verdict")) == "VERIFIED":
+            ver += 1
+    sound = (ver == added)
+    ok = bool(derived and sound)
+    return {"experiment": "rewrite", "fork": "COMPLETION_DERIVES_LAWS",
+            "pass": ok,
+            "result": {"derived": added, "lean_verified": ver,
+                       "laws": [e["lhs"] + " -> " + e["rhs"] for e in log[:4]]}}
+
+
 def ordered_rewrite_fork() -> Dict[str, Any]:
     """対称規則は、向きを付ければ止まり、置換を同一視する。
 
@@ -251,6 +308,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         rewrite_algebra_fork(),
         rewrite_roundtrip_fork(),
         ordered_rewrite_fork(),
+        completion_derives_laws_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
