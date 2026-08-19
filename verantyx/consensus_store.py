@@ -739,6 +739,46 @@ def ja_consensus_ask(
         _q2 = frame_stripped(query, runs)
         if _q2:
             _band, _best = direction_band(store, _q2)
+            # 帯割れの特定性裁定(REVERSE_SPECIFIC、2026-08-19)。順方向の
+            # 敗因は証拠の不到達ではなく axis_energy の 質量×名前一致 が
+            # 被覆信号を溺れさせること(実測: 正解は候補に92%居るのに
+            # 236敗、全facet重なりの反実仮想でも8勝のみ)。分離する信号は
+            # 特定性 = 被覆語数/面数 の孤立度: 正解時のマージン中央値21.3
+            # vs 誤答時1.14。しきい値5.0は第三の核集合で確認(46/0×2族、
+            # PREREG2)。3.0は確認集合で誤答1が出て事前登録どおり棄却した。
+            # 僅差の帯は問いが核を特定していない — 棄権が正しい。
+            if len(_band) > 1 and _best >= 2:
+                _sp = sorted(
+                    ((len([w for w in _q2
+                           if w in (store.crosses.get(c) or {})
+                           or w in _nw(c)])
+                      / max(1, len(store.crosses.get(c) or {})), c)
+                     for c in _band), reverse=True)
+                if _sp[0][0] != _sp[1][0] and _sp[0][0] / _sp[1][0] >= 5.0:
+                    _c = _sp[0][1]
+                    _cov = sorted(_q2 & (set(store.crosses.get(_c) or {})
+                                         | _nw(_c)))
+                    out = dict(out)
+                    out["forward_verdict"] = out.get("verdict")
+                    out["verdict"] = "REVERSE_SPECIFIC"
+                    out["core"] = display_sym(_c)
+                    out["core_key"] = _c
+                    out["reverse_coverage"] = _best
+                    out["covered"] = _cov
+                    out["specificity_margin"] = round(_sp[0][0] / _sp[1][0], 2)
+                    out["runner_up"] = display_sym(_sp[1][1])
+                    _fs = [t for t, _n in store.top_facets(_c, k=4)]
+                    out["text"] = display_sym(_c) + (
+                        "は" + "、".join(display_sym(x) for x in _fs)
+                        if _fs else "")
+                    out["note"] = ("順方向は棄権。逆方向の被覆最大帯は割れて"
+                                   "いるが、特定性(被覆/面数)が次点の"
+                                   f"{out['specificity_margin']}倍で孤立 — "
+                                   "覆った語: " + "、".join(_cov)
+                                   + "。次点: " + out["runner_up"]
+                                   + "。ANSWERではなく、裁定根拠ごと示す"
+                                     "型付き回答")
+                    return out
             if len(_band) == 1 and _best >= 2:
                 _c = next(iter(_band))
                 _cov = sorted(_q2 & (set(store.crosses.get(_c) or {})

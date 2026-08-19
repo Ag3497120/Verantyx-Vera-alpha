@@ -601,16 +601,21 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                             obj["written"] = _w
                     except Exception:
                         pass
-            elif str(_c.get("verdict")) == "REVERSE_UNIQUE":
+            elif str(_c.get("verdict")) in ("REVERSE_UNIQUE",
+                                            "REVERSE_SPECIFIC"):
                 # 逆方向の唯一候補(2026-08-19)。順方向は棄権したが、
                 # 問いを最も覆う核が唯一で被覆≥2語 — SEEDED と同じ
                 # 非昇格の型付き回答として座る。census には落とさない:
                 # 逆方向が既に到達経路(覆った語)ごと答えを名乗っており、
                 # 後段が同じ語で別の答えを作れば二重投票になる。
+                # REVERSE_SPECIFIC は帯割れの特定性裁定(次点の5倍以上で
+                # 孤立)— 同じ座席、同じ非昇格、裁定根拠(margin/次点)持参。
                 obj = dict(_c)
                 t.door = "reverse_coverage"
-                t.note("core", True, "逆方向唯一 被覆%s" %
-                       _c.get("reverse_coverage"), changed=True)
+                t.note("core", True, "%s 被覆%s" %
+                       ("逆方向唯一" if _c.get("verdict") == "REVERSE_UNIQUE"
+                        else "逆方向特定 margin%s" % _c.get("specificity_margin"),
+                        _c.get("reverse_coverage")), changed=True)
     except Exception as _e:  # 核の障害は沈黙ではなく後段へ渡す
         t.note("core", False, type(_e).__name__)
     if not obj:
