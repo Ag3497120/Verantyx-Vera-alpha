@@ -91,6 +91,55 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def terminating_is_not_confluent_fork() -> Dict[str, Any]:
+    """停止することと、同じ形に落ちることは別である。
+
+    ordered_rewrite で「a+b+c の12通りが単一の正規形に落ちる=正準化」と
+    測り、私はそれを AC 一般の性質のように書いた。**それは固定具に限った
+    話だった**(2026-08-19、訂正)。反例:
+
+        A = s(add(k, add(x, mul(x, k))))
+        B = s(add(mul(x, k), add(k, x)))       ← A の並べ替え
+
+    可換律と結合律を**両方向き付けて**与えると、両者は停止する(ANSWER)が
+    **別々の正規形**に落ちる。項順序による向き付けは**停止性**を与えるが、
+    **合流性(AC正準性)は与えない**。
+
+    実務上の帰結: 等式の同値判定を正規形の一致だけで行うと、AC変種を
+    取りこぼす。比較の側に AC 正規化(平坦化+整列)が要る — これを足すと
+    探索は 6/8 → 8/8 になった(experiments/search)。
+
+    2点: (a) 両辺とも停止する (b) それでも正規形が異なる。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    # 固定具は実際に発散した形をそのまま使う。**記法で結果が変わる**ため
+    # 中置(`?a + ?b`)に書き換えると偶然一致してしまい、現象を再現しない —
+    # `order_key` が `term_to_str` の印字に依存しているからで、これ自体が
+    # 「印字に基づく順序は脆い」という所見である。
+    rs = RuleStore()
+    rs.add("add_comm", "add(?a, ?b)", "add(?b, ?a)")
+    rs.add("add_assoc", "add(add(?a, ?b), ?c)", "add(?a, add(?b, ?c))")
+    names = ["add_comm", "add_assoc"]
+
+    A = "s(add(k, add(x, mul(x, k))))"
+    B = "s(add(mul(x, k), add(k, x)))"
+    ra = simplify(A, rs, oriented=names, budget=600)
+    rb = simplify(B, rs, oriented=names, budget=600)
+
+    both_stop = (str(ra.get("verdict")) == "ANSWER"
+                 and str(rb.get("verdict")) == "ANSWER")
+    differ = ra.get("term") != rb.get("term")
+
+    ok = bool(both_stop and differ)
+    return {"experiment": "rewrite", "fork": "TERMINATING_IS_NOT_CONFLUENT",
+            "pass": ok,
+            "result": {"both_terminate": bool(both_stop),
+                       "normal_forms_differ": bool(differ),
+                       "A": ra.get("term"), "B": rb.get("term")}}
+
+
 def budget_is_not_agreement_fork() -> Dict[str, Any]:
     """予算切れは「一致」ではない — 空虚な証明を作らせない。
 
@@ -464,6 +513,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         induction_by_rewriting_fork(),
         inductive_search_fork(),
         budget_is_not_agreement_fork(),
+        terminating_is_not_confluent_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
