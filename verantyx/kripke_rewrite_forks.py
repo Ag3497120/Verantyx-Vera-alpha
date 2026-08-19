@@ -88,6 +88,55 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def induction_by_rewriting_fork() -> Dict[str, Any]:
+    """帰納法は、仮定を規則として置けば書き換えで実行できる。
+
+    2026-08-19、私は「カーネルには目標の概念が無いので帰納法は越えられ
+    ない」と書いた。**それは測定ではなく推論で、誤りだった**(操作者の
+    指摘で検証)。目標も項であり、帰納法の仮定は規則である。
+
+    薄い駆動層 — 基底は変数を 0 に、段は新しい定数 k にして**仮定を
+    規則として加える** — と既存の書き換えだけで、加法の可換律を含む
+    3命題が証明でき、Lean が 3/3 VERIFIED にした。探索も後戻りも無い。
+
+    ここで固定するのは可換律(最も強い一本): 基底と段が両方閉じること、
+    そして**仮定を入れなければ段が閉じないこと**(仮定が効いている証拠)。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    def rs_base():
+        rs = RuleStore()
+        rs.add("add_0", "add(?x, 0)", "?x")
+        rs.add("add_s", "add(?x, s(?y))", "s(add(?x, ?y))")
+        rs.add("T1", "add(0, ?a)", "?a")
+        rs.add("T2", "add(s(?a), ?b)", "s(add(?a, ?b))")
+        return rs
+
+    def nf(e, rs):
+        r = simplify(e, rs, budget=300)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    # 基底: y := 0
+    rs = rs_base()
+    base_ok = nf("add(x, 0)", rs) == nf("add(0, x)", rs)
+
+    # 段: y := s(k)、仮定 add(x,k) -> add(k,x) を規則に加える
+    rs2 = rs_base()
+    rs2.add("IH", "add(x, k)", "add(k, x)")
+    step_ok = nf("add(x, s(k))", rs2) == nf("add(s(k), x)", rs2)
+
+    # 仮定を入れなければ段は閉じない(= 仮定が効いている)
+    rs3 = rs_base()
+    step_without_ih = nf("add(x, s(k))", rs3) == nf("add(s(k), x)", rs3)
+
+    ok = bool(base_ok and step_ok and not step_without_ih)
+    return {"experiment": "rewrite", "fork": "INDUCTION_BY_REWRITING",
+            "pass": ok,
+            "result": {"base": bool(base_ok), "step_with_ih": bool(step_ok),
+                       "step_without_ih": bool(step_without_ih)}}
+
+
 def completion_derives_laws_fork() -> Dict[str, Any]:
     """完備化は、公理に無い等式を導く — そしてそれは真である。
 
@@ -309,6 +358,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         rewrite_roundtrip_fork(),
         ordered_rewrite_fork(),
         completion_derives_laws_fork(),
+        induction_by_rewriting_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
