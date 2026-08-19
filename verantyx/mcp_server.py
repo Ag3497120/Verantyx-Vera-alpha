@@ -1636,6 +1636,25 @@ def serve(store_path: str) -> int:
         return json.dumps(_vera().report(), ensure_ascii=False)
 
     @mcp.tool()
+    def vera_read_at(concept: str, limit: int = 6) -> str:
+        """分野ごとの読みを、併合せずに並べて返す(2026-08-19配線)。
+
+        `fusion.read_at` は「両側の言い分を、平均せずに見せる」ための器官
+        だが、呼び出し元が一つも無かった(到達性の棚卸しで発覚)。二空間を
+        絶対に併合しないという設計の看板機能に、出口が無かったことになる。
+
+        何も選ばない。分野ごとに verdict と読みを並べるだけで、食い違いは
+        食い違いのまま返す。実測(2026-08-19、時効): 百科=解・除斥期間 /
+        法学=光州事件・制定 / 指名=援用・中断・完成 — 併合すれば消える差。
+        「正当防衛」の辞書欄はテレビドラマで、これも語義の分かれ目。
+        """
+        from .fusion import read_at
+
+        fields = {k: {"merged": v} for k, v in _vera().witnesses.items()}
+        return json.dumps(read_at(fields, concept, limit=limit),
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def list_gaps(status: str = "", limit: int = 50) -> str:
         """欠落台帳の一覧(2026-08-19)。拒否のたびに登録される「どの知識が
         不足か」の名指しを、人が見て埋められる形で返す。status で絞り込み

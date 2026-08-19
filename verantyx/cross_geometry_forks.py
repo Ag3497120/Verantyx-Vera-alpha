@@ -671,6 +671,43 @@ def quote_is_substring_fork() -> Dict[str, Any]:
                        "label_tampered_caught": bool(label_catches)}}
 
 
+def read_at_shows_both_sides_fork() -> Dict[str, Any]:
+    """食い違う二分野は、併合されずに両方返る。
+
+    `fusion.read_at` は「平均せずに見せる」ための器官なのに、呼び出し元が
+    一つも無かった(2026-08-19、到達性の棚卸し)。二空間を併合しないという
+    設計の看板機能に出口が無かったので、`vera_read_at` 扉を付け、ここで
+    荷重をかける。
+
+    2点: (a) 両分野が別々の読みを持つとき、両方が by_field に残る
+    (b) 何も選ばない — 単一の core や text に畳まれない。
+    """
+    # read_at の絞り込みは「概念が **facet として** 現れる分野」だけを
+    # 見る(core 名だけでは通らない — direction_band で名前を数え忘れて
+    # 帯から core 自身が脱落したのと同じ罠が、この関数にも在る)。
+    # 固定具はその条件を満たす形にする: 対象 が facet に立つ。
+    a = CrossStore()
+    a.ingest_sentence("甲説 は 対象 に ついて 述べる")
+    a.ingest_sentence("対象 は 甲説 である")
+    b = CrossStore()
+    b.ingest_sentence("乙説 は 対象 に ついて 述べる")
+    b.ingest_sentence("対象 は 乙説 である")
+
+    from .fusion import read_at
+
+    r = read_at({"分野A": {"x": a}, "分野B": {"y": b}}, "対象")
+    both = sorted(r.get("fields") or []) == ["分野A", "分野B"]
+    rows = r.get("by_field") or {}
+    kept = all(len(rows.get(f) or []) >= 1 for f in ("分野A", "分野B"))
+    # 何も選んでいない: 単一の答えに畳む鍵を持たない
+    no_pick = "core" not in r and "text" not in r and "verdict" not in r
+    ok = bool(both and kept and no_pick)
+    return {"experiment": "cross_geometry", "fork": "READ_AT_SHOWS_BOTH_SIDES",
+            "pass": ok,
+            "result": {"fields": r.get("fields"), "kept_both": bool(kept),
+                       "picks_nothing": bool(no_pick)}}
+
+
 def direction_invariance_fork() -> Dict[str, Any]:
     """向きの不変性: 読む向きを変えると消える当選は立ってはならない。
 
@@ -4605,6 +4642,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         reverse_specific_fork(),
         norm_vs_record_fork(),
         quote_is_substring_fork(),
+        read_at_shows_both_sides_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),
         event_extractor_refuses_statute_prose_fork(),
