@@ -89,6 +89,61 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def inductive_search_fork() -> Dict[str, Any]:
+    """帰納する変数も補題の順序も、駆動層が自分で選べる。
+
+    2026-08-19。「選ぶこと=探索で、そこは手つかず」と書いたが、測ると
+    動いた(experiments/search)。定義4本だけ与え目標8本を順不同で渡すと、
+    ヒント無しで **8/8** 証明し Lean が 8/8 VERIFIED にした
+    (乗法の可換律を含む)。探索は決定論・乱数なし。
+
+    途中で欠陥を1件発見している: 補題を規則に昇格するとき変数を一般化
+    しておらず(`add(0, x) → x` の x が**定数**のまま `add(0, y)` に
+    一致しない)、5/8 に留まっていた。補題は全称命題なので規則にする
+    ときも全称のまま置く。直して 8/8・2巡→1巡。
+
+    3点: (a) 帰納する変数を自分で選ぶ (b) 不動点が補題の順序を解く
+    (c) **一般化しないと解けない**(欠陥の再発防止)。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    DEFS = [("add_0", "add(?x, 0)", "?x"),
+            ("add_s", "add(?x, s(?y))", "s(add(?x, ?y))")]
+
+    def nf(e, rules):
+        rs = RuleStore()
+        for n, l, r in rules:
+            rs.add(n, l, r)
+        r = simplify(e, rs, budget=400)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    def induct(lhs, rhs, var, rules):
+        """基底と段。仮定は規則として加える。"""
+        if nf(lhs.replace(var, "0"), rules) != nf(rhs.replace(var, "0"), rules):
+            return False
+        ih = [("IH", lhs.replace(var, "k").replace("x", "?x").replace("y", "?y"),
+               rhs.replace(var, "k").replace("x", "?x").replace("y", "?y"))]
+        return (nf(lhs.replace(var, "s(k)"), rules + ih)
+                == nf(rhs.replace(var, "s(k)"), rules + ih))
+
+    # (a)+(b): G1 を証明 → 一般化して規則に → G2 が解錠される
+    g1 = induct("add(0, x)", "x", "x", DEFS)
+    with_general = DEFS + [("G1", "add(0, ?a)", "?a")]
+    with_literal = DEFS + [("G1", "add(0, x)", "x")]
+
+    # (c) 一般化しないと補題が効かない
+    general_works = nf("add(0, y)", with_general) == "y"
+    literal_fails = nf("add(0, y)", with_literal) != "y"
+
+    ok = bool(g1 and general_works and literal_fails)
+    return {"experiment": "rewrite", "fork": "INDUCTIVE_SEARCH",
+            "pass": ok,
+            "result": {"proved_G1_by_induction": bool(g1),
+                       "generalised_lemma_applies": bool(general_works),
+                       "literal_lemma_does_not": bool(literal_fails)}}
+
+
 def induction_by_rewriting_fork() -> Dict[str, Any]:
     """帰納法は、仮定を規則として置けば書き換えで実行できる。
 
@@ -359,6 +414,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         ordered_rewrite_fork(),
         completion_derives_laws_fork(),
         induction_by_rewriting_fork(),
+        inductive_search_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
