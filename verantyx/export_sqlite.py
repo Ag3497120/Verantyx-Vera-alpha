@@ -252,6 +252,29 @@ def edge_pairs_of(path: Path, core: str,
     return [(a, b) for a, b in rows]
 
 
+def edge_partners_of(path: Path, core: str, limit: int = 48) -> List[str]:
+    """この核の辺の端点、決定論的な順で。生成の内容供給用。
+
+    腕1本(先端+4面=5枠)しか読めない生成に、コーパスが実際に書いた
+    共起相手を渡す — 窃盗罪の辺は (他人,財物)(使用,故意)(不法領得,意思)
+    を持ち、facet の切れ端(不法領得つ)と違って端点は語として立っている。
+    辺はコーパス由来なので「配置は情報を増やせない」に抵触しない。
+    順序は (f1,f2) の主キー順そのまま = 決定論。"""
+    if not Path(path).exists():
+        return []
+    con = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    rows = con.execute(
+        "SELECT f1, f2 FROM edges WHERE core=? ORDER BY f1, f2 LIMIT ?",
+        (core, limit)).fetchall()
+    con.close()
+    out: List[str] = []
+    for a, b in rows:
+        for w in (a, b):
+            if w not in out:
+                out.append(w)
+    return out
+
+
 #: A cross has six arms times four faces. `export_web` keeps this many facets
 #: per core and no more, which is not a size compromise but the capacity the
 #: geometry already imposes — a 25th facet has nowhere to sit.
@@ -482,6 +505,7 @@ def vera(path: Path) -> Any:
     epath = path.parent / "vera_edges.db"
     if epath.exists():
         v.edges = lambda core, facets: edge_pairs_of(epath, core, facets)
+        v.edge_partners = lambda core: edge_partners_of(epath, core)
     gpath = path.parent / "vera_gaps.db"
     if gpath.exists():
         from .cross_store import CrossStore

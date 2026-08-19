@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from .compose_ja import _SURU as _SURU_LOAD
 from .compose_ja import (Form, compose, harvest, learn_joins,
                          learn_selection)
 from .trace import Trace, walk
@@ -212,6 +213,21 @@ class Writer:
                         slots=[tuple(s) if s else None for s in f["slots"]],
                         count=f["count"], example=f["example"],
                         source=f["source"])
+            # 出荷済み writer.json の穴の型は、収穫当時の _SURU で判定
+            # されている。旧 _SURU は している/します/し、 を見落とし、
+            # する動詞の穴が free 型で焼き付いた — free なら fits() が
+            # 素通しになり、する名詞でない語が詰まって「効力を方式して
+            # いる」ができる(実測 2026-08-19)。型は文型文字列から決定的に
+            # 引き直せるので、積み込み時に再導出する。データの主張は
+            # 変えない — 同じ文字列を今の読み手で読み直すだけ。
+            import re as _re
+            for _i in range(1, len(form.cases)):
+                if form.cases[_i] != "free":
+                    continue
+                _m = _re.search("<%d>" % _i, form.template)
+                if _m and _SURU_LOAD.match(
+                        form.template[_m.end():_m.end() + 4]):
+                    form.cases[_i] = "verbalnoun"
             w.forms[form.template] = form
         w.built = d.get("built") or {}
         w.built["selection_restored"] = load_selection(d.get("selection") or {})

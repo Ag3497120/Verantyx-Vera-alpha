@@ -41,7 +41,23 @@ _MAX_TURN_CHARS = 400
 #: whitespace treated a whole Japanese turn as one sentence. The document
 #: path learned this and this path did not — the same defect, in the module
 #: whose entire job is remembering what was said.
-_SENT_SPLIT = re.compile(r"(?<=[.!?。！？])\s*")
+#: A period BETWEEN alphanumerics is a decimal point, not a sentence end.
+#:
+#: Measured 2026-08-17 while building the operator's clone: the turn
+#: 「…もしcpu経路だったらqwen3.8は捨てる。」 split into 「…qwen3.」 and
+#: 「8は捨てる。」, so the cores became ['gpu', '捨'] and `locate('qwen3.8')`
+#: answered ABSENT about a rule the operator had just stated three times.
+#: ABSENT is the one verdict this module must never get wrong.
+#:
+#: It is not one identifier: every version-bearing name breaks the same way —
+#: qwen3.8, gemma-4.1, v1.2, python3.11 — and neither half is the name. The
+#: document path already avoided this with `_rejoin_abbreviations`; the
+#: conversation path had no equivalent.
+#:
+#: The rule is narrow on purpose. A real sentence-ending period is followed
+#: by whitespace or the end of the text, never by a digit, so requiring a
+#: non-alphanumeric on the right costs nothing and fixes the whole class.
+_SENT_SPLIT = re.compile(r"(?<=[.!?])(?![0-9A-Za-z])\s*|(?<=[。！？])\s*")
 
 
 @dataclass
@@ -130,6 +146,21 @@ class Conversation:
             {"turn": t.index, "speaker": t.speaker}
             for t in self.turns if topic in t.cores
         ]
+        # The turn log is the fallback the core index cannot give. Measured
+        # twice on 2026-08-18 while seeding the operator's clone: 事前登録
+        # was stored as a FACET of core 測定, and muse-glimmer sat inside a
+        # turn whose core was something else — both answered ABSENT about
+        # rules the operator had just stated. ABSENT is the one verdict this
+        # module must never get wrong, and a verbatim substring of a turn's
+        # own text is exact evidence of mention, not a guess.
+        if not mentions:
+            for t in self.turns:
+                if topic and topic in t.text:
+                    mentions.append({"turn": t.index, "speaker": t.speaker,
+                                     "via": "turn_text"})
+        if mentions and loc.get("state") == "ABSENT":
+            loc["state"] = "ACTIVE"
+            loc["via"] = "turn_text"
         loc["mentions"] = mentions
         return loc
 

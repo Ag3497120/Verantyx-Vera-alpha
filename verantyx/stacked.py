@@ -61,6 +61,7 @@ def in_words(
     writer: Any,
     *,
     limit: int = 2,
+    edge_partners: Any = None,
 ) -> Dict[str, Any]:
     """Put the answer into sentences, using the PATH as the content.
 
@@ -146,13 +147,53 @@ def in_words(
     # 「法律　ｃｍは、規定の目的とする。」 put a full-width unit fragment in
     # a sentence because the SUBJECT was vocabulary-gated and the content
     # slots were not. Filtering all content to words would silence most
-    # answers (facets are 7.4% words), so the sieve applies only when at
-    # least two words remain — otherwise the unfiltered rest stands and
-    # the fragment risk is preferred to the silence.
+    # answers (facets are 7.4% words), so the sieve historically applied
+    # only when at least two words remained — otherwise the unfiltered
+    # rest stood, and the fragment risk was preferred to the silence.
+    # 「窃盗罪とは」→「窃盗罪とともに使用の不法領得つである。」 is that
+    # fallback speaking: 不法領得つ is a facet clipped mid-word.
+    #
+    # 2026-08-19: the two-way trade (fragments or silence) dissolves when
+    # the word supply grows, so two closed supplies are consulted first:
+    #
+    #   repair   a non-word facet is trimmed to the LONGEST vocabulary
+    #            word it contains (不法領得つ → 不法領得, ≥2 chars).
+    #            The unit-decomposition direction, applied at the mouth:
+    #            nothing is invented, a clipped word is unclipped.
+    #   edges    the core's edge endpoints — pairs some sentence actually
+    #            wrote (窃盗罪: 他人/財物/使用/故意/不法領得…) — vocab-
+    #            gated. Corpus-derived, so "placement cannot add
+    #            information" is not violated; and unlike the facet bag
+    #            (7.4% words) the endpoints are overwhelmingly words.
+    #
+    # Path words still come first — the path is the citation and the
+    # edge supply only ever appends. With ≥1 word in hand the fragments
+    # are dropped; with none, the old fallback stands unchanged.
+    edge_supply: List[str] = []
     if rest:
         worded = [f for f in rest if f in writer.vocab]
-        if len(worded) >= 2:
-            rest = worded
+        for f in rest:
+            if f in writer.vocab:
+                continue
+            best = ""
+            for i in range(len(f)):
+                for j in range(len(f), i + 1, -1):
+                    if j - i >= 2 and j - i > len(best) and f[i:j] in writer.vocab:
+                        best = f[i:j]
+            if best and best not in worded:
+                worded.append(best)
+        if edge_partners is not None and len(worded) < 4:
+            try:
+                for w in (edge_partners(path[0]) or []):
+                    if w in writer.vocab and w not in worded and w != subject:
+                        worded.append(w)
+                        edge_supply.append(w)
+                    if len(worded) >= 8:
+                        break
+            except Exception:
+                pass
+        if worded:
+            rest = worded[:8]
 
     # Path-driven speech carries PRESENCE evidence only — counts, edges,
     # co-occurrence — and presence licenses neither negation nor a norm.
@@ -161,8 +202,10 @@ def in_words(
     # 「時効と期間を援用してはならない」 prohibited what nobody prohibits.
     # Same move as the modality licence (unlicensed norms 49 -> 0), one
     # gate further in: descriptive, positive forms only.
+    from .compose_ja import slot_boundary_ok
     speakable = {k: f for k, f in writer.forms.items()
-                 if f.modality == "none" and f.polarity == "positive"}
+                 if f.modality == "none" and f.polarity == "positive"
+                 and slot_boundary_ok(f.template)}
     drafts = compose(speakable, subject, rest, limit=limit,
                      content_from=[subject], vocab=writer.vocab,
                      licence=writer.licence(subject))
@@ -173,9 +216,116 @@ def in_words(
         "note": "content from the converged path, form from a harvested "
                 "template; neither makes it true",
     }
+    if edge_supply:
+        # 辺から補われた語は名指しで見える — 経路(引用)と供給(辺)を
+        # 読み手が区別できるように。
+        out["edge_supply"] = edge_supply
     if "spoken_via" in dict(locals()):
         out["surface_center"] = locals()["spoken_via"]
     return out
+
+
+def quote_in_words(result: Dict[str, Any], writer: Any,
+                   *, limit: int = 1) -> Optional[Dict[str, Any]]:
+    """引用された行の言葉だけで、一文を紡ぐ。8/18に却下した文書側生成の
+    門つき再挑戦 (experiments/document_writing/DOC_WRITING.md が事前登録)。
+
+    8/18、一般Writerを文書語彙に当てたら「精算は、グリーンをグリーン車
+    さない。」「（がいしょくほう）」が出て却下した。原因は後日3つに分解
+    され、それぞれ門で塞がれた: スロット境界(slot_boundary_ok)・語彙の門・
+    選択制限の順位。この関数はその門の内側でだけ動く。
+
+    ライセンスは引用行そのもの: 内容は**引用された行1本の内容連だけ**で、
+    同じ行に書かれた語どうしは同一文共起そのもの — 連合の辺ライセンスの
+    最強形が構成上ただで手に入る。行の外の語は主語にすら使わない。
+    語彙を通った語が2つ(主語+内容1)無ければ黙って None — 断片より沈黙。
+
+    返る下書きは constructed であり、引用の隣に置かれる。verdict にも
+    引用にも触れない。票に入らない。
+    """
+    verdict = str(result.get("verdict") or "")
+    if verdict not in ("DOCUMENT_LINE", "DOCUMENT_SECTION"):
+        return None
+    lines = [str(x).strip() for x in (result.get("lines") or []) if str(x).strip()]
+    if not lines:
+        line0 = str(result.get("text") or "").strip().split("\n")[0]
+        lines = [line0] if line0 else []
+    if not lines:
+        return None
+    from .compose_ja import compose, slot_boundary_ok
+    from .lang import ja_content_runs
+    import re as _re
+
+    speakable = {k: f for k, f in writer.forms.items()
+                 if f.modality == "none" and f.polarity == "positive"
+                 and slot_boundary_ok(f.template)}
+    subj_cand = [str(result.get("subject") or ""),
+                 str(result.get("section") or "")]
+
+    def draft_of(line: str):
+        runs = [r for r in (ja_content_runs(line) or []) if 2 <= len(r) <= 10]
+        words = [r for r in runs if r in writer.vocab]
+        # 係り受けの搬送: 行の中で各語の直後に立つ助詞を読む。閉じた
+        # 1文字集合のみ — 解析器ではなく、行が書いた役割の写し。
+        roles: Dict[str, str] = {}
+        order: Dict[str, int] = {}
+        for w in words:
+            m = _re.search(_re.escape(w) + r"([のをにがはとでへ])", line)
+            if m:
+                roles[w] = m.group(1)
+            i = line.find(w)
+            if i >= 0:
+                order[w] = i
+        # 行の末尾形(閉集合、長い順) — 行が選んだ言い方を文型の順位へ。
+        tail = ""
+        _stripped = line.rstrip("。")
+        for t_ in ("を必要とする", "に限り認める", "とみなされる", "とされる",
+                   "とみなす", "とする", "である", "認める", "支給する"):
+            if _stripped.endswith(t_):
+                tail = t_
+                break
+        # 主語は問いの主題を優先。無ければ「〜を<Y>とする」型(定義)の Y —
+        # この形の行では Y が定義される側で、左の列挙は Y の中身。次に
+        # 行が は/が を付けた語。それも無ければ先頭の語彙語。
+        subject = ""
+        for s in subj_cand:
+            s = s.strip()
+            if s and s in writer.vocab and len(s) <= 10:
+                subject = s
+                break
+        if not subject:
+            dm = _re.search(r"を([^、。]{2,8})とする$", _stripped)
+            if dm and dm.group(1) in writer.vocab:
+                subject = dm.group(1)
+        if not subject:
+            marked = [w for w in words if roles.get(w) in ("は", "が")]
+            subject = marked[0] if marked else (words[0] if words else "")
+        if not subject:
+            return None
+        rest = [w for w in words if w != subject]
+        if not rest:
+            return None
+        drafts = compose(speakable, subject, rest, limit=limit,
+                         content_from=[subject], vocab=writer.vocab,
+                         licence="unknown", roles=roles,
+                         order=order, tail=tail)
+        return [dict(d.as_dict(), line=line) for d in drafts] or None
+
+    sentences: List[Dict[str, Any]] = []
+    for ln in lines[:2]:   # 節なら行ごとに1文まで — 各行が各文のライセンス
+        ds = draft_of(ln)
+        if ds:
+            sentences.extend(ds[:1])
+    if not sentences:
+        return None
+    return {
+        "sentences": sentences,
+        "constructed": True,
+        "licence": "quoted_line",
+        "line": lines[0],
+        "note": "引用行の言葉だけで紡いだ下書き(行ごとに1文)。内容の"
+                "出典は各引用行、形の出典は文型 — どちらも文を真にはしない",
+    }
 
 
 #: English stopwords for shape extraction only — not retrieval, which

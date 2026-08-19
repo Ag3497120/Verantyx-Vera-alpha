@@ -38,6 +38,12 @@ from .growth_signals import GrowthSignals, growth_signals_path
 from .llm_local import ollama_available
 from .math_sim import math_ask
 from .module_forge import build_test_queries, draft_module
+from .compose_frame import Tables as _ComposeTables
+from .compose_frame import compose as _compose
+from .observation import Observation as _Observation
+from .observation import facets as _obs_facets
+from .observation import readings as _obs_readings
+from .observation import report as _obs_report
 from .module_ingest import DomainModuleQuarantine
 from .module_verify import verify_module
 
@@ -248,6 +254,214 @@ def serve(store_path: str) -> int:
         return json.dumps({"verdict": "ANSWER", "need": n, "asset": a,
                            "worked": worked, "gap_resolved": resolved,
                            "recipe": "recipe:" + n}, ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_domain(name: str, path: str) -> str:
+        """Register one document's vocabulary as a domain. Words, not facts.
+
+        `ingest_documents` adds facts that vote. This adds words that only
+        speak — one fillers table and one patterns table, while `frames`,
+        the shared grammar, is never written. Grammar transfers and
+        vocabulary does not (0.735–0.857 agreement on a shared verb's
+        dominant case across an encyclopedia, the Civil Code, the Labour
+        Standards Act and a two-page brief, against a 0.28 shuffled
+        control), so a domain costs its nouns and nothing else.
+
+        The tables are LAYERED in front of the shared ones, never merged:
+        merging stores whose notion of agreement differs invented an
+        out-of-corpus quorum of 0→8 and dropped answers 284→208, six times
+        out of six.
+
+        `name` must be [a-z0-9_] and is refused rather than rewritten,
+        because it becomes a table name. Registration is gated on the data
+        — a document yielding fewer than five verbs or five slots is
+        refused, since a domain that composes nothing looks exactly like
+        one that had nothing to say.
+        """
+        from .domain_ingest import read_document, register
+        p = Path(path).expanduser()
+        if not p.is_file():
+            return json.dumps({"verdict": "UNKNOWN_FILE_NOT_FOUND",
+                               "path": str(p)}, ensure_ascii=False)
+        try:
+            text = read_document(p)
+        except Exception as exc:
+            return json.dumps({"verdict": "UNKNOWN_UNREADABLE",
+                               "path": str(p), "error": str(exc)[:120]},
+                              ensure_ascii=False)
+        return json.dumps(register((name or "").strip().lower(), text),
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_domain_text(name: str, text: str) -> str:
+        """Register pasted text as a domain's vocabulary. Same gates.
+
+        For text that arrived without a file — a paste wrapped in
+        ⟨verantyx⟩ tags in the composer. It runs the identical registration
+        as `vera_domain` so a paste cannot enter on easier terms than a
+        document: same five-verb / five-slot floor, same refusal of a name
+        outside [a-z0-9_], same untouched `frames`.
+        """
+        from .domain_ingest import register
+        return json.dumps(register((name or "").strip().lower(), text or ""),
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_domains() -> str:
+        """Which document vocabularies are registered, and what is shared.
+
+        A domain costs its NOUNS, not its grammar. Measured across an
+        encyclopedia, the Civil Code, the Labour Standards Act and a
+        two-page brief, a shared verb's dominant case agrees 0.735–0.857
+        against a 0.28 shuffled control, so `frames` is one thin map for
+        everyone and only the fillers are per-domain.
+        """
+        from .domain_ingest import domains as _domains
+        return json.dumps({"verdict": "ANSWER", "domains": _domains(),
+                           "shared": ["frames", "patterns", "fillers"],
+                           "note": "分野は重ねる。合体はしない"},
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_compose(verb: str, subject: str = "", target: str = "",
+                     object_: str = "", domain: str = "",
+                     domain_only: bool = False) -> str:
+        """Build one clause for a verb from its observed frame. No model.
+
+        Three tables and no generation model: `frames` says which cases
+        the verb takes, `patterns` says which of them occurred TOGETHER,
+        and `fillers` says which nouns were seen in each slot. The
+        pattern chooses the shape; the fillers only fill it.
+
+        Composing from the frame alone with a threshold is what produced
+        「父がそれぞれ当該各号に父と期間を定める。」 — the mean pattern
+        holds 1.22 cases while the mean frame holds 3.20, so a threshold
+        over the frame invents about two arguments per sentence.
+
+        Grammar transfers and vocabulary does not. Measured across
+        encyclopedia, civil code and labour law, the dominant case of a
+        shared verb agrees 0.735–0.857 of the time against a 0.28
+        shuffled control — so frames and patterns are a thin shared map
+        while fillers belong to whatever corpus was read. Swap the
+        fillers and the same grammar speaks another domain.
+
+        `subject` / `target` / `object_` pin the が / に / を slots when
+        the caller knows them; a pinned case the pattern lacks is added,
+        because a person asking for it outweighs the corpus's silence.
+
+        Every draft is marked `constructed: True`. 「権利を有する」 being
+        well-formed is not a claim that anyone holds a right — this door
+        writes sentences, it does not testify. Refusals are typed:
+        UNKNOWN_VERB_NOT_IN_FRAMES / UNKNOWN_NO_OBSERVED_PATTERN /
+        UNKNOWN_SLOT_UNFILLED.
+
+        `domain` layers a registered document's vocabulary in FRONT of the
+        shared one — never merged with it. A verb the domain never used
+        still resolves through the shared tables, and every draft names the
+        layer each slot came from (`layer`: the domain / shared / mixed).
+
+        `domain_only` refuses instead of falling through. Layering is right
+        for reach and wrong when a reader will take the sentence as the
+        organisation's own: a firm asking about 担保 and getting an
+        encyclopedia's sense of it is wrong in a way nothing on screen
+        shows. Customising for an organisation means declining to leave
+        their vocabulary, not editing the shared map — so this is the flag
+        an enterprise deployment sets, and the refusal is
+        UNKNOWN_NOT_IN_DOMAIN.
+        """
+        tables = _ComposeTables.indexed((domain or '').strip())
+        if tables is None:
+            return json.dumps({"verdict": "UNKNOWN_INDEX_ABSENT",
+                               "note": "meaning_index.db が無い。"
+                                       "tools/index_frames.py を先に走らせる"},
+                              ensure_ascii=False)
+        given = {k: v.strip() for k, v in
+                 (("が", subject), ("に", target), ("を", object_)) if v.strip()}
+        return json.dumps(_compose((verb or "").strip(), tables, given=given,
+                                   domain_only=bool(domain_only)),
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def observe(subject: str, passes: str = "", by: str = "",
+                against: str = "", after: str = "", yielded: str = "",
+                claim: str = "", items: str = "",
+                items_closed: bool = False) -> str:
+        """Place an observation on the six arms. This is not a gate.
+
+        Anything a caller looked at — a window, a file, a command's
+        stdout, a page — comes through here to become a cross instead of
+        prose in a prompt. Prose in a prompt is where the 8/13 Teams run
+        lost 「初めてのaijax」→"ajax" and where a 27B model loops: nothing
+        in a paragraph can be asked whether it has support.
+
+        The door never withholds and never adjudicates, because it does
+        not need to. Facets are arm-tagged, so a role that was not
+        established simply contributes nothing — an unsupported general
+        claim is ABSENT from the store rather than present-and-flagged,
+        and absence is what the existing arm verdicts already fire on.
+        Adjudication stays where it already lives (`ArmIndex.gate`), at
+        answer time, for observations and every other claim alike.
+
+        Two ways in, and they compose:
+
+            passes  {"pass name": "verbatim text", …} as JSON. Several
+                    readings of one target. Agreement puts them on
+                    support+; ANY disagreement puts every variant on
+                    both support+ and support-, which is the contested
+                    state the store already demotes. No majority wins
+                    quietly and no tie empties the arm.
+            roles   by / against / after / yielded / claim / items,
+                    `|`-separated. Commas are not a separator here
+                    because OCR text is full of them.
+
+        `items_closed` is the one thing a caller must be honest about,
+        and it is honest by default: having parts and having ALL the
+        parts are different facts. While it is false the general claim
+        is not placed at all — which is what an unread third tab, an
+        unscrolled last row and a grep over half a repo all are.
+        """
+        subj = (subject or "").strip()
+        if not subj:
+            return json.dumps({"verdict": "UNKNOWN_SUBJECT_MISSING"})
+
+        def _parts(s: str):
+            return tuple(p.strip() for p in (s or "").split("|") if p.strip())
+
+        read_by, read_against = _parts(by), _parts(against)
+        if passes.strip():
+            try:
+                d = json.loads(passes)
+            except Exception:
+                return json.dumps({"verdict": "UNKNOWN_PASSES_NOT_JSON",
+                                   "note": "passes must be a JSON object of "
+                                           "pass name -> verbatim text"})
+            if not isinstance(d, dict) or not d:
+                return json.dumps({"verdict": "UNKNOWN_PASSES_NOT_OBJECT"})
+            base = _obs_readings(subj, {str(k): str(v) for k, v in d.items()})
+            # Explicit roles layer over the pass placement rather than
+            # replacing it — 束ねず重ねる, on the smallest possible scale.
+            read_by = base.by + read_by
+            read_against = base.against + read_against
+
+        obs = _Observation(
+            subject=subj, by=read_by, against=read_against,
+            after=(after or "").strip(), yielded=(yielded or "").strip(),
+            claim=(claim or "").strip(), items=_parts(items),
+            items_closed=bool(items_closed))
+
+        rep = _obs_report(obs)
+        placed = _obs_facets(obs)
+        if placed:
+            store.add("observed:" + subj, placed, source="observation")
+            _save()
+
+        return json.dumps({"verdict": "PLACED", "subject": subj,
+                           "written": len(placed),
+                           "filled": rep["filled"], "empty": rep["empty"],
+                           "gap_verdicts": rep["gap_verdicts"],
+                           "contested": rep["contested"],
+                           "instances_open": rep["instances_open"]},
+                          ensure_ascii=False)
 
     @mcp.tool()
     def assets_for(need: str) -> str:
@@ -922,6 +1136,498 @@ def serve(store_path: str) -> int:
         return json.dumps(_vera().ask(query, limit=sentences),
                           ensure_ascii=False, default=str)
 
+    # ── The harness: the ENGINE owns the loop, not the model ─────────
+    #
+    # Measured, and the reason this exists: a 27B model handed the loop
+    # produced forty paragraphs and no tool call. A tool list pasted into
+    # a prompt asks the model to be the scheduler, and a weak model cannot
+    # be one. So the schedule moves here — `intent_chain.Circulation`
+    # decides what runs next, and the model is asked for language at named
+    # points instead of being asked what to do.
+    #
+    # 1,143 lines of this machinery existed with no door at all, which
+    # meant no caller could reach it. These five give it one.
+    _circulations: Dict[str, Any] = {}
+
+    def _circ_id(instruction: str) -> str:
+        import hashlib
+        return hashlib.sha256(
+            instruction.strip().encode("utf-8")).hexdigest()[:16]
+
+    @mcp.tool()
+    def harness_begin(instruction: str, budget: int = 8) -> str:
+        """Start a run. The engine reads the instruction and owns the loop.
+
+        The instruction is framed by `vera_intent` first: it becomes an op
+        the frame table covers, or it is refused as UNKNOWN_INTENT. A
+        guessed intent is worse than a refused one — the whole point of
+        moving the schedule here is that nothing downstream is built on a
+        reading nobody vouched for.
+
+        Returns the run id, the chain of stages, and the first stage. The
+        id is a hash of the instruction, so the same instruction resumes
+        the same run rather than starting a parallel one."""
+        from .intent_chain import Circulation
+        from .intent_frames import parse as _parse
+
+        parsed = _parse(instruction)
+        if parsed.get("verdict") != "INTENT":
+            return json.dumps(
+                {"verdict": parsed.get("verdict", "UNKNOWN_INTENT"),
+                 "instruction": instruction,
+                 "note": "枠表が覆っていない。推測した意図で段を組むことはしない"},
+                ensure_ascii=False, default=str)
+        rid = _circ_id(instruction)
+        circ = Circulation(parsed, budget=budget)
+        _circulations[rid] = circ
+        nxt = circ.next_stage()
+        return json.dumps(
+            {"verdict": "RUNNING", "run": rid, "op": parsed.get("op"),
+             "status": circ.status(), "state": circ.state(),
+             "next": None if nxt is None else {
+                 "n": nxt.n, "op": nxt.op, "args": nxt.args,
+                 "cause_in": nxt.cause_in}},
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_next(run: str) -> str:
+        """What the engine wants done next. The model does not choose.
+
+        An empty result never becomes the next stage's precondition —
+        `cause_in` has to be satisfied by something actually observed, so
+        a run stalls honestly instead of proceeding on nothing."""
+        circ = _circulations.get(run)
+        if circ is None:
+            return json.dumps({"verdict": "UNKNOWN_RUN", "run": run},
+                              ensure_ascii=False)
+        nxt = circ.next_stage()
+        return json.dumps(
+            {"verdict": circ.status(), "run": run,
+             "next": None if nxt is None else {
+                 "n": nxt.n, "op": nxt.op, "args": nxt.args,
+                 "cause_in": nxt.cause_in},
+             "state": circ.state()},
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_deliver(run: str, subject: str, passes: str = "",
+                        by: str = "", against: str = "", after: str = "",
+                        yielded: str = "", claim: str = "",
+                        items: str = "", items_closed: bool = False) -> str:
+        """Hand back what was actually seen. Progress is arms placed.
+
+        Same shape as `observe`, because it is the same act: whatever a
+        step looked at becomes a cross rather than prose in a prompt.
+        Nothing in a paragraph can be asked whether it has support, which
+        is how the 8/13 Teams run lost 「初めてのaijax」 to "ajax".
+
+        A step that ran and saw nothing is delivered too. That is the
+        record the run stalls on, and a stall with a named cause is the
+        outcome this harness exists to produce instead of a loop."""
+        from .observation import Observation
+        circ = _circulations.get(run)
+        if circ is None:
+            return json.dumps({"verdict": "UNKNOWN_RUN", "run": run},
+                              ensure_ascii=False)
+        obs = Observation(
+            subject=subject, by=by, against=against, after=after,
+            yielded=yielded, claim=claim,
+            items=[x for x in (items or "").split("\n") if x.strip()],
+            items_closed=items_closed)
+        out = circ.deliver(obs)
+        return json.dumps(
+            {"verdict": circ.status(), "run": run, "delivered": out,
+             "state": circ.state()},
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_ask_back(run: str, subject: str = "") -> str:
+        """The run is underdetermined — the question to put to a PERSON.
+
+        Not a prompt for the model. When the engine cannot settle
+        something itself, the honest move is a typed question with the
+        candidates it does hold, and the answer comes back marked
+        `support+:human:` — testimony, never a measurement."""
+        from .ask_back import from_circulation
+        circ = _circulations.get(run)
+        if circ is None:
+            return json.dumps({"verdict": "UNKNOWN_RUN", "run": run},
+                              ensure_ascii=False)
+        q = from_circulation(circ, subject)
+        if q is None:
+            return json.dumps(
+                {"verdict": "NOTHING_TO_ASK", "run": run,
+                 "status": circ.status(),
+                 "note": "この段は人に訊く形の未決ではない"},
+                ensure_ascii=False, default=str)
+        return json.dumps({"verdict": "ASK", "run": run, **q.as_dict()},
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def harness_vary(procedure_json: str,
+                     alternatives_json: str = "") -> str:
+        """One success, several methods — by single change, for attribution.
+
+        Every variant differs from the parent in exactly ONE step. That is
+        not tidiness: if two things change and the variant fails, nothing
+        was learned. The parent must already be VERIFIED or TRUSTED, so a
+        procedure nobody has run cannot spawn ten more.
+
+        Measured: a verified Teams route yielded 10 variants."""
+        from .procedure_vary import Procedure, agenda, vary
+
+        try:
+            pd = json.loads(procedure_json)
+            alts = json.loads(alternatives_json) if alternatives_json else None
+        except ValueError as exc:
+            return json.dumps({"verdict": "UNKNOWN_NOT_JSON",
+                               "error": str(exc)[:120]}, ensure_ascii=False)
+        parent = Procedure(**pd)
+        return json.dumps(
+            {"variants": [v.as_dict() for v in vary(parent, alts)],
+             "agenda": agenda(parent, alts)},
+            ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_fresh(query: str, sources_json: str) -> str:
+        """検索で得た一般知識を、一時空間で引用し、毎回破棄する。
+
+        第三の空間。店（連合）でも端末の文書でもない — 呼び出し元（IDE の
+        検索実装）が取ってきた頁を、この関数の中だけに索引し、逐語引用で
+        答え、関数と共に消える。**書き込み経路が存在しない**: 店にも
+        文書側車にも会話空間にも一行も書かない。破棄は方針ではなく構造で、
+        追試できる — 直後に同じ主題を vera_chat に聞けば ABSENT が返る。
+
+        なぜ吸収しないか: 検索結果は出典つきの他人の文章であって、この
+        端末の知識ではない。毎回取り直すから最新で、毎回捨てるから
+        「いつの情報か分からない取り込み」が店を汚さない。二空間の
+        不合流則がここでは時間方向に効いている。
+
+        `sources_json` は [{"url":…, "title":…, "text":…}, …]。返答は
+        逐語引用+出典URL。頁が主題を明記しないときは、支配する近傍の
+        定めと「明記なし」の型（部分文字列検査で追試可能）。"""
+        from .document_structure import (index as _dx, lookup as _dlook,
+                                         rejoin as _rejoin, load as _dload)
+        from .engine import _TOPIC_SUFFIXES
+
+        try:
+            sources = json.loads(sources_json or "[]")
+        except Exception as e:
+            return json.dumps({"verdict": "UNKNOWN_BAD_SOURCES",
+                               "note": str(e)[:80]}, ensure_ascii=False)
+        if not isinstance(sources, list) or not sources:
+            return json.dumps({"verdict": "UNKNOWN_NO_SOURCES",
+                               "note": "検索結果が渡されていない。この扉は自分では"
+                                       "取得しない — 取得は呼び出し元の仕事"},
+                              ensure_ascii=False)
+
+        # 一時の本。ウェブ本文は番号見出しを持たないことが多いので、節が
+        # 立たなければ本文全体を1節として行に展開する — 行が引用の最小単位。
+        book: Dict[str, Any] = {"documents": []}
+        for src in sources[:5]:
+            text = str((src or {}).get("text") or "")[:20000]
+            label = str((src or {}).get("url") or (src or {}).get("title") or "検索結果")
+            if not text.strip():
+                continue
+            d = _dx(text, label)
+            if not d.get("sections") and not d.get("labels"):
+                lines = [ln for ln in _rejoin(text) if len(ln.strip()) >= 8][:200]
+                d["sections"] = [{"heading": str((src or {}).get("title") or "本文"),
+                                  "lines": lines, "ordinal": None}]
+            book["documents"].append(d)
+        if not book["documents"]:
+            return json.dumps({"verdict": "UNKNOWN_EMPTY_SOURCES"}, ensure_ascii=False)
+
+        subj = (query or "").strip()
+        for suf in _TOPIC_SUFFIXES:
+            if subj.endswith(suf) and len(subj) > len(suf):
+                subj = subj[: -len(suf)]
+                break
+        r = _dlook(subj, book)
+        out = {
+            "verdict": r.get("verdict"),
+            "reply": r.get("text") or "",
+            "subject": r.get("subject"),
+            "source": r.get("source"),
+            "sources_offered": [str((s0 or {}).get("url") or (s0 or {}).get("title") or "?")
+                                 for s0 in sources[:5]],
+            "quoted": bool(r.get("quoted")),
+            "discarded": True,
+            "note": "一時知識。返答と同時に破棄済み — 店・文書・会話のどこにも残っていない",
+        }
+        # 比較のため、この端末が既に持つ文書側の答えも横に並べる。
+        # 二空間の不合流則は守ったまま — 一つの verdict に混ぜず、
+        # 読み手がその場で見比べられるよう別フィールドで返すだけ。
+        # 文書側が既に答えを持つ主題でウェブへ聞き直した場合に、どちらが
+        # 何を言っているかを読み手が自分で比較できる。
+        try:
+            doc_book = _dload(store_path)
+            if doc_book.get("documents"):
+                dr = _dlook(subj, doc_book)
+                out["document_side"] = {
+                    "verdict": dr.get("verdict"),
+                    "text": dr.get("text") or "",
+                    "source": dr.get("source"),
+                    "quoted": bool(dr.get("quoted")),
+                }
+        except Exception:
+            pass
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_compare_spaces(topic: str) -> str:
+        """この端末の文書と、公開連合（一般知識）が、同じ主題について何を
+        言うかの差分。「この規程は一般的な考え方と比べて特殊か」の答えが
+        立つ場所で、社内文書だけのモデルには構造的に作れない比較です。
+
+        規律は structural_diff と同じ防御線に従う:
+          ・語彙は「実測あり / 実測なし」のみ。否定文は組み立てない —
+            「一般側に無い」は「一般ではそうでない」ではない
+          ・両側の被覆数を必ず併記。薄い側が差分の信頼度を決める
+          ・どちらかが3項目未満なら型付き棄権（どちらが薄いかを名指す）
+          ・列挙は各束8件まで+数えた尻尾
+
+        比較は合議ではない。二つの空間は今までどおり合流しない — 並べて
+        読めるようにするだけで、票はどちらにも入らない。"""
+        t = (topic or "").strip()
+        if not t:
+            return json.dumps({"verdict": "UNKNOWN_NO_SUBJECT"}, ensure_ascii=False)
+
+        # 文書側: 個人ストアの facet + 構造側車の該当行
+        doc_items: Dict[str, int] = {}
+        cr = getattr(store, "crosses", {}).get(t)
+        if cr:
+            for f, n in cr.items():
+                doc_items[f] = doc_items.get(f, 0) + int(n or 1)
+        try:
+            from .document_structure import load as _dl
+            for doc in _dl(path).get("documents", []):
+                for sec in doc.get("sections", []):
+                    for ln in (sec.get("lines") or []):
+                        if t in ln:
+                            doc_items[ln[:48]] = doc_items.get(ln[:48], 0) + 1
+        except Exception:
+            pass
+
+        # 一般側: 連合の facet
+        base_items: Dict[str, int] = {}
+        try:
+            v = _vera()
+            for lang in ("ja", "en"):
+                st_ = getattr(v, "stores", {}).get(lang)
+                c2 = getattr(st_, "crosses", {}).get(t) if st_ else None
+                if c2:
+                    for f, n in c2.items():
+                        base_items[f] = base_items.get(f, 0) + int(n or 1)
+        except Exception:
+            pass
+
+        nd, nb = len(doc_items), len(base_items)
+        if nd < 3 or nb < 3:
+            thin = []
+            if nd < 3: thin.append("document")
+            if nb < 3: thin.append("base")
+            return json.dumps({
+                "verdict": "INSUFFICIENT_PROFILE",
+                "topic": t, "thin_side": thin,
+                "coverage": {"document": nd, "base": nb},
+                "note": "薄い側が差分の信頼度を決める。%s側の被覆が3未満 — "
+                        "比較は基礎データ/文書の成長と共に立つ" % "・".join(thin),
+            }, ensure_ascii=False)
+
+        dset, bset = set(doc_items), set(base_items)
+        cap = 8
+        def bucket(keys, src):
+            ks = sorted(keys, key=lambda k: (-src[k], k))
+            return {"items": ks[:cap], "more": max(0, len(ks) - cap)}
+        return json.dumps({
+            "verdict": "SPACE_DIFF",
+            "topic": t,
+            "coverage": {"document": nd, "base": nb},
+            "shared":    bucket(dset & bset, doc_items),
+            "doc_only":  bucket(dset - bset, doc_items),
+            "base_only": bucket(bset - dset, base_items),
+            "note": "文書側に実測あり/一般側に実測なし、の対比のみ。可否や"
+                    "優劣の判断はしていない。二空間は合流していない",
+        }, ensure_ascii=False)
+
+    # ── vera_chat: 会話そのものを扉にする ─────────────────────────────
+    #
+    # The IDE used to LOAD a model to hold a conversation, and used MCP only
+    # for lookups. This door inverts that: the conversation lives HERE, the
+    # client renders text, and no model exists on either side. MCP's
+    # `sampling` capability — the server asking the client's LLM to generate
+    # — is deliberately never invoked: the whole point of this engine is
+    # that nothing needs to be sampled. A reply is composed, typed, and
+    # sourced, or it is a typed refusal.
+    #
+    # State: the conversation is the SAME persistent one the other doors
+    # read (`add_conversation_turn` / `check_context_drift`), so what is
+    # said here is recallable there, and covenants set there bind replies
+    # here. `last_core` rides per-server-process so 「その刑は」 resolves.
+    # The conversation's terminal arrangements, per core. This is what makes
+    # the chat door CIRCULATE instead of re-entering bare each turn: the
+    # search resumes on each cross where the last turn's stable state left
+    # it (rotation, widened view, locks). Kept OUTSIDE the store, like the
+    # walker's trajectory — an arrangement is not knowledge, and a later
+    # reader must not mistake footprints for facts. Persisted beside the
+    # conversation so a restart resumes the same standing.
+    _circ_path = path.with_name(path.stem + ".circulation.json")
+    try:
+        _circulation: Dict[str, Any] = json.loads(_circ_path.read_text("utf-8"))
+    except Exception:
+        _circulation = {}
+    _chat_state: Dict[str, Any] = {"last_core": ""}
+
+    @mcp.tool()
+    def vera_chat(text: str, store_first: bool = False,
+                  reset_topic: bool = False, observe: bool = True) -> str:
+        """Talk with the whole engine — stateful, model-free, audited.
+
+        One call = one turn. What happens inside, in the measured layering
+        order (束ねず重ねる — each stage hands off, none votes twice):
+
+          1. your words enter the conversation SPACE (content-addressed,
+             no window, cannot silently overflow)
+          2. `engine.ask` composes: intent, staging, typo repair,
+             arithmetic, theorem witness, difference, census, context
+             completion, meaning descent, arm placement, gap ledger,
+             frame composition — with `last_core` carried from the
+             previous turn, so 「その刑は」 resolves
+          3. the reply is audited BESIDE the answer, never as a gate:
+             covenant check (rules you set earlier) and context-drift
+             check (is it ignoring what this conversation settled)
+          4. the reply enters the conversation space too, so later turns
+             can hold this one to account
+
+        `store_first` prefers your loaded documents over the federation
+        when both answer. `reset_topic` drops the carried subject (start a
+        new thread without forgetting the conversation).
+
+        Deterministic, and no model is called — not here, not via MCP
+        sampling, not anywhere."""
+        from .engine import ask as _engine_ask
+
+        if reset_topic:
+            _chat_state["last_core"] = ""
+        q = (text or "").strip()
+        if not q:
+            return json.dumps({"verdict": "UNKNOWN_EMPTY_TURN"},
+                              ensure_ascii=False)
+
+        _conversation.add_turn("user", q)
+
+        r = _engine_ask(q, _vera(), last_core=_chat_state["last_core"],
+                        store_path=path, store=store,
+                        store_first=store_first,
+                        circulation=_circulation or None,
+                        observe=observe)
+
+        reply = (r.get("text") or "").strip()
+        # A typed refusal is a real reply: name the verdict rather than
+        # inventing prose around it.
+        if not reply:
+            reply = "（%s）" % (r.get("verdict") or "UNKNOWN")
+
+        audits: Dict[str, Any] = {}
+        try:
+            audits["covenants"] = _register.check(reply, asked=q, store=store)
+        except Exception as e:      # 監査の故障は答えを潰さず名指しする
+            audits["covenants"] = {"error": str(e)}
+        try:
+            audits["context_drift"] = _collapse(_conversation, reply)
+        except Exception as e:
+            audits["context_drift"] = {"error": str(e)}
+
+        _conversation.add_turn("vera", reply)
+        _conversation.memory.save(_conv_path)
+        if r.get("core"):
+            _chat_state["last_core"] = str(r["core"])
+        # The turn's terminal arrangement goes back into the map, keyed by
+        # the core it settled on, and survives a server restart.
+        if r.get("core") and r.get("carry_state"):
+            _circulation[str(r["core"])] = r["carry_state"]
+            try:
+                _circ_path.write_text(
+                    json.dumps(_circulation, ensure_ascii=False), "utf-8")
+            except Exception:
+                pass
+
+        stages = r.get("stages")
+        return json.dumps({
+            "reply": reply,
+            "verdict": r.get("verdict"),
+            "door": r.get("door"),
+            "core": r.get("core"),
+            # 引用行の言葉だけで紡いだ constructed な下書き(文書側)と、
+            # 連合側の written。返却のホワイトリストがこれを落としており、
+            # IDE の 📝下書き行が沈黙していた(実測 2026-08-19)。
+            "written": r.get("written"),
+            "last_core": _chat_state["last_core"],
+            "witnesses": r.get("witnesses"),
+            "origins": r.get("origins"),
+            "sections": r.get("sections"),
+            "stages": stages,
+            "audits": audits,
+            "circulation": {
+                "carried_in": bool(_circulation) ,
+                "cores_held": len(_circulation),
+                "this_turn": r.get("carry_state"),
+            },
+            "observation": {
+                "enabled": observe,
+                # placement-invariance downgrades announce themselves in the
+                # verdict/note; surfaced here so a client can show 「観測で
+                # 降格」 without parsing prose.
+                "verdict": r.get("verdict"),
+                "agree_frac": r.get("agree_frac"),
+                "local_stable": r.get("local_stable"),
+            },
+            "conversation": _conversation.stats(),
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_engine(query: str, last_core: str = "", domain: str = "",
+                    store_first: bool = False) -> str:
+        """Everything the engine knows how to bring, for one question.
+
+        **Call this door, not the specific ones.** MCP puts the caller in
+        charge of which door runs, and a caller that knows three doors gets
+        a three-door engine: measured, the IDE knew 60 of the 99 and its
+        answering path used three, leaving seventeen organs outside every
+        question anyone asked. A different client picked a different three
+        and the same engine looked like a different product.
+
+        So this door carries the composition instead of the caller. One
+        question goes in and the ordering — intent, staging, typo repair,
+        arithmetic, theorem witness, difference, census, context
+        completion, meaning descent, arm placement, gap ledger, frame
+        composition — happens here, in the measured layering direction.
+        The reply names the door that answered and lists every stage with
+        what it did, so a caller can see which organs ran rather than
+        having to know they exist.
+
+        `last_core` supplies the previous answer's subject, which is what
+        makes 「その刑は」 resolvable; `domain` restricts composition to a
+        registered document.
+
+        `store_first` decides which of the two spaces gets to be THE
+        answer when both have one: this terminal's own documents
+        (everything `load_documents` ingested) or the published
+        federation. They are never merged — the door name in the reply
+        says which space spoke, and when both answered the other one
+        rides along under `local`. Default is the federation, because a
+        loaded document should not silently take over general questions.
+
+        Deterministic, and no model is called."""
+        from .engine import ask as _engine_ask
+
+        return json.dumps(
+            _engine_ask(query, _vera(), last_core=last_core, domain=domain,
+                        store_path=path, store=store,
+                        store_first=store_first),
+            ensure_ascii=False, default=str)
+
     @mcp.tool()
     def vera_sovereigns() -> str:
         """Which sovereigns are loaded, and how big each is."""
@@ -1018,7 +1724,7 @@ def serve(store_path: str) -> int:
     def vera_intent(text: str) -> str:
         """Frame an instruction structurally, or refuse with UNKNOWN_INTENT.
 
-        The measured share of instruction understanding: 47 verb lemmas
+        The measured share of instruction understanding: 48 verb lemmas
         by 28 operations plus case-particle arms (「geminiを開いて」 →
         開く(対象=gemini)). Anything outside the table refuses — the
         refusal is the signal that the LLM should take the utterance,
@@ -1045,48 +1751,10 @@ def serve(store_path: str) -> int:
         STORE, never about mathematics: absence of a witness is not a
         claim of falsehood, and the sorry trap
         (lean_witness_forks) is why the wording stays this careful."""
-        import json as _json
-        from pathlib import Path as _Path
+        from .mathlib_witness import lookup as _lookup
 
-        if "mathlib" not in _math_cache:
-            p = (_Path.home() / "Projects" / "vera-corpus" / "build"
-                 / "mathlib_store.json")
-            if not p.is_file():
-                return _json.dumps(
-                    {"verdict": "UNKNOWN_NOT_LOADED",
-                     "note": "mathlib_store.json not present beside the "
-                             "published build"}, ensure_ascii=False)
-            d = _json.loads(p.read_text(encoding="utf-8"))
-            _math_cache["mathlib"] = d["crosses"]
-        crosses = _math_cache["mathlib"]
+        return json.dumps(_lookup(name), ensure_ascii=False, default=str)
 
-        q = name.strip().casefold()
-        hit = crosses.get(q)
-        matches = [q] if hit is not None else [
-            k for k in crosses
-            if k == q or k.endswith("." + q)]
-        if not matches:
-            return _json.dumps(
-                {"verdict": "UNKNOWN_NOT_IN_MATHLIB_STORE", "name": name,
-                 "note": "no declaration by this name or trailing "
-                         "segment; absence of a witness is not a claim "
-                         "of falsehood"}, ensure_ascii=False)
-        if len(matches) > 12:
-            return _json.dumps(
-                {"verdict": "UNKNOWN_AMBIGUOUS_NAME", "name": name,
-                 "candidates": len(matches),
-                 "sample": sorted(matches)[:12]}, ensure_ascii=False)
-        out = []
-        for m in sorted(matches):
-            facets = crosses[m]
-            wit = sorted(f for f in facets if str(f).startswith("verified:"))
-            out.append({
-                "declaration": m,
-                "verdict": "VERIFIED" if wit else "UNVERIFIED_IN_STORE",
-                "witness": wit or None,
-            })
-        return _json.dumps({"verdict": "ANSWER", "n": len(out),
-                            "declarations": out}, ensure_ascii=False)
 
     @mcp.tool()
     def vera_explain(term: str) -> str:
@@ -1330,6 +1998,38 @@ def serve(store_path: str) -> int:
         quarantine.save(qpath)
         return json.dumps(
             {"proposed": [e.text for e in added], "quarantine": str(qpath)},
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def propose_web_evidence(text: str, source: str) -> str:
+        """Quarantine ONE raw web-search excerpt, verbatim, for human review
+        — the interactive counterpart of what `heartbeat(cognition_mode=
+        "sleep")` already does automatically for gap-resolution nodes.
+
+        `propose_ai_facts` runs the text through `candidate_sentences()`,
+        which is tuned for an assistant's spoken reply (drops hedge words,
+        meta-commentary, questions) — confirmed directly that running a
+        real fetched excerpt through it produced ZERO surviving candidates,
+        silently losing the evidence. This door instead calls
+        `propose_raw()`, which keeps the excerpt whole so a reviewer sees
+        exactly what was retrieved.
+
+        Use this after `vera_fresh` (or any web_search + fetch_url pair)
+        surfaced something worth keeping: `vera_fresh` itself has no write
+        path by design (that is the point of it being a discardable third
+        space) — this is the separate, explicit action that puts ONE
+        excerpt up for review. Nothing here is queryable via `ask()` until
+        a human calls `accept_ai_fact`; review with
+        `list_pending_ai_facts` / `accept_ai_fact` / `reject_ai_fact` — the
+        SAME queue `propose_ai_facts` already uses."""
+        entry = quarantine.propose_raw(text, source=source)
+        quarantine.save(qpath)
+        return json.dumps(
+            {"proposed": entry.text[:400], "source": entry.source,
+             "quarantine": str(qpath),
+             "note": "承認待ち。list_pending_ai_facts→accept_ai_fact/reject_ai_fact"
+                     "で人が決めるまで、ask()からは見えない"},
             ensure_ascii=False,
         )
 
@@ -1846,6 +2546,163 @@ def serve(store_path: str) -> int:
         return render_quickstart() if quickstart else render_guide()
 
     @mcp.tool()
+    def vera_ask_documents(question: str) -> str:
+        """Answer from the loaded documents only — quote, or say nothing.
+
+        This is a different surface from `vera_chat`, not a restricted one,
+        and the difference is the point. `vera_chat` runs the whole engine:
+        when no store answers, a sentence is COMPOSED from frames and
+        fillers and returned marked `constructed`. Measured on 2026-08-18,
+        that stage is where every bad answer of the day came from —
+        「こんにちは」 became "こんにちはは、格子の分解単位を持たない",
+        「正当防衛とは」 produced the same hollow clause three times, and
+        「通勤手当は」 returned the word list `通勤手当 合理的な 実費 支給 最`
+        while the loaded document held a clean sentence for it.
+
+        The same engine's document stage, on the same day, answered 4 of 4
+        loaded-document questions with the exact line and its source, and
+        refused 書留 rather than substituting 定形郵便's price.
+
+        So this door runs the strong half and none of the weak one. There
+        is no composer behind it: an answer is a quotation with a source,
+        or a typed silence. A question this surface cannot answer is
+        answered by saying so, never by building a sentence that reads like
+        an answer.
+        """
+        from . import document_structure as _ds
+        book = _ds.load(store_path)
+        if not book.get("documents"):
+            return json.dumps(
+                {"verdict": "UNKNOWN_NO_DOCUMENTS", "question": question,
+                 "note": "この面は取り込んだ文書だけを引く。まだ一つも無い"},
+                ensure_ascii=False)
+        out = dict(_ds.lookup(question, book))
+        out["question"] = question
+        out["surface"] = "documents_only"
+        # 答えの本文(text/verdict)は引用のみで、構成段は入らない。この
+        # 面の契約は変わらない。ただし 2026-08-19 から、引用行の言葉
+        # **だけ**で紡いだ下書きが written として隣に乗ることがある —
+        # constructed と明記され、licence は引用行そのもの(同じ行に
+        # 書かれた語どうし=同一文共起)。実測: 断片0・汚染0・引用外の
+        # 内容語0。8/18に却下した文書側生成の、門つき再挑戦。
+        out["constructed"] = False
+        try:
+            from .stacked import quote_in_words
+            _w = getattr(_vera(), "writer", None)
+            if _w is not None:
+                _qw = quote_in_words(out, _w)
+                if _qw:
+                    out["written"] = _qw
+        except Exception:
+            pass
+        # 拒否には型(verdict)だけでなく、どの分野が薄いかも添える。
+        # 「文書に無い」と「連合のどの棚にも近くが無い」は別の主張で、
+        # 後者は薄く広げた federation を coverage.py で読んだだけの
+        # 実測(投票ではない)。which_shelf/coverage_hole は既存の
+        # what_would_close 扉と同じ経路 — 文書面にも同じ実測を渡す。
+        v = str(out.get("verdict") or "")
+        if v.startswith("UNKNOWN") or v == "DOCUMENT_NOT_SPECIFIED":
+            try:
+                from .coverage import document_needed as _document_needed
+                out["domain_hint"] = _document_needed(
+                    _atlas(), question, v, aliases=_aliases())
+            except Exception as e:
+                out["domain_hint"] = {"verdict": "UNKNOWN_COVERAGE_UNAVAILABLE",
+                                      "note": str(e)[:120]}
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_multi_party(sentence: str) -> str:
+        """Split a multi-actor sentence into events, and look up each
+        actor's act against the loaded documents independently.
+
+        「AがBを脅してBがCを傷つけた場合、誰がどのような罪を犯したか」 is
+        not one subject but two events, with the object of the first
+        (B) becoming the actor of the second — feeding the whole sentence
+        to `vera_ask_documents` either matches no heading at all or blends
+        the two acts into one answer. This door splits on the closed
+        surface form 「Xが Yを V(て/た/で/だ/る形)」 and calls the document
+        lookup once per event, so each actor's act is answered from the
+        document's own words for THAT act alone.
+
+        No legal reasoning happens here — no culpability, intent, or
+        justification is weighed. Each event's act is looked up on its
+        own; if the document does not hold that word (even under a
+        one-character stem fallback), that event stays a typed refusal
+        rather than a guess. Pronouns, elided subjects, and non-conforming
+        grammar are not decomposed — DECOMPOSE_NO_EVENTS says so honestly
+        rather than guessing at structure."""
+        from . import document_structure as _ds
+        from .multi_party import analyze_multi_party
+
+        book = _ds.load(store_path)
+        if not book.get("documents"):
+            return json.dumps(
+                {"verdict": "UNKNOWN_NO_DOCUMENTS", "sentence": sentence,
+                 "note": "この面は取り込んだ文書だけを引く。まだ一つも無い"},
+                ensure_ascii=False)
+        out = analyze_multi_party(sentence, book)
+        if out.get("verdict") == "MULTI_PARTY_ANALYSIS" and out.get("unresolved_count"):
+            # 未解決の行為が残るなら、その行為語についても domain_hint と
+            # 同じ実測(薄く広げたfederation)を添える — 単一質問の拒否と
+            # 同じ扱い。
+            for ev in out["per_event"]:
+                v = str(ev.get("crime_verdict") or "")
+                if v.startswith("UNKNOWN"):
+                    try:
+                        from .coverage import document_needed as _document_needed
+                        ev["domain_hint"] = _document_needed(
+                            _atlas(), ev["verb"], v, aliases=_aliases())
+                    except Exception as e:
+                        ev["domain_hint"] = {"verdict": "UNKNOWN_COVERAGE_UNAVAILABLE",
+                                             "note": str(e)[:120]}
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_documents(forget: str = "") -> str:
+        """What documents this terminal has loaded, and a way to drop one.
+
+        The domain shelf (`vera_domains`) and this one are different stores
+        and neither one lists the other: a domain is vocabulary — the words
+        of a field, so a sentence can be built in its register — while a
+        document is text kept verbatim so a line can be quoted back. A
+        person who loads a document and then looks for it on the domain
+        shelf will not find it, which is a fault of the shelves, not of
+        their memory. This is the missing shelf.
+
+        `forget` drops one document by source name. Nothing is removed
+        silently and nothing is merged: the sentences that ingest put into
+        the federation are a separate act with its own record.
+        """
+        from . import document_structure as _ds
+        book = _ds.load(store_path)
+        docs = book.get("documents", [])
+        if forget:
+            kept = [d for d in docs if d.get("source") != forget]
+            if len(kept) == len(docs):
+                return json.dumps({"verdict": "UNKNOWN_NO_SUCH_DOCUMENT",
+                                   "source": forget,
+                                   "have": [d.get("source") for d in docs]},
+                                  ensure_ascii=False)
+            book["documents"] = kept
+            _ds.sidecar_path(store_path).write_text(
+                json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
+            return json.dumps({"verdict": "FORGOT", "source": forget,
+                               "documents": len(kept),
+                               "note": "構造索引から外した。取り込みの際に"
+                                       "連合へ入った文はここでは消えない"},
+                              ensure_ascii=False)
+        return json.dumps(
+            {"verdict": "ANSWER",
+             "documents": [{"source": d.get("source"),
+                            "sections": len(d.get("sections") or []),
+                            "labels": len(d.get("labels") or {}),
+                            "lines": d.get("lines")} for d in docs],
+             "note": "文書は逐語引用のための棚。分野(語彙)とは別で、"
+                     "合体しない"},
+            ensure_ascii=False)
+
+    @mcp.tool()
     def load_documents(paths: str, ingest: bool = True) -> str:
         """Read files (or a folder) into the store — PDF, Word, HTML, CSV,
         JSON, plain text.
@@ -1855,9 +2712,18 @@ def serve(store_path: str) -> int:
         format with no loader, UNKNOWN_EMPTY_DOCUMENT for a scanned PDF that
         holds only images) and the rest still load — a batch that drops what
         it could not read reports a smaller corpus as if it were the whole
-        one. Japanese and English are both segmented correctly."""
+        one. Japanese and English are both segmented correctly.
+
+        Each document is ALSO indexed by its own structure — numbered
+        headings and labelled values — into a sidecar beside the store.
+        Measured on a contest PDF: sentence-level ingest kept 51 of 68
+        lines and the 17 it dropped were the answer, because the
+        requirements and the deadline are bullets under a heading and a
+        bullet is not a sentence. The sidecar quotes; it never votes."""
         from .document_ingest import ingest_documents
         from .document_loaders import load_directory, load_paths
+        from .document_structure import index as _structure
+        from .document_structure import save as _save_structure
 
         items = [x.strip() for x in (paths or "").split(",") if x.strip()]
         docs, skipped = [], []
@@ -1872,6 +2738,16 @@ def serve(store_path: str) -> int:
             rep = ingest_documents(store, docs)
             _save()
             out["ingested"] = rep.as_dict()
+            structured = []
+            for d in docs:
+                try:
+                    structured.append(
+                        _save_structure(path, _structure(d.text, d.source)))
+                except Exception as exc:
+                    structured.append({"verdict": "UNKNOWN_NOT_STRUCTURED",
+                                       "source": d.source,
+                                       "error": str(exc)[:80]})
+            out["structure"] = structured
         return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()

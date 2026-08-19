@@ -37,7 +37,7 @@ ceiling is stated too.
 | Unknown-word explanation | units grounded in sourced definitions — **81 of 91** remaining holes fully grounded |
 | Structural difference | exclusivity **0.9715** — "no attestation for B", never "B is not" |
 | Connective prose | **243/243** placements carry a licence; 「しかし」 only on an observed ¬ pair |
-| Instruction frames | 47 verbs × 28 operations — out-of-table **refuses 15/15** |
+| Instruction frames | 48 verbs × 28 operations — out-of-table refusal last measured at **15/15 on the 47-verb table**, not re-run since 見る was added |
 | Multi-stage chains | arrows derived deterministically — **0/18** false splits |
 | Typo recovery | recovery@5 **84.8%**, false fires on real words **0/500**, 2.15 ms |
 | Mathematics | **75,919 of 77,242** mathlib theorems carry `verified:lean4:4.34.0-rc1` from real kernel runs (98.9% of files) |

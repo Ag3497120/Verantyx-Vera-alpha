@@ -321,8 +321,20 @@ def load_selection(data: Dict[str, Any]) -> Dict[str, int]:
     for key, counts in (data.get("tails") or {}).items():
         p, v = key.split("\t", 1)
         SELECTION_TAIL[(p, v)] = Counter(counts)
+    # VERBAL_NOUNS は harvest()(構築時)でしか埋まらず、writer.json を
+    # 読む実行時経路では空のままだった — fits(term,'verbalnoun') が常に
+    # False になり、する動詞の穴は正しく型付けされるほど埋まらなくなる。
+    # 実測 2026-08-19: 実行時 VERBAL_NOUNS=0語、その結果 free 型の穴を
+    # 持つ不自然な文型へ充填が流れていた(「効力を方式している」)。
+    # SELECTION の述語頭はコーパスが実際に する を付けた名詞そのもの
+    # (キー ('を','解除') は「〜を解除する」の実測)なので、そこから
+    # 復元する — 新しい主張はゼロ、積み込み経路の欠落を閉じるだけ。
+    for (_p, pred) in SELECTION:
+        if 2 <= len(pred) <= 8:
+            VERBAL_NOUNS.add(pred)
     return {"slots": len(SELECTION),
-            "triples": sum(sum(c.values()) for c in SELECTION.values())}
+            "triples": sum(sum(c.values()) for c in SELECTION.values()),
+            "verbal_nouns": len(VERBAL_NOUNS)}
 
 
 def selects(noun: str, particle: str, verb: str) -> Optional[bool]:
@@ -470,7 +482,10 @@ class Form:
 #: produced 「借主を地位する」 — 地位 is a noun and never a verb.
 VERBAL_NOUNS: Set[str] = set()
 
-_SURU = re.compile(r"(する|した|される|されている|しない)")
+#: している/します/し、 を見落としていた実測(2026-08-19): 「<2>している」
+#: の穴が free 型になり、する名詞でない語(方式)が詰まって「効力を方式
+#: している」ができた。境界の門(_SLOT_ALLOW)が通す活用と同じ集合を見る。
+_SURU = re.compile(r"(する|した|して|します|し[、。]|される|されて|しない)")
 
 
 def _case_after(text: str, at: int) -> str:
@@ -482,6 +497,28 @@ def _case_after(text: str, at: int) -> str:
     if _SURU.match(text[at:at + 4] or ""):
         return "verbalnoun"
     return CASE_OF.get(text[at:at + 1], "free")
+
+
+#: 穴の直後に立ってよい形。助詞・句読点・する動詞の支えだけ。これ以外が
+#: 穴に密着している文型は、収穫時にスロット境界が語の途中に開いたもの —
+#: 「<2>ばれる」(呼ばれる)「<2>われる」(行われる)「<2>つである」(三つ)
+#: 「<2>まれる」(含まれる)。そこへ名詞を詰めると「広義まれる」
+#: 「不法領得つである」という切れ端文になる。実測 2026-08-19: 1,329文型
+#: 中434がこの形。動詞語幹の穴として収穫されたものだが、この口の内容は
+#: 名詞(facet/辺の端点)しか無いので、名詞の口では使えない型として弾く。
+#:
+#: 1文字の許可では3つ漏れた(同日実測):「か」は完成かれる(置かれる切断)、
+#: 「し」は適用しい(形容詞切断)、「）」は対の無い閉じ括弧「保護）となる」。
+#: する動詞の支えは2文字先読み(する/され/した/してい/します/し、/し。)で
+#: 通し、それ以外の か・し・）は弾く。
+_HOLE_NEXT = re.compile(
+    r"<\d+>(?![はがをにでとのもへやな、。，．！？」]"
+    r"|す(?=る)|さ(?=れ)|し(?=[てたま、。])|$)")
+
+
+def slot_boundary_ok(template: str) -> bool:
+    """穴の境界が語の途中に開いていない文型か。名詞充填の前提検査。"""
+    return _HOLE_NEXT.search(template) is None
 
 
 def harvest(
@@ -579,11 +616,16 @@ class Draft:
     fills: List[str]
     content_from: List[str] = field(default_factory=list)
     form_from: str = ""
+    #: 選択制限が「実証済み」と言った充填の数。順位にだけ使い、門には
+    #: しない — 意見なし(None)の穴は今まで通り埋まる。読み手には見える。
+    attested: int = 0
+    #: 引用行への忠実度(末尾形一致×10+語順保存の隣接対数)。順位のみ。
+    line_fidelity: int = 0
 
     def as_dict(self) -> Dict[str, Any]:
         return {"text": self.text, "template": self.template,
                 "fills": self.fills, "content_from": self.content_from,
-                "form_from": self.form_from,
+                "form_from": self.form_from, "attested": self.attested,
                 "note": "content and form have separate sources; neither "
                         "makes this sentence true"}
 
@@ -597,6 +639,9 @@ def compose(
     content_from: Optional[Sequence[str]] = None,
     vocab: Optional[Any] = None,
     licence: str = "unknown",
+    roles: Optional[Dict[str, str]] = None,
+    order: Optional[Dict[str, int]] = None,
+    tail: str = "",
 ) -> List[Draft]:
     """Sentences about ``subject`` using ``facets``, best-supported first.
 
@@ -646,14 +691,36 @@ def compose(
         picks: List[str] = [subject]
         used: Set[str] = {subject}
         ok = True
+        n_attested = 0
         for hole, case in enumerate(form.cases[1:], start=1):
             slot = form.slots[hole] if hole < len(form.slots) else None
             cand = [t for t in pool if t not in used and fits(t, case)]
+            # 係り受けの搬送(2026-08-19): 引用行で語が担っていた助詞
+            # (新幹線**の**・利用**は**・移動**に**)を roles として受け、
+            # 穴の助詞と一致する語を先に。順位であって門ではない —
+            # 一致が無ければ従来の並びのまま。「新幹線と利用を移動する」
+            # (行では 移動に だったのに を の穴へ入った)型の役割逆転を、
+            # 行自身の読みで抑える。
+            if roles and slot:
+                part = slot[0]
+                matched = [t for t in cand if roles.get(t) == part]
+                others = [t for t in cand if roles.get(t) != part]
+                cand = matched + others
             if slot:
                 # Attested first, unknown next, never one the corpus rejects.
                 yes = [t for t in cand if selects(t, slot[0], slot[1]) is True]
                 maybe = [t for t in cand if selects(t, slot[0], slot[1]) is None]
-                cand = yes + maybe
+                if roles:
+                    # 役割一致は選択実証より先 — 行が実際に書いた役割は、
+                    # コーパス統計より強いライセンス。
+                    part = slot[0] if slot else ""
+                    rm = [t for t in (yes + maybe) if roles.get(t) == part]
+                    ro = [t for t in (yes + maybe) if roles.get(t) != part]
+                    cand = rm + ro
+                else:
+                    cand = yes + maybe
+                if yes and cand and cand[0] in yes:
+                    n_attested += 1
             if not cand:
                 ok = False
                 break
@@ -676,12 +743,36 @@ def compose(
         text = tpl
         for i, p in enumerate(picks):
             text = text.replace(f"<{i}>", p)
+        # 係り受けの深化(2026-08-19): 引用行への忠実度2つを順位に足す。
+        #   tail一致  行の末尾形(とする/である/認める…閉集合)と文型の
+        #             末尾が一致 — 行が選んだ言い方をそのまま継ぐ。
+        #   語順     充填語の並びが行の語順を保った隣接対の数。
+        # どちらも順位のみ。行を持たない呼び出し(order/tail なし)では
+        # 全下書きが同点で、従来の並びのまま。
+        _tail_hit = 1 if (tail and tpl.rstrip("。").endswith(tail)) else 0
+        _fid = 0
+        if order:
+            _pos = [order[p] for p in picks if p in order]
+            _fid = sum(1 for a, b in zip(_pos, _pos[1:]) if a < b)
         out.append(Draft(text=text + "。", template=tpl, fills=picks,
                          content_from=list(content_from or []),
-                         form_from=form.source))
-        if len(out) >= limit:
+                         form_from=form.source, attested=n_attested,
+                         line_fidelity=_tail_hit * 10 + _fid))
+        # 実証済みの充填を持つ下書きを、持たない下書きより先に返す。
+        # 従来は「最初に埋まった limit 本」で打ち切っており、意見なしの
+        # 穴だけで埋まった形が、実証済みの形より先に口へ届いていた。
+        # 4倍まで集めて安定ソート — 回転(主語ハッシュ)による形の多様さは
+        # 同点内でそのまま残る。門ではなく順位: 実証済みが1本も無ければ
+        # 従来と同じものが出る。
+        # 収集幅は8のまま。24へ広げる案は実測で棄却(2026-08-19):
+        # att=0 の同点帯では、広げた候補が語順・役割の悪い形を連れてきて
+        # 「会議の上限がある」→「上限を会議としている」と逆転した。
+        # 末尾一致形が8本に居ない場合に効かないのは事実だが、それは
+        # 文型側(定義形の収穫)の課題であって、収集幅では直らない。
+        if len(out) >= max(limit * 4, 8):
             break
-    return out
+    out.sort(key=lambda d: (-d.attested, -d.line_fidelity))
+    return out[:limit]
 
 
 def compose_walk(

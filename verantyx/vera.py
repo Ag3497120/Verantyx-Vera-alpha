@@ -84,7 +84,8 @@ class Vera:
                             "settings": len(self.judges[lang].settings)}
         return self
 
-    def ask(self, query: str, *, limit: int = 3) -> Dict[str, Any]:
+    def ask(self, query: str, *, limit: int = 3,
+            **kwargs: Any) -> Dict[str, Any]:
         from .lang import detect
         from .remedy import remedy
         from .stacked import ask as stacked_ask, in_words
@@ -117,7 +118,7 @@ class Vera:
         if graded.get("verdict") == "UNKNOWN_TIME_DEPENDENT":
             return {**graded, "language": lang, "remedy": remedy(graded)}
 
-        core = stacked_ask(store, query, judge=judge)
+        core = stacked_ask(store, query, judge=judge, **kwargs)
         out: Dict[str, Any] = {**core, "language": lang,
                                "coverage": graded.get("coverage"),
                                "as_core": graded.get("as_core"),
@@ -131,7 +132,9 @@ class Vera:
                     out["edge_pairs"] = self.edges(str(out["core_key"]), shown)
                 except Exception:
                     pass
-            out["written"] = in_words(store, out, self.writer, limit=limit)
+            out["written"] = in_words(store, out, self.writer, limit=limit,
+                                      edge_partners=getattr(
+                                          self, "edge_partners", None))
 
         # Nothing was held. Try to land NEAR the terms rather than refuse
         # outright, and say by which route — the two are not the same claim.
