@@ -172,7 +172,7 @@ def _readings(obj: Dict[str, Any]) -> Dict[str, Any]:
 def ask(query: str, vera: Any, *, last_core: str = "",
         domain: str = "", store_path: Any = None, store: Any = None,
         store_first: bool = False, _retry: bool = False,
-        circulation: Any = None, observe: bool = False) -> Dict[str, Any]:
+        circulation: Any = None, observe: bool = True) -> Dict[str, Any]:
     """Everything the engine knows how to bring, for one question.
 
     `vera` is the loaded stack, passed in rather than loaded here: which
@@ -425,10 +425,21 @@ def ask(query: str, vera: Any, *, last_core: str = "",
     # ── 巡回と観測 ────────────────────────────────────────────────────
     # `circulation` is the conversation's terminal arrangements, per core —
     # the search re-enters the structure where the last turn left it instead
-    # of bare. `observe` turns on the placement-invariance re-ask that has
+    # of bare. `observe` turns on the placement-invariance re-ask that had
     # been implemented and dormant since 8/14: the arbitrary half of the
     # placement is reversed and an ANSWER the two readings disagree about is
     # downgraded. Both are inputs; determinism holds.
+    #
+    # Default ON since 2026-08-19. It was off pending a real-store
+    # measurement, and that measurement now exists (experiments/
+    # placement_matryoshka_recheck/): on vera.db ja (89,369 cores, 300
+    # planted probes) the gate demoted 4 of 546 ANSWERs, all four wrong,
+    # zero correct answers lost. Real mass distributions rarely tie, so it
+    # fires ~0.7% of the time — cheap insurance, not a large effect. What
+    # the flip actually fixes is a split brain: vera_chat passed
+    # observe=True while vera_engine and the CLI ran the old default False,
+    # so the same engine was more honest through one door than another.
+    # One sovereign means the same gates at every door.
     _ck: Dict[str, Any] = {}
     if circulation:
         _ck["circulation"] = circulation
