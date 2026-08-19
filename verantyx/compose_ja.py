@@ -100,6 +100,23 @@ Selection could only judge 43.8% of candidate fills at first (3.8
 observations per slot), but that was the smaller problem. A generator over
 this store is choosing from a bag that is 93% not-words.
 
+**Re-measured 2026-08-19, and the 43.8% above is stale.** The number was
+never re-taken after the statute bodies and the 1.4M dictionary definitions
+grew SELECTION to 14,087 slots / 441,433 triples. Instrumented at FILL TIME
+(counting every `selects()` call while generating document drafts for 13
+real questions, 224 calls over 11 sentences):
+
+    opinion (True or False)   85.7%
+    attested (True)           11.6%
+    no opinion (None)         14.3%
+
+So the thin-data era is over for this store, and the residue is a different
+shape from the one the paragraph above describes: selection now mostly says
+"no" (166 of 224), which is what a dense table is supposed to do. What a
+reader should NOT conclude is that drafts got 85.7% better — the opinion is
+consulted as a RANKING, not a gate, and clumsiness now comes from the form
+inventory rather than from a table with nothing to say.
+
 ## The vocabulary layer, and what it fixed
 
 `verantyx/vocabulary.py` sifts the facets to the ones a prose corpus uses as
