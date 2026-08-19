@@ -725,6 +725,19 @@ def _reference_summary(result: Dict[str, Any]) -> Optional[str]:
         # 「この定めは「グリーン」にあります」という不完全な参考文に
         # なった。DOCUMENT_SECTION 側は section を持たず subject に
         # 見出しを持つので、両方を順に試す。
+        #
+        # ただし section キーが存在してなお空文字列(見出しの無い節 —
+        # 会話ログのような無見出し文書の本文行ヒット)なら、それは
+        # 「見出しが無いと分かっている」という事実そのもので、subject
+        # へは逃げない。逃げると subject には探査語(質問の主題そのもの)
+        # が入っており、「この定めは「verantyx」にあります」のような、
+        # 問いをそのまま繰り返すだけの空虚な参考文になる — 実測
+        # 2026-08-19、見出し検出が直った後の会話ログ文書で発見。
+        # section キーが無い(DOCUMENT_SECTION の3つの返し口はどれも
+        # section を持たない)場合はこれまで通り subject を見出しとして
+        # 使う — そちらの subject は探査語ではなく本物の見出しだから。
+        if "section" in result and not result.get("section"):
+            return None
         head = _heading_only(str(result.get("section") or
                                   result.get("subject") or ""))
         if head:
