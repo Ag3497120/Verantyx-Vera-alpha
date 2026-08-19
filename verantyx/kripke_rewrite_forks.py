@@ -93,6 +93,60 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def generalisation_two_phase_fork() -> Dict[str, Any]:
+    """汎化した命題は通る。ただし**仮定を後に当てる**順序が要る。
+
+    古典例 `rev(l) = revacc(l, nil)` は帰納が通らず、汎化
+    `app(rev(l), a) = revacc(l, a)` なら通る。だが最初はその汎化も
+    落ちた — 原因は汎化ではなく**仮定の適用時期**だった(2026-08-19)。
+
+    IH を最初から規則に混ぜると leftmost-innermost が内側で早く発火し、
+    定義による整形(結合律)を妨げる。**①定義だけで正規形へ落とし、
+    ②その後に IH を当てる**と閉じる。探索ではなく段の固定された順序。
+
+    **正しい汎化を与えても、適用順が悪ければ閉じない** — 汎化の失敗と
+    戦略の失敗は別物である。
+
+    2点: (a) IH を混ぜた一段では閉じない (b) 二段階なら閉じる。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    DEFS = [("rev_nil", "rev(nil)", "nil"),
+            ("rev_cons", "rev(cons(?h, ?t))", "app(rev(?t), cons(?h, nil))"),
+            ("acc_nil", "revacc(nil, ?a)", "?a"),
+            ("acc_cons", "revacc(cons(?h, ?t), ?a)", "revacc(?t, cons(?h, ?a))"),
+            ("app_nil", "app(nil, ?l)", "?l"),
+            ("app_cons", "app(cons(?h, ?t), ?l)", "cons(?h, app(?t, ?l))"),
+            ("app_assoc", "app(app(?x, ?y), ?z)", "app(?x, app(?y, ?z))")]
+    IH = ("IH", "app(rev(?t), ?a)", "revacc(?t, ?a)")
+
+    def nf(e, rules):
+        rs = RuleStore()
+        for n, l, r in rules:
+            rs.add(n, l, r)
+        r = simplify(e, rs, budget=400)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    L = "app(rev(cons(h, t)), a)"
+    R = "revacc(cons(h, t), a)"
+
+    one = (nf(L, DEFS + [IH]), nf(R, DEFS + [IH]))
+    one_closes = one[0] is not None and one[0] == one[1]
+
+    p0, p1 = nf(L, DEFS), nf(R, DEFS)
+    two = (nf(p0, DEFS + [IH]) if p0 else None,
+           nf(p1, DEFS + [IH]) if p1 else None)
+    two_closes = two[0] is not None and two[0] == two[1]
+
+    ok = bool(two_closes and not one_closes)
+    return {"experiment": "rewrite", "fork": "GENERALISATION_TWO_PHASE",
+            "pass": ok,
+            "result": {"one_phase_closes": bool(one_closes),
+                       "two_phase_closes": bool(two_closes),
+                       "one_phase": list(one), "two_phase": list(two)}}
+
+
 def false_equation_canary_fork() -> Dict[str, Any]:
     """壊れた規則集合では、偽の等式が証明できてしまう — それを検知する。
 
@@ -560,6 +614,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         budget_is_not_agreement_fork(),
         terminating_is_not_confluent_fork(),
         false_equation_canary_fork(),
+        generalisation_two_phase_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
