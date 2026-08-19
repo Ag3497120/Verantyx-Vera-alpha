@@ -90,6 +90,54 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def budget_is_not_agreement_fork() -> Dict[str, Any]:
+    """予算切れは「一致」ではない — 空虚な証明を作らせない。
+
+    2026-08-19、探索の駆動層に健全性の穴が見つかった。基底の検査を
+    `if nf(lhs) != nf(rhs): continue` と書いていたため、**両側が予算切れ
+    (None)のとき None != None が False になり、基底が閉じたことにされて
+    いた**。可換律を無向きで規則に昇格して系が停止しなくなった後、3本の
+    目標が**空虚に「証明」された**(報告した 8/8 は偽で、実際は 5/8)。
+
+    **Lean はこれを捕まえられない** — 命題自体は真だからである。
+    独立検査は「主張が真か」を見るのであって「導出が本物か」は見ない。
+    真の命題を空虚に証明しても検査は通る。導出側の健全性は導出側で
+    守るしかない。
+
+    ここで固定するのは、この構造の一般規則である:
+    **`simplify` が ANSWER 以外を返した項は、他の何とも一致しない。**
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    rs = RuleStore()
+    rs.add("comm", "?a + ?b", "?b + ?a")      # 無向き = 停止しない
+
+    left = simplify("x + y", rs, budget=50)
+    right = simplify("y + x", rs, budget=50)
+
+    both_budget = (str(left.get("verdict")) == "UNKNOWN_BUDGET"
+                   and str(right.get("verdict")) == "UNKNOWN_BUDGET")
+
+    # 誤った読み方: term どうしを比べると None 同士で「一致」しうる
+    def bad_nf(r):
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+    naive_says_equal = (bad_nf(left) == bad_nf(right))   # None == None
+
+    # 正しい読み方: ANSWER でないものは一致に数えない
+    def good_eq(a, b):
+        ta, tb = bad_nf(a), bad_nf(b)
+        return ta is not None and tb is not None and ta == tb
+    strict_says_equal = good_eq(left, right)
+
+    ok = bool(both_budget and naive_says_equal and not strict_says_equal)
+    return {"experiment": "rewrite", "fork": "BUDGET_IS_NOT_AGREEMENT",
+            "pass": ok,
+            "result": {"both_exhausted": bool(both_budget),
+                       "naive_comparison_says_equal": bool(naive_says_equal),
+                       "strict_comparison_says_equal": bool(strict_says_equal)}}
+
+
 def inductive_search_fork() -> Dict[str, Any]:
     """帰納する変数も補題の順序も、駆動層が自分で選べる。
 
@@ -415,6 +463,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         completion_derives_laws_fork(),
         induction_by_rewriting_fork(),
         inductive_search_fork(),
+        budget_is_not_agreement_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
