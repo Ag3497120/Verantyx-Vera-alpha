@@ -256,6 +256,24 @@ def register_of(text: str) -> str:
     return "unknown"
 
 
+#: 分野そのものの登録(2026-08-19)。`classify` の `registers` 引数は
+#: 実装されて以来**一度も渡されていなかった** — 呼び出し元が居らず、
+#: NORM_VS_RECORD の枝は到達不能だった(bridge.rs と同じ「実装済み未到達」)。
+#: 文の登録は `register_of` が文末から読むが、join の両側は文ではなく
+#: **分野**なので、そこは分野の性格から読む: 法令は定め、他は記す。
+#: 連合の分野名は build_ja が付けたもの(法令/法学/百科/多分野/指名/辞書/
+#: 百科本文)で、増えた分野は unknown に落ちる — 知らない分野を norm とは
+#: 言わない。
+_FIELD_REGISTER = {"法令": "norm", "法学": "record", "百科": "record",
+                   "百科本文": "record", "多分野": "record",
+                   "指名": "record", "辞書": "record"}
+
+
+def field_register(name: str) -> str:
+    """分野の登録: norm(定める) / record(記す) / unknown。"""
+    return _FIELD_REGISTER.get(str(name or ""), "unknown")
+
+
 def classify(
     fields: Dict[str, Dict[str, CrossStore]],
     point: "Point",
@@ -279,6 +297,10 @@ def classify(
         complement             48    5.6%
 
     ## The 22% is a CANDIDATE rate, not a finding
+
+    (2026-08-19: the breakdown above predates NORM_VS_RECORD, which now
+    splits the prescribe-vs-report pairs out of that 22% before it is
+    counted. The rate has not been re-taken on the current federation.)
 
     A statute states when a thing must be so; an encyclopedia describes a
     case where it was not. Read as poles those are opposite, and they are
@@ -337,7 +359,11 @@ def classify(
     # nothing: the statute says a thing must be so, the commentary reports an
     # occasion when it was not. Only two sides of the SAME register are
     # candidates for contradiction.
-    reg = registers or {}
+    # 呼び出し元が渡さなければ分野名から自給する。引数は残す(呼び出し元が
+    # 文単位の登録を持っているならそちらが強い)が、既定で枝が死なない。
+    reg = dict(registers or {})
+    for _n in speaking:
+        reg.setdefault(_n, field_register(_n))
     ra, rb = reg.get(speaking[0], "unknown"), reg.get(speaking[1], "unknown")
     if "norm" in (ra, rb) and "record" in (ra, rb):
         return {

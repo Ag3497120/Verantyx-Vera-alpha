@@ -507,6 +507,56 @@ def reverse_unique_fork() -> Dict[str, Any]:
                        "verdict": r.get("verdict")}}
 
 
+def norm_vs_record_fork() -> Dict[str, Any]:
+    """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
+
+    `fusion.classify` の NORM_VS_RECORD は実装されていたが、`registers` を
+    渡す呼び出し元が一つも無く、`reg = registers or {}` が常に空で
+    ra/rb は "unknown" のまま — **一度も発火しない枝**だった(2026-08-19、
+    bridge.rs と同じ「実装済み未到達」)。分野名から登録を自給するように
+    して、ここで発火を固定する。
+
+    2点: (a) 法令(定める)×百科(記す)で同じ側面の逆極は NORM_VS_RECORD、
+    (b) 同じ登録どうしの逆極は CONTRADICTION_CANDIDATE のまま —
+    同一機会の検査は依然として無いので、候補以上には言わない。
+    """
+    import collections
+
+    from .fusion import Point, classify, field_register
+    from .ja_grammar import ASPECT_OF
+
+    by_aspect: Dict[str, Dict[str, str]] = collections.defaultdict(dict)
+    for f, (a, p) in ASPECT_OF.items():
+        by_aspect[a][p] = f
+    pick = next(((a, d) for a, d in by_aspect.items()
+                 if "+" in d and "-" in d), None)
+    if pick is None:
+        return {"experiment": "fusion", "fork": "NORM_VS_RECORD",
+                "skipped": "no polar pair in ASPECT_OF"}
+    _asp, d = pick
+
+    def _store(term: str) -> CrossStore:
+        st = CrossStore()
+        st.ingest_sentence("対象 は %s である" % term)
+        return st
+
+    pt = Point(concept="対象", by_field={"法令": {"対象"}, "百科": {"対象"}})
+    a = classify({"法令": {"x": _store(d["+"])},
+                  "百科": {"y": _store(d["-"])}}, pt)
+    pt2 = Point(concept="対象", by_field={"百科": {"対象"}, "多分野": {"対象"}})
+    b = classify({"百科": {"x": _store(d["+"])},
+                  "多分野": {"y": _store(d["-"])}}, pt2)
+    ok = (a.get("kind") == "NORM_VS_RECORD"
+          and sorted(a.get("registers") or []) == ["norm", "record"]
+          and b.get("kind") == "CONTRADICTION_CANDIDATE"
+          and field_register("法令") == "norm"
+          and field_register("未知の分野") == "unknown")
+    return {"experiment": "fusion", "fork": "NORM_VS_RECORD", "pass": bool(ok),
+            "result": {"norm_x_record": a.get("kind"),
+                       "record_x_record": b.get("kind"),
+                       "registers": a.get("registers")}}
+
+
 def direction_invariance_fork() -> Dict[str, Any]:
     """向きの不変性: 読む向きを変えると消える当選は立ってはならない。
 
@@ -4426,6 +4476,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_invariance_fork(),
         direction_invariance_fork(),
         reverse_unique_fork(),
+        norm_vs_record_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),
         event_extractor_refuses_statute_prose_fork(),
