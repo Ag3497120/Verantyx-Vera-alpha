@@ -1,0 +1,20 @@
+{
+  "db": "/Users/motonishikoudai/Projects/vera-corpus/build/vera.db",
+  "arms": {
+    "baseline": {
+      "reachable": 27,
+      "correct": 2,
+      "wrong": 278,
+      "refusal": 20,
+      "asked": 300
+    },
+    "appended": {
+      "reachable": 196,
+      "correct": 2,
+      "wrong": 190,
+      "refusal": 108,
+      "asked": 300
+    }
+  },
+  "elapsed_s": 21.9
+}

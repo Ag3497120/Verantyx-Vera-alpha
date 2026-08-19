@@ -155,6 +155,24 @@ def candidates_for_query(
         if common and proper:
             drop.add(base if proper_first else base + PROPER_SUFFIX)
     out = [c for c in out if c not in drop]
+    # facet 重なりの追記(2026-08-19、experiments/retrieval_reach)。従来の
+    # 補完は「直接ヒット0の時だけ」で、facet 語が別 core 名に当たると
+    # 封じられ、中頻度 facet 3語の到達は 27/300 だった。直接候補は不動の
+    # まま残枠だけを重なり順で埋める — tokyo vs film の「質量が本命を
+    # 押し出す」は起きない(押し出す席がない)。実測(300探針、同一
+    # ハーネス): 到達 27→196、誤答 278→190、正答 2→2 無傷、棄権 20→108。
+    # 正解が届かない時に consensus は棄権せず誤答していた — 追記の腕は
+    # 割れを起こし、その誤答を棄権に変える。
+    if len(out) < k and qset:
+        extra = []
+        for core, cross in store.crosses.items():
+            if core in out:
+                continue
+            overlap = len(qset & set(cross))
+            if overlap > 0:
+                extra.append((-(overlap * 1000 + store.mass(core)), core))
+        extra.sort()
+        out = out + [c for _s, c in extra[:k - len(out)]]
     return out[:k]
 
 
