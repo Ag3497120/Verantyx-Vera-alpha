@@ -1,0 +1,59 @@
+{
+ "arms": [
+  {
+   "label": "G3単独(加法可換のみ)",
+   "proved": [
+    "G3"
+   ],
+   "how": {
+    "G3": "induction on x + 推測補題"
+   },
+   "unproved": [],
+   "nodes": 6,
+   "speculated": 2,
+   "discovered": [
+    "add(0, y) = y",
+    "add(s(k), y) = s(add(y, k))"
+   ]
+  },
+  {
+   "label": "G8単独(乗法可換のみ)",
+   "proved": [
+    "G8"
+   ],
+   "how": {
+    "G8": "induction on x + 推測補題"
+   },
+   "unproved": [],
+   "nodes": 6,
+   "speculated": 2,
+   "discovered": [
+    "mul(0, y) = 0",
+    "mul(s(k), y) = add(mul(y, k), y)"
+   ]
+  },
+  {
+   "label": "可換律2本のみ",
+   "proved": [
+    "G3"
+   ],
+   "how": {
+    "G3": "induction on x + 推測補題"
+   },
+   "unproved": [
+    "G8"
+   ],
+   "nodes": 11,
+   "speculated": 3,
+   "discovered": [
+    "add(0, y) = y",
+    "add(s(k), y) = s(add(y, k))",
+    "mul(0, y) = 0"
+   ]
+  }
+ ],
+ "lean_verified": 3,
+ "unsound": 0,
+ "unsound_detail": [],
+ "seconds": 0.7
+}
