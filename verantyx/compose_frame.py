@@ -112,13 +112,23 @@ class Tables:
     def _domain_get(self, table: str, key: str):
         if not self.domain or self._conn is None:
             return None
-        try:
-            row = self._conn.execute(
-                "SELECT v FROM %s__%s WHERE k = ?" % (table, self.domain),
-                (key,)).fetchone()
-        except Exception:
-            return None
-        return json.loads(row[0]) if row else None
+        # 複数分野の接続(2026-08-19): カンマ区切りは「順に試して最初の
+        # 当たり」— 層状であって合流ではない。二つの分野の表を混ぜれば
+        # 誰も測っていない第三の分野になる(束ねる、の実測6/6悪化)ので、
+        # 各分野は自分の表のまま、順位だけがユーザの配線。
+        for dom in str(self.domain).split(","):
+            dom = dom.strip()
+            if not dom:
+                continue
+            try:
+                row = self._conn.execute(
+                    "SELECT v FROM %s__%s WHERE k = ?" % (table, dom),
+                    (key,)).fetchone()
+            except Exception:
+                continue
+            if row:
+                return json.loads(row[0])
+        return None
 
     def _get(self, table: str, key: str, override) -> Optional[Dict[str, Any]]:
         if override is not None:

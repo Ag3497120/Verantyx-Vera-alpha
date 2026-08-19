@@ -545,7 +545,10 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                         from .stacked import in_words as _in_words
                         _sp = dict(obj)
                         _sp["text"] = " ".join(obj["tokens"])
-                        _w = _in_words(_ja, _sp, vera.writer, limit=2,
+                        # 文量は経路の語数に応じて可変: 語2つなら1文、
+                        # 5語以上なら3文まで。量を決めるのは内容の供給。
+                        _lim = max(1, min(3, len(obj["tokens"]) - 2))
+                        _w = _in_words(_ja, _sp, vera.writer, limit=_lim,
                                        edge_partners=getattr(
                                            vera, "edge_partners", None))
                         if _w.get("sentences"):

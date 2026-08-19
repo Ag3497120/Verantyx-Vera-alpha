@@ -2659,7 +2659,9 @@ def serve(store_path: str) -> int:
         return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()
-    def vera_documents(forget: str = "") -> str:
+    def vera_documents(forget: str = "", attach: str = "",
+                       purge: str = "", priority_source: str = "",
+                       priority: int = 0) -> str:
         """What documents this terminal has loaded, and a way to drop one.
 
         The domain shelf (`vera_domains`) and this one are different stores
@@ -2677,19 +2679,37 @@ def serve(store_path: str) -> int:
         from . import document_structure as _ds
         book = _ds.load(store_path)
         docs = book.get("documents", [])
+        # 「外す」は切断であって削除ではない(2026-08-19、ユーザ報告で
+        # 変更): forget は detached:True を立てるだけで sidecar に残り、
+        # attach で戻る。完全削除は purge だけが行う。優先度は高いほど
+        # 先に照合される — 企業の複数文書で「これを優先して判断」の配線。
         if forget:
-            kept = [d for d in docs if d.get("source") != forget]
+            r = _ds.set_document(store_path, forget, detached=True)
+            if r.get("verdict") == "SET":
+                r["note"] = "切断した(削除ではない)。attach で戻る"
+            return json.dumps(r, ensure_ascii=False)
+        if attach:
+            r = _ds.set_document(store_path, attach, detached=False)
+            if r.get("verdict") == "SET":
+                r["note"] = "再接続した"
+            return json.dumps(r, ensure_ascii=False)
+        if priority_source:
+            r = _ds.set_document(store_path, priority_source,
+                                 priority=priority)
+            return json.dumps(r, ensure_ascii=False)
+        if purge:
+            kept = [d for d in docs if d.get("source") != purge]
             if len(kept) == len(docs):
                 return json.dumps({"verdict": "UNKNOWN_NO_SUCH_DOCUMENT",
-                                   "source": forget,
+                                   "source": purge,
                                    "have": [d.get("source") for d in docs]},
                                   ensure_ascii=False)
             book["documents"] = kept
             _ds.sidecar_path(store_path).write_text(
                 json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
-            return json.dumps({"verdict": "FORGOT", "source": forget,
+            return json.dumps({"verdict": "PURGED", "source": purge,
                                "documents": len(kept),
-                               "note": "構造索引から外した。取り込みの際に"
+                               "note": "完全に削除した。取り込みの際に"
                                        "連合へ入った文はここでは消えない"},
                               ensure_ascii=False)
         return json.dumps(
@@ -2697,9 +2717,16 @@ def serve(store_path: str) -> int:
              "documents": [{"source": d.get("source"),
                             "sections": len(d.get("sections") or []),
                             "labels": len(d.get("labels") or {}),
-                            "lines": d.get("lines")} for d in docs],
+                            "lines": d.get("lines"),
+                            "detached": bool(d.get("detached")),
+                            "priority": int(d.get("priority") or 0),
+                            "tree": [{"heading": s.get("heading") or "(前文)",
+                                      "lines": len(s.get("lines") or []),
+                                      "edges": len(s.get("edges") or [])}
+                                     for s in (d.get("sections") or [])[:24]]}
+                           for d in docs],
              "note": "文書は逐語引用のための棚。分野(語彙)とは別で、"
-                     "合体しない"},
+                     "合体しない。detached は切断中(データは保持)"},
             ensure_ascii=False)
 
     @mcp.tool()
