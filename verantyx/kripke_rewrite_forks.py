@@ -86,6 +86,55 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def ordered_rewrite_fork() -> Dict[str, Any]:
+    """対称規則は、向きを付ければ止まり、置換を同一視する。
+
+    可換律 `?a + ?b → ?b + ?a` を無向きで足すと a+b→b+a→a+b と往復し、
+    正規形到達が 60/60 → 19/60 に崩れる(実測 2026-08-19、健全性は保持)。
+    結果が項順序で真に小さくなる時だけ適用すると 60/60 に戻り、さらに
+    `a+b+c` の12通り(順列×括弧付け)が**単一の正規形**に落ちる。
+
+    探索ではない — 適用可否を決定論的な述語で決めるだけで、後戻りも
+    分岐の試行もしない。格納された規則を格納された順序で適用する。
+
+    3点: (a) 無向きは予算切れ (b) 向き付きは正規形に至る
+    (c) 置換が同一視される(正準化)。
+    """
+    import itertools
+
+    from .rewrite_kernel import default_algebra_rules, simplify
+
+    # 正準化には可換だけでなく**結合の並べ替え**も要る。可換律だけだと
+    # (a+b)+c と a+(b+c) は別の項のままで、12通りは3形に留まる(実測)。
+    # 実測(experiments/ordered_rewrite)と同じ規則集合で固定する。
+    SYM = [("add_comm", "?a + ?b", "?b + ?a"),
+           ("add_assoc_l", "(?a + ?b) + ?c", "?a + (?b + ?c)")]
+    rs = default_algebra_rules()
+    for n, l, r in SYM:
+        rs.add(n, l, r)
+    names = [n for n, _l, _r in SYM]
+
+    loops = simplify("(b + a)", rs)
+    stops = simplify("(b + a)", rs, oriented=names)
+
+    forms = set()
+    for p_ in itertools.permutations(["a", "b", "c"]):
+        for shape in ("(%s + (%s + %s))", "((%s + %s) + %s)"):
+            r = simplify(shape % p_, rs, oriented=names)
+            forms.add(r.get("term") if str(r.get("verdict")) == "ANSWER"
+                      else "BUDGET")
+
+    ok = (str(loops.get("verdict")) == "UNKNOWN_BUDGET"
+          and str(stops.get("verdict")) == "ANSWER"
+          and len(forms) == 1 and "BUDGET" not in forms)
+    return {"experiment": "rewrite", "fork": "ORDERED_REWRITE_CANONICAL",
+            "pass": bool(ok),
+            "result": {"unoriented": loops.get("verdict"),
+                       "oriented": stops.get("term"),
+                       "permutation_forms": sorted(forms)}}
+
+
 def rewrite_roundtrip_fork() -> Dict[str, Any]:
     """印字した項は、読み直すと同じ項である。
 
@@ -201,6 +250,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         kripke_unknown_refuses_fork(),
         rewrite_algebra_fork(),
         rewrite_roundtrip_fork(),
+        ordered_rewrite_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
