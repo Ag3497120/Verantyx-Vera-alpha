@@ -1,30 +1,28 @@
 {
- "rounds": 1,
- "nodes_explored": 17,
+ "rounds": 2,
+ "nodes_explored": 30,
  "proved": [
   "G1",
   "G2",
   "G3",
-  "G4",
   "G5",
-  "G6",
+  "G6"
+ ],
+ "unproved": [
+  "G4",
   "G7",
   "G8"
  ],
- "unproved": [],
  "how": {
   "G1": "induction on x (round 1)",
   "G2": "induction on y (round 1)",
   "G3": "induction on x (round 1)",
-  "G4": "induction on x (round 1)",
   "G5": "induction on x (round 1)",
-  "G6": "direct (round 1)",
-  "G7": "induction on y (round 1)",
-  "G8": "induction on x (round 1)"
+  "G6": "direct (round 1)"
  },
- "verified": 8,
+ "verified": 5,
  "unsound": 0,
- "seconds_search": 0.0,
+ "seconds_search": 0.1,
  "lean_failures": [],
- "seconds_total": 1.3
+ "seconds_total": 0.8
 }

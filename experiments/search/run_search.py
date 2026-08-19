@@ -74,12 +74,23 @@ def try_prove(lhs, rhs, rules, stats):
     for v in vars_of(lhs, rhs):
         stats["nodes"] += 1
         rs0 = store(rules)
-        if nf(sub(lhs, v, "0"), rs0) != nf(sub(rhs, v, "0"), rs0):
+        # **None は「予算切れ」であって「一致」ではない。**
+        # `nf(a) != nf(b)` と書くと、両側が予算切れ(None)のとき
+        # None != None が False になり、**基底が閉じたことにされる**。
+        # 実測 2026-08-19: 可換律を規則に昇格した後の系では add(a,b) が
+        # 予算切れになり、G4/G7/G8 が**空虚に「証明」されていた**。
+        # Lean は命題自体が真なので捕まえられなかった —
+        # 独立検査は「主張が真か」を見るのであって
+        # 「導出が本物か」は見ない。
+        b0, b1 = nf(sub(lhs, v, "0"), rs0), nf(sub(rhs, v, "0"), rs0)
+        if b0 is None or b1 is None or b0 != b1:
             continue                                  # 基底が閉じない
         rs1 = store(rules)
         rs1.add("IH", generalise(sub(lhs, v, "k")),
                 generalise(sub(rhs, v, "k")))
-        if nf(sub(lhs, v, "s(k)"), rs1) == nf(sub(rhs, v, "s(k)"), rs1):
+        s0 = nf(sub(lhs, v, "s(k)"), rs1)
+        s1 = nf(sub(rhs, v, "s(k)"), rs1)
+        if s0 is not None and s1 is not None and s0 == s1:
             return True, "induction on %s" % v
     return False, None
 
