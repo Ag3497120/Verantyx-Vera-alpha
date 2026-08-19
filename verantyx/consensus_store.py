@@ -259,6 +259,7 @@ def consensus_over_store(
     carry: str = "A",
     n_layers: int = 3,
     placement_invariant: bool = False,
+    direction_invariant: bool = False,
     circulation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """End-to-end: retrieve → shell → consensus (typed verdicts).
@@ -321,7 +322,67 @@ def consensus_over_store(
     if placement_invariant:
         _apply_placement_invariance(store, out, query, k=k, cfg=cfg,
                                     circulation=circulation)
+    if direction_invariant:
+        _qset, _h = query_content(query)
+        _apply_direction_invariance(store, out, _qset)
     return out
+
+
+def direction_band(store: CrossStore, qset: Set[str]) -> Tuple[Set[str], int]:
+    """逆方向の読み: 問いの内容語を最も多く覆う core の同点帯。
+
+    順方向(問い→名前で core を引く)と誤りの出方が別種の、もう一つの
+    読み。core の側から「この問いを自分の facet 集合がどれだけ覆うか」
+    だけを見る — 名前一致・質量・エネルギーは一切見ない。
+    """
+    from .lex_filters import norm_words
+    best = 0
+    scored: List[Tuple[int, str]] = []
+    for core, cross in store.crosses.items():
+        # 名前も被覆に数える。core は自分の名前を自分の facet に持たない
+        # ので、facet だけを数えると「正当防衛とは」の帯に core 正当防衛
+        # 自身が構造的に入れず、門が正当な当選を殺した(2026-08-19実測:
+        # 正当防衛/時効/傷害罪とは が全滅)。名前は core が問いを覆う
+        # 最強の形であって、除外する理由がない。
+        ov = len(qset & (set(cross) | norm_words(core)))
+        if ov > 0:
+            scored.append((ov, core))
+            if ov > best:
+                best = ov
+    return ({c for ov, c in scored if ov == best}, best)
+
+
+def _apply_direction_invariance(
+    store: CrossStore, out: Dict[str, Any], qset: Set[str]
+) -> None:
+    """向きの不変性(2026-08-19、experiments/bidirectional_consensus)。
+
+    発案は操作者:「一方からしか見ていない。逆からやったものを重ねて、
+    まとめて投入することで相殺する」。同点換え(配置という単一変更)と
+    同型の変分 — **読む向きという単一変更**に不変な当選だけが本物。
+
+    実測(vera.db ja、300探針、事前登録): 順方向は正解が候補に居ないと
+    棄権せず誤答する(誤答206)。逆方向(被覆最大帯)は同点帯が一意の159問
+    で誤答0。重ね=順方向の当選が逆方向の帯に入る時だけ ANSWER:
+    誤答206→24、正答無傷。票は混ぜない — 門であって加点ではない。
+    """
+    if out.get("verdict") != "ANSWER" or not qset:
+        return
+    band, best = direction_band(store, qset)
+    ck = out.get("core_key") or out.get("core")
+    if not band or ck in band:
+        out["direction_invariant"] = True
+        return
+    rev = sorted(band, key=lambda c: store.mass(c))[:4]
+    out["verdict"] = "UNKNOWN_DIRECTION_DISAGREEMENT"
+    out["forward_core"] = out.get("core")
+    out["reverse_band"] = [display_sym(c) for c in rev]
+    out["reverse_coverage"] = best
+    out["core"] = None
+    out["text"] = ""
+    out["note"] = ("順方向(名前で引く)の当選が、逆方向(問いを最も覆う核の帯"
+                   ")に入らない。向きを変えると消える当選は向きの産物であって"
+                   "証拠の産物ではない — 両方の言い分を並べて棄権する")
 
 
 def _apply_placement_invariance(
@@ -611,6 +672,8 @@ def ja_consensus_ask(
     _apply_ja_coverage_gate(store, out, runs)
     if placement_invariant:
         _apply_placement_invariance(store, out, query, k=k, cfg=cfg, ja=True)
+        # 向きの不変性も同じ observe 傘の下(単一ソブリン: 同じ門を全扉で)。
+        _apply_direction_invariance(store, out, set(runs))
     return out
 
 

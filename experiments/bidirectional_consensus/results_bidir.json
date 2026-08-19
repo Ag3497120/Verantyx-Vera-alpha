@@ -1,0 +1,28 @@
+{
+  "db": "/Users/motonishikoudai/Projects/vera-corpus/build/vera.db",
+  "arms": {
+    "forward": {
+      "correct": 5,
+      "wrong": 206,
+      "refusal": 89,
+      "asked": 300
+    },
+    "reverse": {
+      "correct": 158,
+      "wrong": 0,
+      "refusal": 142,
+      "asked": 300
+    },
+    "layered": {
+      "correct": 5,
+      "wrong": 26,
+      "refusal": 269,
+      "asked": 300
+    }
+  },
+  "reverse_band_size": {
+    "median": 1.0,
+    "max": 181
+  },
+  "elapsed_s": 84.8
+}

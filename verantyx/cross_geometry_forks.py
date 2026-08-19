@@ -467,6 +467,55 @@ def ja_coverage_gate_fork() -> Dict[str, Any]:
     }
 
 
+def direction_invariance_fork() -> Dict[str, Any]:
+    """向きの不変性: 読む向きを変えると消える当選は立ってはならない。
+
+    発案は操作者(2026-08-19):「一方からしか見ていない。逆からやったものを
+    重ねて、まとめて投入することで相殺する」。順方向(問い→名前で core を
+    引く)は、正解が候補に居ないとき棄権せず誤答する(実ストア実測
+    206/300)。逆方向(問いを最も覆う core の帯、名前も被覆に数える)は
+    誤りの出方が別種なので、両方向の一致だけを通す門が誤答を相殺する
+    (誤答206→26・正答無傷、experiments/bidirectional_consensus)。
+
+    2つの半分: (a) 逆方向の帯に入らない順方向 ANSWER は
+    UNKNOWN_DIRECTION_DISAGREEMENT へ降格し、両方向の言い分を名乗る。
+    (b) 名前で問いを覆う正当な当選は生き残る — core は自分の名前を
+    facet に持たないので、名前を被覆に数え忘れると門が正当な当選を
+    全滅させる(実測: 正当防衛とは/時効とは/傷害罪とは が死んだ)。
+    """
+    from .consensus_store import (_apply_direction_invariance,
+                                  direction_band)
+
+    st = CrossStore()
+    # 正解側: core "target" は問いの2語 aspx aspy を facet で覆う。
+    for a in ("aspx", "aspy", "aspz"):
+        st.ingest_sentence(f"target has {a}")
+    # 誤答側: core "aspx" — 問いの語そのものを名前に持つが、問いを
+    # 1語しか覆わない(順方向の直接ヒットが勝つ形)。
+    st.ingest_sentence("aspx has otherthing")
+
+    qset = {"aspx", "aspy"}
+    band, best = direction_band(st, qset)
+    # (a) 1語被覆の当選は帯(2語被覆=target)に入らず降格する
+    wrong = {"verdict": "ANSWER", "core": "aspx", "core_key": "aspx",
+             "text": "aspx otherthing"}
+    _apply_direction_invariance(st, wrong, qset)
+    demoted = wrong["verdict"] == "UNKNOWN_DIRECTION_DISAGREEMENT"         and wrong.get("forward_core") == "aspx" and wrong.get("reverse_band")
+    # (b) 帯に入る当選は生き残り、証明書が乗る
+    right = {"verdict": "ANSWER", "core": "target", "core_key": "target",
+             "text": "target aspx aspy"}
+    _apply_direction_invariance(st, right, qset)
+    survived = right["verdict"] == "ANSWER"         and right.get("direction_invariant") is True
+    # (b') 名前被覆: 問いが core 名そのもののとき、その core が帯に居る
+    band2, _b2 = direction_band(st, {"target"})
+    named = "target" in band2
+    ok = bool(demoted and survived and named)
+    return {"fork": "DIRECTION_INVARIANCE", "pass": ok,
+            "result": {"demoted": bool(demoted), "survived": bool(survived),
+                       "name_covered": bool(named),
+                       "band": sorted(band), "best": best}}
+
+
 def placement_invariance_fork() -> Dict[str, Any]:
     """An answer that depends on an arbitrary tie-break must not stand.
 
@@ -4334,6 +4383,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_simulation_fork(),
         placement_cannot_manufacture_confidence_fork(),
         placement_invariance_fork(),
+        direction_invariance_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),
         event_extractor_refuses_statute_prose_fork(),
