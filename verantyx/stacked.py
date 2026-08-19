@@ -311,8 +311,11 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
                          order=order, tail=tail)
         return [dict(d.as_dict(), line=line) for d in drafts] or None
 
+    # 文量は内容に応じて可変(2026-08-19): 引用行が多ければ文も増える —
+    # 行ごとに1文・最大4文。1行しか無い引用は1文のまま。量を決めるのは
+    # ライセンス(引用行の数)であって設定ではない。
     sentences: List[Dict[str, Any]] = []
-    for ln in lines[:2]:   # 節なら行ごとに1文まで — 各行が各文のライセンス
+    for ln in lines[:4]:
         ds = draft_of(ln)
         if ds:
             sentences.extend(ds[:1])

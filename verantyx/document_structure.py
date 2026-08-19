@@ -305,6 +305,32 @@ def sidecar_path(store_path: Path) -> Path:
     return Path(store_path).with_suffix(".documents.json")
 
 
+def set_document(store_path: Path, source: str, *,
+                 detached: Optional[bool] = None,
+                 priority: Optional[int] = None) -> Dict[str, Any]:
+    """接続の切替と優先度 — データは消さない。
+
+    「外す」が削除だったため、一度取り込んだ文書を戻せなかった(実測
+    2026-08-19、ユーザ報告)。detached は接続の状態であって存在の状態では
+    ない: lookup は接続中だけを見るが、sidecar には残り、attach で戻る。
+    完全削除は purge(save 側の従来経路)だけが行う。"""
+    book = load(store_path)
+    for d in book.get("documents", []):
+        if d.get("source") != source:
+            continue
+        if detached is not None:
+            d["detached"] = bool(detached)
+        if priority is not None:
+            d["priority"] = int(priority)
+        sidecar_path(store_path).write_text(
+            json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
+        return {"verdict": "SET", "source": source,
+                "detached": d.get("detached", False),
+                "priority": d.get("priority", 0)}
+    return {"verdict": "UNKNOWN_NO_SUCH_DOCUMENT", "source": source,
+            "have": [d.get("source") for d in book.get("documents", [])]}
+
+
 def load(store_path: Path) -> Dict[str, Any]:
     p = sidecar_path(store_path)
     if not p.is_file():
@@ -773,6 +799,14 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     並びだけで作る構成的な文で、新しい主張は一つも含まない —
     constructed:True を付け、証言と混同させない。
     """
+    # 接続中の文書だけ・優先度順のビュー(2026-08-19)。「外す」は削除では
+    # なく切断 — 一度取り込んだ文書は detached:True で残り、attach で
+    # 戻る。priority は高いほど先に照合される(企業の複数文書で「これを
+    # 優先して判断」の配線)。原本 book は変更しない。
+    active = sorted(
+        [d for d in book.get("documents", []) if not d.get("detached")],
+        key=lambda d: (-int(d.get("priority") or 0), str(d.get("source"))))
+    book = {**book, "documents": active}
     result = _lookup(subject, book)
     ref = _reference_summary(result)
     if ref:

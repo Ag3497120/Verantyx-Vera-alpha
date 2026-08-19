@@ -450,6 +450,35 @@ def ask(query: str, vera: Any, *, last_core: str = "",
             t.raw, t.door = d, "structural_diff"
             t.verdict = str(d.get("verdict", "UNKNOWN"))
             t.text = _render(d)
+            # DIFF の payload は shared/only_a/only_b に層・辺つきの
+            # トークンを持つのに、_render がこの形を知らず「（DIFF）」と
+            # だけ出ていた(実測 2026-08-19: 傷害罪と窃盗罪の違いは)。
+            # 中身をそのまま行に並べる — 「Aのみ」は Bについて実測が
+            # 無いという意味であって、Bに無いという否定の主張ではない。
+            if t.verdict == "DIFF" and (not t.text or t.text == "（DIFF）"):
+                def _toks(key):
+                    seen, out = set(), []
+                    for it in d.get(key) or []:
+                        tok = str(it.get("token") or "")
+                        if tok and tok not in seen:
+                            seen.add(tok)
+                            out.append(tok)
+                    return out
+                a, b = str(d.get("a") or pair[0]), str(d.get("b") or pair[1])
+                sh, oa, ob = _toks("shared"), _toks("only_a"), _toks("only_b")
+                lines = ["%s と %s の構造差分" % (a, b)]
+                if sh:
+                    lines.append("共有: " + "・".join(sh[:8])
+                                 + ("（+%d）" % (len(sh) - 8) if len(sh) > 8 else ""))
+                if oa:
+                    lines.append("%s のみ: " % a + "・".join(oa[:8])
+                                 + ("（+%d）" % (len(oa) - 8) if len(oa) > 8 else ""))
+                if ob:
+                    lines.append("%s のみ: " % b + "・".join(ob[:8])
+                                 + ("（+%d）" % (len(ob) - 8) if len(ob) > 8 else ""))
+                lines.append("（「のみ」は相手側に実測が無いという意味で、"
+                             "無いという主張ではない）")
+                t.text = "\n".join(lines)
             return t.as_dict()
         except Exception as exc:
             # Recorded, never swallowed: a stage that failed silently is
@@ -545,7 +574,10 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                         from .stacked import in_words as _in_words
                         _sp = dict(obj)
                         _sp["text"] = " ".join(obj["tokens"])
-                        _w = _in_words(_ja, _sp, vera.writer, limit=2,
+                        # 文量は経路の語数に応じて可変: 語2つなら1文、
+                        # 5語以上なら3文まで。量を決めるのは内容の供給。
+                        _lim = max(1, min(3, len(obj["tokens"]) - 2))
+                        _w = _in_words(_ja, _sp, vera.writer, limit=_lim,
                                        edge_partners=getattr(
                                            vera, "edge_partners", None))
                         if _w.get("sentences"):
