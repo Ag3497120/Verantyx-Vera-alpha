@@ -164,14 +164,13 @@ def candidates_for_query(
     # 正解が届かない時に consensus は棄権せず誤答していた — 追記の腕は
     # 割れを起こし、その誤答を棄権に変える。
     if len(out) < k and qset:
-        extra = []
-        for core, cross in store.crosses.items():
-            if core in out:
-                continue
-            overlap = len(qset & set(cross))
-            if overlap > 0:
-                extra.append((-(overlap * 1000 + store.mass(core)), core))
-        extra.sort()
+        from collections import Counter as _Counter
+        _cnt: Dict[str, int] = _Counter()
+        for w in qset:
+            for c in _word_index(store).get(w, ()):
+                _cnt[c] += 1
+        extra = sorted((-(ov * 1000 + store.mass(c)), c)
+                       for c, ov in _cnt.items() if c not in out)
         out = out + [c for _s, c in extra[:k - len(out)]]
     return out[:k]
 
@@ -351,6 +350,23 @@ def frame_stripped(query: str, runs: List[str]) -> Set[str]:
     return out
 
 
+def _word_index(store: CrossStore) -> Dict[str, List[str]]:
+    """語→core の転置索引。store に一度だけ築く(89k核0.2秒/740k核9秒)。
+
+    核が増えても照会は増えない — 遅かったのは全核走査という実装の欠陥で
+    あって構造ではない(操作者指摘 2026-08-19)。名前語も facet と同様に
+    引ける(core は自分の名前を facet に持たない)。"""
+    from .lex_filters import norm_words
+    idx = getattr(store, "_word_to_cores", None)
+    if idx is None:
+        idx = {}
+        for core, cross in store.crosses.items():
+            for w in set(cross) | norm_words(core):
+                idx.setdefault(w, []).append(core)
+        store._word_to_cores = idx
+    return idx
+
+
 def direction_band(store: CrossStore, qset: Set[str]) -> Tuple[Set[str], int]:
     """逆方向の読み: 問いの内容語を最も多く覆う core の同点帯。
 
@@ -358,21 +374,25 @@ def direction_band(store: CrossStore, qset: Set[str]) -> Tuple[Set[str], int]:
     読み。core の側から「この問いを自分の facet 集合がどれだけ覆うか」
     だけを見る — 名前一致・質量・エネルギーは一切見ない。
     """
+    from collections import Counter
+
     from .lex_filters import norm_words
-    best = 0
-    scored: List[Tuple[int, str]] = []
-    for core, cross in store.crosses.items():
-        # 名前も被覆に数える。core は自分の名前を自分の facet に持たない
-        # ので、facet だけを数えると「正当防衛とは」の帯に core 正当防衛
-        # 自身が構造的に入れず、門が正当な当選を殺した(2026-08-19実測:
-        # 正当防衛/時効/傷害罪とは が全滅)。名前は core が問いを覆う
-        # 最強の形であって、除外する理由がない。
-        ov = len(qset & (set(cross) | norm_words(core)))
-        if ov > 0:
-            scored.append((ov, core))
-            if ov > best:
-                best = ov
-    return ({c for ov, c in scored if ov == best}, best)
+
+    # 転置索引(2026-08-19、辞書1.4M投入後)。全core走査は89k核で0.2秒、
+    # 740k核で数秒に伸びた — 語→core の索引を store に一度だけ築く。
+    # 名前も被覆に数える(core は自分の名前を facet に持たない — 索引が
+    # 無かった頃、名前を数え忘れて「正当防衛とは」の帯から core 自身が
+    # 構造的に脱落し、門が正当な当選を殺した実測がある)。意味は走査版と
+    # 同一で、速さだけが変わる。
+    idx = _word_index(store)
+    cnt: Counter = Counter()
+    for w in qset:
+        for c in idx.get(w, ()):
+            cnt[c] += 1
+    if not cnt:
+        return set(), 0
+    best = max(cnt.values())
+    return ({c for c, ov in cnt.items() if ov == best}, best)
 
 
 def _apply_direction_invariance(

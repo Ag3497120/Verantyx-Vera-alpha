@@ -380,6 +380,23 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                     t.origins = [str(dr.get("source") or "読み込んだ文書")]
                     t.readings = {"quoted": True}
                     t.remedy = ""
+                    if dv == "DOCUMENT_NOT_SPECIFIED":
+                        # 文書の型付き「明記なし」は不足知識の名指しそのもの
+                        # (2026-08-19、操作者検収)。この扉は早期returnで、
+                        # 末尾の gaps 段に届かず台帳が空回りしていた —
+                        # ここで登録する。create は重複を再利用する。
+                        try:
+                            from .gap_graph import (GapGraph, gap_graph_path,
+                                                    refusal_to_gap)
+                            _gp = gap_graph_path(store_path)
+                            _g = GapGraph.load(_gp)
+                            _gid = refusal_to_gap(
+                                _g, str(dr.get("subject") or q), dv,
+                                branch="engine.document", resolved=False)
+                            _g.save(_gp)
+                            t.note("gaps", True, "欠落を台帳へ登録 %s" % _gid)
+                        except Exception as _ge:
+                            t.note("gaps", False, type(_ge).__name__)
                     return t.as_dict()
                 t.note("document", True, dv)
             else:
@@ -739,16 +756,35 @@ def ask(query: str, vera: Any, *, last_core: str = "",
     # named ticket for it. Annotation only — a gap does not become a fact
     # by being mentioned beside one.
     if t.verdict.startswith(("UNKNOWN", "ABSTAIN", "AMBIGUOUS",
-                             "NOT_", "UNGROUNDED")):
+                             "NOT_", "UNGROUNDED")) or \
+            t.verdict == "DOCUMENT_NOT_SPECIFIED":
+        # DOCUMENT_NOT_SPECIFIED も欠落(2026-08-19、操作者検収): 文書に
+        # 「その語が無い」という型付き拒否は、まさに不足知識の名指し。
         try:
             if store_path is None:
                 raise ValueError("store_path 未指定（欠落台帳は店に紐づく）")
-            from .gap_graph import GapGraph, gap_graph_path
-            g = GapGraph.load(gap_graph_path(store_path))
+            from .gap_graph import GapGraph, gap_graph_path, refusal_to_gap
+            _gp = gap_graph_path(store_path)
+            g = GapGraph.load(_gp)
             hit = g.find_by_scope_subject("meaning", t.core) if t.core else None
+            # 台帳への書き込み(2026-08-19)。refusal_to_gap は agent_forks
+            # にしか配線されておらず、ask 経路の拒否は一度も台帳に届いて
+            # いなかった — 「unknown時にどの知識が不足かを見れる」の
+            # 蓄積側の欠落。名指しの主題は、不足語(明記なしの subject /
+            # ungrounded_units)を問いより優先する。create は重複を再利用
+            # するので同じ穴は一枚のまま。
+            _missing = ""
+            _d = t.data if isinstance(getattr(t, "data", None), dict) else {}
+            if obj.get("verdict") == "DOCUMENT_NOT_SPECIFIED":
+                _missing = str(obj.get("subject") or "")
+            elif obj.get("ungrounded_units"):
+                _missing = "、".join(map(str, obj["ungrounded_units"][:3]))
+            gid = refusal_to_gap(g, _missing or q, t.verdict,
+                                 branch="engine.ask", resolved=False)
+            g.save(_gp)
             t.note("gaps", True,
                    ("既知の欠落 %s (%s)" % (hit.gap_id, hit.status)) if hit
-                   else "この核に登録された欠落は無い")
+                   else ("欠落を台帳へ登録 %s" % gid))
         except Exception as exc:
             t.note("gaps", False,
                    "%s: %s" % (type(exc).__name__, str(exc)[:50]))
