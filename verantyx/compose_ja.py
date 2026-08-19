@@ -321,8 +321,20 @@ def load_selection(data: Dict[str, Any]) -> Dict[str, int]:
     for key, counts in (data.get("tails") or {}).items():
         p, v = key.split("\t", 1)
         SELECTION_TAIL[(p, v)] = Counter(counts)
+    # VERBAL_NOUNS は harvest()(構築時)でしか埋まらず、writer.json を
+    # 読む実行時経路では空のままだった — fits(term,'verbalnoun') が常に
+    # False になり、する動詞の穴は正しく型付けされるほど埋まらなくなる。
+    # 実測 2026-08-19: 実行時 VERBAL_NOUNS=0語、その結果 free 型の穴を
+    # 持つ不自然な文型へ充填が流れていた(「効力を方式している」)。
+    # SELECTION の述語頭はコーパスが実際に する を付けた名詞そのもの
+    # (キー ('を','解除') は「〜を解除する」の実測)なので、そこから
+    # 復元する — 新しい主張はゼロ、積み込み経路の欠落を閉じるだけ。
+    for (_p, pred) in SELECTION:
+        if 2 <= len(pred) <= 8:
+            VERBAL_NOUNS.add(pred)
     return {"slots": len(SELECTION),
-            "triples": sum(sum(c.values()) for c in SELECTION.values())}
+            "triples": sum(sum(c.values()) for c in SELECTION.values()),
+            "verbal_nouns": len(VERBAL_NOUNS)}
 
 
 def selects(noun: str, particle: str, verb: str) -> Optional[bool]:
@@ -470,7 +482,10 @@ class Form:
 #: produced 「借主を地位する」 — 地位 is a noun and never a verb.
 VERBAL_NOUNS: Set[str] = set()
 
-_SURU = re.compile(r"(する|した|される|されている|しない)")
+#: している/します/し、 を見落としていた実測(2026-08-19): 「<2>している」
+#: の穴が free 型になり、する名詞でない語(方式)が詰まって「効力を方式
+#: している」ができた。境界の門(_SLOT_ALLOW)が通す活用と同じ集合を見る。
+_SURU = re.compile(r"(する|した|して|します|し[、。]|される|されて|しない)")
 
 
 def _case_after(text: str, at: int) -> str:
@@ -601,11 +616,14 @@ class Draft:
     fills: List[str]
     content_from: List[str] = field(default_factory=list)
     form_from: str = ""
+    #: 選択制限が「実証済み」と言った充填の数。順位にだけ使い、門には
+    #: しない — 意見なし(None)の穴は今まで通り埋まる。読み手には見える。
+    attested: int = 0
 
     def as_dict(self) -> Dict[str, Any]:
         return {"text": self.text, "template": self.template,
                 "fills": self.fills, "content_from": self.content_from,
-                "form_from": self.form_from,
+                "form_from": self.form_from, "attested": self.attested,
                 "note": "content and form have separate sources; neither "
                         "makes this sentence true"}
 
@@ -668,6 +686,7 @@ def compose(
         picks: List[str] = [subject]
         used: Set[str] = {subject}
         ok = True
+        n_attested = 0
         for hole, case in enumerate(form.cases[1:], start=1):
             slot = form.slots[hole] if hole < len(form.slots) else None
             cand = [t for t in pool if t not in used and fits(t, case)]
@@ -676,6 +695,8 @@ def compose(
                 yes = [t for t in cand if selects(t, slot[0], slot[1]) is True]
                 maybe = [t for t in cand if selects(t, slot[0], slot[1]) is None]
                 cand = yes + maybe
+                if yes and cand and cand[0] == yes[0]:
+                    n_attested += 1
             if not cand:
                 ok = False
                 break
@@ -700,10 +721,17 @@ def compose(
             text = text.replace(f"<{i}>", p)
         out.append(Draft(text=text + "。", template=tpl, fills=picks,
                          content_from=list(content_from or []),
-                         form_from=form.source))
-        if len(out) >= limit:
+                         form_from=form.source, attested=n_attested))
+        # 実証済みの充填を持つ下書きを、持たない下書きより先に返す。
+        # 従来は「最初に埋まった limit 本」で打ち切っており、意見なしの
+        # 穴だけで埋まった形が、実証済みの形より先に口へ届いていた。
+        # 4倍まで集めて安定ソート — 回転(主語ハッシュ)による形の多様さは
+        # 同点内でそのまま残る。門ではなく順位: 実証済みが1本も無ければ
+        # 従来と同じものが出る。
+        if len(out) >= max(limit * 4, 8):
             break
-    return out
+    out.sort(key=lambda d: -d.attested)
+    return out[:limit]
 
 
 def compose_walk(
