@@ -1025,6 +1025,17 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
         for doc in book.get("documents", []))
     _absent = {pr for pr in probes if pr not in _all_text}
 
+    # 主題の取りこぼし検査(2026-08-19、60文書スケール実測)。「賢者の石」は
+    # 石(1字)が探査語になれず probes=[賢者] だけになり、どの文書かの
+    # 「賢者」を含む行が DOCUMENT_LINE で立った — 聞かれていない物の行で
+    # 聞かれた物に答える捏造(書留/料金と同型)だが、不在の昇格は探査語
+    # 同士でしか働かなかった。探査語に覆われない内容字が主題に残るなら、
+    # 主題そのものが「最も特定的で不在の語」である。
+    _content_c = _re.compile(r"[一-龥ァ-ヶーA-Za-z0-9]")
+    _cover = "".join(probes)
+    _uncovered = [c for c in q if _content_c.match(c) and c not in _cover]
+    _subject_absent = bool(_uncovered) and q not in _all_text
+
     # 0. 複数根拠: 最優先の探査語が独立に複数の節へ着地するなら、
     # 単一に絞らず全部を列挙する。
     #
@@ -1165,6 +1176,21 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                             "typo_candidates": typo_hint(book, _earlier_absent[0]),
                             "note": "不在は部分文字列検査で追試可能。近い語の定めを"
                                     "引用しただけで、「%s」の答えではない" % _earlier_absent[0]}
+                if hit and _subject_absent:
+                    # 主題(賢者の石)自体は文書のどこにも無く、覆えた部分
+                    # (賢者)の行しか無い — 行を答えに立てず明記なしを名乗る。
+                    return {"verdict": "DOCUMENT_NOT_SPECIFIED",
+                            "subject": subject,
+                            "section": sec.get("heading"),
+                            "term_absent": True,
+                            "governing": hit[:3],
+                            "source": doc.get("source"), "quoted": True,
+                            "text": "文書は「%s」を明記していない。「%s」の定め（%s）: %s"
+                                    % (subject, probe,
+                                       sec.get("heading"), " / ".join(hit[:3])),
+                            "typo_candidates": typo_hint(book, subject),
+                            "note": "不在は部分文字列検査で追試可能。近い語の行を"
+                                    "引用しただけで、「%s」の答えではない" % subject}
                 if hit:
                     return {"verdict": "DOCUMENT_LINE",
                             "subject": probe,
