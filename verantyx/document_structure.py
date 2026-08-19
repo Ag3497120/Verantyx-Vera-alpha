@@ -57,6 +57,21 @@ from typing import Any, Dict, List, Optional, Tuple
 #: space, or 「1.5倍」 becomes a section.
 _HEADING = re.compile(r"^(\d+)[.．]\s+(\S.*)$")
 
+#: `## 概要` — a Markdown heading. The author typed the marks by hand, so
+#: unlike the bare-number form this cannot appear by accident in prose —
+#: the only false source is `#`-comments inside code, which the fence
+#: tracker in `_split_sections` excludes. 実測 2026-08-19: チャットログ
+#: 級のMarkdown文書(#/##見出し)が単一節フォールバックに畳まれ、
+#: 「どの節に何がある」が一切取れなかった — 見出し検出の狭さが文書分解の
+#: 律速だった。
+_MD_HEADING = re.compile(r"^(#{1,6})\s+(\S.*)$")
+
+#: 「【概要】」「■ 適用範囲」 — 日本語ビジネス文書の飾り見出し。全行が
+#: 【】に収まる短い行、または ■/◆ で始まる短い無終止の行だけを見出しに
+#: する(。で終わる行は文、長い行は本文)。●・・- は箇条書き(_BULLET)と
+#: 衝突するので見出し記号には数えない。
+_DECOR_HEADING = re.compile(r"^(?:【.{1,24}】|[■◆]\s*\S.{0,23})$")
+
 #: 「第2条 出張旅費」「第三章 総則」。日本語の規程はこの形で区切られるので、
 #: アラビア数字とピリオドしか見ていない読み手には、条文書は一枚の節として
 #: 届く。実測: 4条の社内規程が節1つに畳まれ、「第2条は」に見出し行だけが
@@ -173,12 +188,19 @@ def rejoin(text: str) -> List[str]:
                 out.append(buf)
                 buf = ""
             continue
-        if buf and (_BULLET.match(line) or _HEADING.match(s)):
+        if buf and (_BULLET.match(line) or _HEADING.match(s)
+                    or _MD_HEADING.match(s) or _JP_HEADING.match(s)):
             # A new item cannot be the tail of the previous one.
             out.append(buf)
             buf = ""
         buf = (buf + s) if buf else s
-        wrapped = (_display_width(line.rstrip()) >= floor
+        # 見出し行そのものが折返しに見えることがある(「## Assistant」は
+        # 終止記号なし・幅が floor を超えうる)。見出しは常に一行で完結 —
+        # 次の行を溶接しない。
+        is_head = bool(_MD_HEADING.match(s) or _JP_HEADING.match(s)
+                       or _HEADING.match(s) or _DECOR_HEADING.match(s))
+        wrapped = (not is_head
+                   and _display_width(line.rstrip()) >= floor
                    and not s.endswith(_CLOSED))
         if not wrapped:
             out.append(buf)
@@ -205,15 +227,39 @@ def _split_sections(
     """One pass of the split. `allow_arabic` gates `_HEADING`(「1. 」形)
     only — `_JP_HEADING`(「第N条」)stays on always, since its pattern is
     narrow enough that it has never been seen to misfire on ordinary
-    prose."""
+    prose. `_MD_HEADING`/`_DECOR_HEADING` も常時ON: 著者が手で打った
+    マークであり、実測された誤発火の類(裸の番号が本文の箇条書きに反応)
+    には属さない。Markdown の ## 節は 200 行を超えても正当(チャットログ
+    の ## User / ## Assistant)なので、暴走検知の不信対象にもしない。"""
     secs: List[Section] = [Section(ordinal=0, heading="", lines=[])]
     labels: Dict[str, str] = {}
+    #: コードフェンス内の `# comment` を見出しに立てないための状態。
+    in_fence = False
     #: 番号の単調性は見出しの種類ごとに数える。章と条が交互に現れる規程
     #: (第1章 → 第1条 第2条 → 第2章 → 第3条) を一本の数列として読むと、
     #: 章に戻った時点で以降の条が全て節に立たなくなる。
     tops: Dict[str, int] = {}
     for line in lines:
         head = _BULLET.sub("", line).strip()
+        if head.startswith("```"):
+            in_fence = not in_fence
+            secs[-1].lines.append(line)
+            continue
+        if in_fence:
+            # フェンス内はコード — 見出し検出は全種とも走らせない。
+            secs[-1].lines.append(line)
+            continue
+        mm = _MD_HEADING.match(head)
+        if mm:
+            tops["md"] = tops.get("md", 0) + 1
+            secs.append(Section(ordinal=tops["md"],
+                                heading=mm.group(2).strip()))
+            continue
+        if _DECOR_HEADING.match(head) and not head.endswith(("。", "．")):
+            tops["decor"] = tops.get("decor", 0) + 1
+            # 【概要】は行そのまま — 飾りごと引用に使われる名前。
+            secs.append(Section(ordinal=tops["decor"], heading=head))
+            continue
         jm = _JP_HEADING.match(head)
         if jm:
             n = _numeral(jm.group(1))
@@ -262,10 +308,10 @@ def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
     lines = rejoin(text)
     secs, labels = _split_sections(lines, allow_arabic=True)
     # 見出し検出の自己検査: 実際に立った節のどれかが暴走していないか。
-    # 暴走していれば、アラビア数字見出しは信用せず(第N条だけを残して)
-    # 引き直す — 偽の見出し構造より、見出し無しの正直な単一節の方が、
-    # 読み手にとって安全(引用は本文検索でそのまま届き、節名だけが
-    # 「不明」になる)。
+    # 暴走していれば、アラビア数字見出しは信用せず引き直す(第N条・
+    # Markdown・飾り見出しは残る — 誤発火の実測があるのは裸の番号だけで、
+    # ## User のような Markdown 節は 200 行を超えても正当)。偽の見出し
+    # 構造より、見出しの少ない正直な分割の方が読み手にとって安全。
     if any(len(s.lines) > _RUNAWAY_SECTION_LINES for s in secs):
         secs, labels = _split_sections(lines, allow_arabic=False)
     return secs, labels
