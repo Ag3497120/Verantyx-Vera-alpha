@@ -1559,6 +1559,10 @@ def serve(store_path: str) -> int:
             "verdict": r.get("verdict"),
             "door": r.get("door"),
             "core": r.get("core"),
+            # 引用行の言葉だけで紡いだ constructed な下書き(文書側)と、
+            # 連合側の written。返却のホワイトリストがこれを落としており、
+            # IDE の 📝下書き行が沈黙していた(実測 2026-08-19)。
+            "written": r.get("written"),
             "last_core": _chat_state["last_core"],
             "witnesses": r.get("witnesses"),
             "origins": r.get("origins"),
