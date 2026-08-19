@@ -2575,10 +2575,22 @@ def serve(store_path: str) -> int:
         out = dict(_ds.lookup(question, book))
         out["question"] = question
         out["surface"] = "documents_only"
-        # 構成段は存在しない。呼ばれていないことを毎回言い切る — 「作文が
-        # 混ざっていないか」を読み手が推測で判断しなければならない面は、
-        # 逐語引用の面として意味を成さない。
+        # 答えの本文(text/verdict)は引用のみで、構成段は入らない。この
+        # 面の契約は変わらない。ただし 2026-08-19 から、引用行の言葉
+        # **だけ**で紡いだ下書きが written として隣に乗ることがある —
+        # constructed と明記され、licence は引用行そのもの(同じ行に
+        # 書かれた語どうし=同一文共起)。実測: 断片0・汚染0・引用外の
+        # 内容語0。8/18に却下した文書側生成の、門つき再挑戦。
         out["constructed"] = False
+        try:
+            from .stacked import quote_in_words
+            _w = getattr(_vera(), "writer", None)
+            if _w is not None:
+                _qw = quote_in_words(out, _w)
+                if _qw:
+                    out["written"] = _qw
+        except Exception:
+            pass
         # 拒否には型(verdict)だけでなく、どの分野が薄いかも添える。
         # 「文書に無い」と「連合のどの棚にも近くが無い」は別の主張で、
         # 後者は薄く広げた federation を coverage.py で読んだだけの

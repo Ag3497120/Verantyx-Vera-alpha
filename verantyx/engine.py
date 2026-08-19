@@ -334,6 +334,18 @@ def ask(query: str, vera: Any, *, last_core: str = "",
                           "DOCUMENT_LINE", "DOCUMENT_NOT_SPECIFIED"):
                     t.note("document", True,
                            "%s ← %s" % (dv, dr.get("source")), changed=True)
+                    # 引用行の言葉だけで紡いだ下書きを、引用の隣に。
+                    # 8/18に却下した文書側生成の門つき再挑戦 — 実測
+                    # 2026-08-19: 断片0・汚染0・引用外の内容語0(7問)。
+                    # verdict にも引用にも触れない。
+                    if getattr(vera, "writer", None) is not None:
+                        try:
+                            from .stacked import quote_in_words
+                            _qw = quote_in_words(dr, vera.writer)
+                            if _qw:
+                                dr["written"] = _qw
+                        except Exception:
+                            pass
                     t.raw, t.door = dr, "document"
                     t.verdict = dv
                     t.core = str(dr.get("subject") or "")
@@ -610,6 +622,14 @@ def ask(query: str, vera: Any, *, last_core: str = "",
     if local is not None and t.verdict.startswith(
             ("UNKNOWN", "ABSTAIN", "AMBIGUOUS", "UNGROUNDED")):
         t.note("store", True, "連合は答えず、端末の文書が答えた", changed=True)
+        if getattr(vera, "writer", None) is not None:
+            try:
+                from .stacked import quote_in_words
+                _qw = quote_in_words(local, vera.writer)
+                if _qw:
+                    local["written"] = _qw
+            except Exception:
+                pass
         t.raw, t.door = local, "store"
         t.verdict = str(local.get("verdict"))
         t.core = str(local.get("core") or "")

@@ -225,6 +225,73 @@ def in_words(
     return out
 
 
+def quote_in_words(result: Dict[str, Any], writer: Any,
+                   *, limit: int = 1) -> Optional[Dict[str, Any]]:
+    """引用された行の言葉だけで、一文を紡ぐ。8/18に却下した文書側生成の
+    門つき再挑戦 (experiments/document_writing/DOC_WRITING.md が事前登録)。
+
+    8/18、一般Writerを文書語彙に当てたら「精算は、グリーンをグリーン車
+    さない。」「（がいしょくほう）」が出て却下した。原因は後日3つに分解
+    され、それぞれ門で塞がれた: スロット境界(slot_boundary_ok)・語彙の門・
+    選択制限の順位。この関数はその門の内側でだけ動く。
+
+    ライセンスは引用行そのもの: 内容は**引用された行1本の内容連だけ**で、
+    同じ行に書かれた語どうしは同一文共起そのもの — 連合の辺ライセンスの
+    最強形が構成上ただで手に入る。行の外の語は主語にすら使わない。
+    語彙を通った語が2つ(主語+内容1)無ければ黙って None — 断片より沈黙。
+
+    返る下書きは constructed であり、引用の隣に置かれる。verdict にも
+    引用にも触れない。票に入らない。
+    """
+    verdict = str(result.get("verdict") or "")
+    if verdict not in ("DOCUMENT_LINE", "DOCUMENT_SECTION"):
+        return None
+    lines = result.get("lines") or []
+    line = str(lines[0] if lines else result.get("text") or "").strip()
+    line = line.split("\n")[0]
+    if not line:
+        return None
+    from .compose_ja import compose, slot_boundary_ok
+    from .lang import ja_content_runs
+
+    runs = [r for r in (ja_content_runs(line) or []) if 2 <= len(r) <= 10]
+    words = [r for r in runs if r in writer.vocab]
+    # 主語は問いの主題を優先し、行に無い語は使わない(発明ゼロの検査が
+    # 「引用行∪主語」なのは、主語だけが行の外から来得るため — それも
+    # 文書が節見出し・探査で名指した語に限る)。
+    subj_cand = [str(result.get("subject") or ""),
+                 str(result.get("section") or "")]
+    subject = ""
+    for s in subj_cand:
+        s = s.strip()
+        if s and s in writer.vocab and len(s) <= 10:
+            subject = s
+            break
+    if not subject:
+        if not words:
+            return None
+        subject = words[0]
+    rest = [w for w in words if w != subject]
+    if not rest:
+        return None
+    speakable = {k: f for k, f in writer.forms.items()
+                 if f.modality == "none" and f.polarity == "positive"
+                 and slot_boundary_ok(f.template)}
+    drafts = compose(speakable, subject, rest, limit=limit,
+                     content_from=[subject], vocab=writer.vocab,
+                     licence="unknown")
+    if not drafts:
+        return None
+    return {
+        "sentences": [d.as_dict() for d in drafts],
+        "constructed": True,
+        "licence": "quoted_line",
+        "line": line,
+        "note": "引用行の言葉だけで紡いだ下書き。内容の出典は引用行、"
+                "形の出典は文型 — どちらもこの文を真にはしない",
+    }
+
+
 #: English stopwords for shape extraction only — not retrieval, which
 #: already handles English. Kept minimal and closed: shape rules should
 #: fail silent, never guess.

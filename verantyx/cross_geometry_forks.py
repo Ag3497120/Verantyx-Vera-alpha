@@ -825,6 +825,59 @@ def _ingest_ja(store: CrossStore, sentence: str) -> None:
     ingest_documents(store, [Document(source="fixture", text=sentence)])
 
 
+def document_draft_is_licensed_fork() -> Dict[str, Any]:
+    """文書の下書きは引用行の言葉しか使えない — 使えなければ黙る。
+
+    8/18に却下した文書側生成(「グリーンをグリーン車さない」「がいしょく
+    ほう」)の門つき再挑戦(2026-08-19)の契約を固定する:
+
+      1. 下書きの充填語は全て、引用行の内容連∪主語に含まれる(発明ゼロ)。
+      2. 語彙を通る語が主語+1つ無ければ、下書きは None(断片より沈黙)。
+      3. verdict・引用本文には一切触れない。
+    """
+    from pathlib import Path as _P
+
+    from .stacked import quote_in_words
+    from .lang import ja_content_runs
+    from .writer import Writer
+
+    wpath = _P.home() / "Projects" / "vera-corpus" / "build" / "writer.json"
+    if not wpath.exists():
+        return {"experiment": "cross_geometry",
+                "fork": "DOCUMENT_DRAFT_IS_LICENSED",
+                "pass": True, "result": {"skipped": "no writer.json"}}
+    w = Writer.load(wpath)
+
+    line = "グリーン車および指定席の追加料金は、精算の対象としない。"
+    r = {"verdict": "DOCUMENT_LINE", "subject": "精算",
+         "section": "交通費の上限", "lines": [line], "text": line}
+    qw = quote_in_words(r, w)
+    licensed = True
+    if qw:
+        allowed = set(ja_content_runs(line) or []) | {r["subject"],
+                                                      r["section"]}
+        for d in qw["sentences"]:
+            for f in d["fills"]:
+                if f not in allowed:
+                    licensed = False
+    # 語彙語が立たない行では黙る
+    r2 = {"verdict": "DOCUMENT_LINE", "subject": "ぷにゃ",
+          "lines": ["ぷにゃぷにゃとぽよぽよのこと。"],
+          "text": "ぷにゃぷにゃとぽよぽよのこと。"}
+    qw2 = quote_in_words(r2, w)
+    ok = (qw is not None and licensed and qw.get("constructed") is True
+          and qw2 is None
+          and r["verdict"] == "DOCUMENT_LINE" and r["text"] == line)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "DOCUMENT_DRAFT_IS_LICENSED",
+        "pass": bool(ok),
+        "result": {"draft": (qw or {}).get("sentences", [{}])[0].get("text"),
+                   "licensed": licensed,
+                   "silent_on_nonwords": qw2 is None},
+    }
+
+
 def edge_fallback_routes_off_face_fork() -> Dict[str, Any]:
     """面が知らない語は、辺語彙の一意所有でだけ枝に届く — 共有なら棄権。
 
@@ -4286,6 +4339,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         event_extractor_refuses_statute_prose_fork(),
         egov_article_is_a_citation_key_fork(),
         sovereign_build_fork(),
+        document_draft_is_licensed_fork(),
         edge_fallback_routes_off_face_fork(),
         one_root_saturates_at_capacity_fork(),
         fusion_is_not_monotonic_fork(),
