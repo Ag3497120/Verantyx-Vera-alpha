@@ -17,11 +17,13 @@ shelf — the 11/30 bank number is theirs, not the door's.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-BUILD = Path.home() / "Projects" / "vera-corpus" / "build"
+BUILD = corpus_root() / "build"
 
 _cache: Dict[str, Any] = {}
 

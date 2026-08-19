@@ -25,6 +25,8 @@ Ambiguity lists candidates rather than choosing one.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import re
 from pathlib import Path
@@ -40,7 +42,7 @@ _DECL = re.compile(r"^[A-Za-z][A-Za-z0-9_'.]*$")
 
 
 def store_path() -> Path:
-    return Path.home() / "Projects" / "vera-corpus" / "build" / "mathlib_store.json"
+    return corpus_root() / "build" / "mathlib_store.json"
 
 
 def looks_like_declaration(name: str) -> bool:

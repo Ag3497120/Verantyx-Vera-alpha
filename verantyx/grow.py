@@ -23,6 +23,8 @@ queue that accumulates unclosable items is a queue nobody trusts.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import argparse
 import json
 import os
@@ -116,7 +118,7 @@ def github_suggestions(repo: str = "Ag3497120/Verantyx-Vera-alpha",
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--queue", required=True)
-    ap.add_argument("--root", default=str(Path.home() / "Projects" / "vera-corpus"))
+    ap.add_argument("--root", default=str(corpus_root()))
     ap.add_argument("--dry-run", action="store_true",
                     help="show what would be fetched, fetch nothing")
     ap.add_argument("--limit", type=int, default=50)

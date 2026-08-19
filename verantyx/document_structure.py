@@ -46,6 +46,8 @@ itself.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import re
 import unicodedata
@@ -863,7 +865,7 @@ def _def_edges() -> Dict[str, List[str]]:
     使い、票と本文には入れない(jgen辞書実験: 順位可・主張54.8%不可)。"""
     global _DEF_EDGES
     if _DEF_EDGES is None:
-        p = Path.home() / "Projects" / "vera-corpus" / "build" / "def_edges.json"
+        p = corpus_root() / "build" / "def_edges.json"
         try:
             _DEF_EDGES = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):

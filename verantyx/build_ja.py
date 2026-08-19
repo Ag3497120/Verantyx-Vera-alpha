@@ -23,6 +23,8 @@ tool that already answers the checksum question properly.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import argparse
 import json
 import pickle
@@ -31,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-DEFAULT_ROOT = Path.home() / "Projects" / "vera-corpus"
+DEFAULT_ROOT = corpus_root()
 
 
 def _newest(folder: Path, pattern: str = "*") -> float:

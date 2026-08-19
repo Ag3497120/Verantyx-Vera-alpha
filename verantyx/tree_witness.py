@@ -48,6 +48,8 @@ conduction depth, not grouping.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import sys
 from pathlib import Path
@@ -138,7 +140,7 @@ def probe_set(wits: Dict[str, Any], n: int = 120) -> List[str]:
 def main(argv: Optional[List[str]] = None) -> int:
     from .export_sqlite import witnesses
 
-    root = Path.home() / "Projects" / "vera-corpus"
+    root = corpus_root()
     wits = witnesses(root / "build" / "vera.db")
 
     use_blocks = "--blocks" in (argv or sys.argv)

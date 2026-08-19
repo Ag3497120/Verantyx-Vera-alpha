@@ -930,7 +930,8 @@ def document_draft_is_licensed_fork() -> Dict[str, Any]:
     from .lang import ja_content_runs
     from .writer import Writer
 
-    wpath = _P.home() / "Projects" / "vera-corpus" / "build" / "writer.json"
+    from .paths import corpus_root as _cr
+    wpath = _cr() / "build" / "writer.json"
     if not wpath.exists():
         return {"experiment": "cross_geometry",
                 "fork": "DOCUMENT_DRAFT_IS_LICENSED",

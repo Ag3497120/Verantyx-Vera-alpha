@@ -35,6 +35,8 @@ needs to know which they have.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -326,7 +328,7 @@ def load(root: Any = None) -> Vera:
     from .cross_store import CrossStore
     from .writer import Writer
 
-    root = Path(root or (Path.home() / "Projects" / "vera-corpus"))
+    root = Path(root or (corpus_root()))
     v = Vera()
 
     doms = pickle.loads((root / "build" / "federation.pkl").read_bytes())
