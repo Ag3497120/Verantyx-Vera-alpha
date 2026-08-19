@@ -268,18 +268,35 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
         # 係り受けの搬送: 行の中で各語の直後に立つ助詞を読む。閉じた
         # 1文字集合のみ — 解析器ではなく、行が書いた役割の写し。
         roles: Dict[str, str] = {}
+        order: Dict[str, int] = {}
         for w in words:
             m = _re.search(_re.escape(w) + r"([のをにがはとでへ])", line)
             if m:
                 roles[w] = m.group(1)
-        # 主語は問いの主題を優先。無ければ行が は/が を付けた語 — 行の
-        # 主語をそのまま継ぐ。それも無ければ先頭の語彙語。
+            i = line.find(w)
+            if i >= 0:
+                order[w] = i
+        # 行の末尾形(閉集合、長い順) — 行が選んだ言い方を文型の順位へ。
+        tail = ""
+        _stripped = line.rstrip("。")
+        for t_ in ("を必要とする", "に限り認める", "とみなされる", "とされる",
+                   "とみなす", "とする", "である", "認める", "支給する"):
+            if _stripped.endswith(t_):
+                tail = t_
+                break
+        # 主語は問いの主題を優先。無ければ「〜を<Y>とする」型(定義)の Y —
+        # この形の行では Y が定義される側で、左の列挙は Y の中身。次に
+        # 行が は/が を付けた語。それも無ければ先頭の語彙語。
         subject = ""
         for s in subj_cand:
             s = s.strip()
             if s and s in writer.vocab and len(s) <= 10:
                 subject = s
                 break
+        if not subject:
+            dm = _re.search(r"を([^、。]{2,8})とする$", _stripped)
+            if dm and dm.group(1) in writer.vocab:
+                subject = dm.group(1)
         if not subject:
             marked = [w for w in words if roles.get(w) in ("は", "が")]
             subject = marked[0] if marked else (words[0] if words else "")
@@ -290,7 +307,8 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
             return None
         drafts = compose(speakable, subject, rest, limit=limit,
                          content_from=[subject], vocab=writer.vocab,
-                         licence="unknown", roles=roles)
+                         licence="unknown", roles=roles,
+                         order=order, tail=tail)
         return [dict(d.as_dict(), line=line) for d in drafts] or None
 
     sentences: List[Dict[str, Any]] = []

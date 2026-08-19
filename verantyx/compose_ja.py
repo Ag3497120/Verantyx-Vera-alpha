@@ -619,6 +619,8 @@ class Draft:
     #: 選択制限が「実証済み」と言った充填の数。順位にだけ使い、門には
     #: しない — 意見なし(None)の穴は今まで通り埋まる。読み手には見える。
     attested: int = 0
+    #: 引用行への忠実度(末尾形一致×10+語順保存の隣接対数)。順位のみ。
+    line_fidelity: int = 0
 
     def as_dict(self) -> Dict[str, Any]:
         return {"text": self.text, "template": self.template,
@@ -638,6 +640,8 @@ def compose(
     vocab: Optional[Any] = None,
     licence: str = "unknown",
     roles: Optional[Dict[str, str]] = None,
+    order: Optional[Dict[str, int]] = None,
+    tail: str = "",
 ) -> List[Draft]:
     """Sentences about ``subject`` using ``facets``, best-supported first.
 
@@ -739,18 +743,35 @@ def compose(
         text = tpl
         for i, p in enumerate(picks):
             text = text.replace(f"<{i}>", p)
+        # 係り受けの深化(2026-08-19): 引用行への忠実度2つを順位に足す。
+        #   tail一致  行の末尾形(とする/である/認める…閉集合)と文型の
+        #             末尾が一致 — 行が選んだ言い方をそのまま継ぐ。
+        #   語順     充填語の並びが行の語順を保った隣接対の数。
+        # どちらも順位のみ。行を持たない呼び出し(order/tail なし)では
+        # 全下書きが同点で、従来の並びのまま。
+        _tail_hit = 1 if (tail and tpl.rstrip("。").endswith(tail)) else 0
+        _fid = 0
+        if order:
+            _pos = [order[p] for p in picks if p in order]
+            _fid = sum(1 for a, b in zip(_pos, _pos[1:]) if a < b)
         out.append(Draft(text=text + "。", template=tpl, fills=picks,
                          content_from=list(content_from or []),
-                         form_from=form.source, attested=n_attested))
+                         form_from=form.source, attested=n_attested,
+                         line_fidelity=_tail_hit * 10 + _fid))
         # 実証済みの充填を持つ下書きを、持たない下書きより先に返す。
         # 従来は「最初に埋まった limit 本」で打ち切っており、意見なしの
         # 穴だけで埋まった形が、実証済みの形より先に口へ届いていた。
         # 4倍まで集めて安定ソート — 回転(主語ハッシュ)による形の多様さは
         # 同点内でそのまま残る。門ではなく順位: 実証済みが1本も無ければ
         # 従来と同じものが出る。
+        # 収集幅は8のまま。24へ広げる案は実測で棄却(2026-08-19):
+        # att=0 の同点帯では、広げた候補が語順・役割の悪い形を連れてきて
+        # 「会議の上限がある」→「上限を会議としている」と逆転した。
+        # 末尾一致形が8本に居ない場合に効かないのは事実だが、それは
+        # 文型側(定義形の収穫)の課題であって、収集幅では直らない。
         if len(out) >= max(limit * 4, 8):
             break
-    out.sort(key=lambda d: -d.attested)
+    out.sort(key=lambda d: (-d.attested, -d.line_fidelity))
     return out[:limit]
 
 
