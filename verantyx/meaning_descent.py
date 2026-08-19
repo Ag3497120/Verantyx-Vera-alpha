@@ -65,6 +65,8 @@ both sentences attach — the wire the holes rarely reach.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import sys
 import time
@@ -74,7 +76,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from .explain import CONSTRUCTED_MARK
 from .lattice import Lattice, splits_of
 
-DEFS_PATH = (Path.home() / "Projects" / "vera-corpus" / "build"
+DEFS_PATH = (corpus_root() / "build"
              / "jawiki_defs.json")
 
 EXPLAINED_BY_UNIT_DEFS = "EXPLAINED_BY_UNIT_DEFS"

@@ -30,6 +30,8 @@ above is unchanged. Sidecar, never a census.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import re
 from pathlib import Path
@@ -187,7 +189,7 @@ RESOLVED_PRIMARY = "RESOLVED_PRIMARY"
 AMBIGUOUS_SENSE = "AMBIGUOUS_SENSE"
 DAB_TAG = "曖昧さ回避"
 
-OUT = (Path.home() / "Projects" / "vera-corpus" / "build"
+OUT = (corpus_root() / "build"
        / "jawiki_senses.json")
 
 # Surface is everything before the last parenthetical. Halfwidth and

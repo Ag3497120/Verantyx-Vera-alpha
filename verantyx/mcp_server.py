@@ -9,6 +9,8 @@ Client setup: see docs/MCP.md.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import re
 from pathlib import Path
@@ -1062,7 +1064,7 @@ def serve(store_path: str) -> int:
             from .export_sqlite import vera as load_published
             from .vera import load as load_vera
 
-            root = Path.home() / "Projects" / "vera-corpus"
+            root = corpus_root()
             # VERA_PUBLISHED_DB lets a host pin WHICH stamped release
             # answers (the IDE's model picker sets it and restarts this
             # process). Sidecars are discovered beside the db by
@@ -1087,7 +1089,7 @@ def serve(store_path: str) -> int:
         if "浅層wiki" not in _vera_cache:
             from .cross_store import CrossStore
 
-            p = (Path.home() / "Projects" / "vera-corpus" / "build"
+            p = (corpus_root() / "build"
                  / "jawiki_shallow.json")
             _vera_cache["浅層wiki"] = (CrossStore.load(p) if p.exists()
                                        else None)
@@ -1102,7 +1104,7 @@ def serve(store_path: str) -> int:
         votes; it lets the atlas say 「この語は正題Xの別名で、Xなら棚が
         持つ」 with the hop named in the signal."""
         if "別名" not in _vera_cache:
-            p = (Path.home() / "Projects" / "vera-corpus" / "build"
+            p = (corpus_root() / "build"
                  / "jawiki_aliases.json")
             try:
                 _vera_cache["別名"] = (json.loads(p.read_text(encoding="utf-8"))
@@ -1632,6 +1634,42 @@ def serve(store_path: str) -> int:
     def vera_sovereigns() -> str:
         """Which sovereigns are loaded, and how big each is."""
         return json.dumps(_vera().report(), ensure_ascii=False)
+
+    @mcp.tool()
+    def list_gaps(status: str = "", limit: int = 50) -> str:
+        """欠落台帳の一覧(2026-08-19)。拒否のたびに登録される「どの知識が
+        不足か」の名指しを、人が見て埋められる形で返す。status で絞り込み
+        (DETECTED/ACQUIRING/RESOLVED/BLOCKED_NO_SOURCE、空なら全部)。
+        新しい順。"""
+        rows = []
+        for n in gap_graph.nodes.values():
+            if status and getattr(n, "status", "") != status:
+                continue
+            rows.append({"gap_id": n.gap_id,
+                         "subject": getattr(n, "subject", ""),
+                         "status": getattr(n, "status", ""),
+                         "failure_type": getattr(n, "failure_type", ""),
+                         "scope": getattr(n, "scope", ""),
+                         "created": getattr(n, "created_at", None) or
+                                    getattr(n, "created", None)})
+        rows.reverse()
+        return json.dumps({"gaps": rows[:max(1, int(limit))],
+                           "total": len(rows)}, ensure_ascii=False,
+                          default=str)
+
+    @mcp.tool()
+    def resolve_gap(gap_id: str, resolution: str = "") -> str:
+        """欠落を人手で解決済みにする(文書を入れた・不要と判断した等)。
+        台帳から消さない — RESOLVED になって残る。"""
+        try:
+            gap_graph.set_status(gap_id.strip(), "RESOLVED",
+                                 resolution=resolution or "人手で解決済みに")
+            _save_gap_graph()
+            return json.dumps({"ok": True, "gap_id": gap_id},
+                              ensure_ascii=False)
+        except Exception as exc:
+            return json.dumps({"ok": False, "error": str(exc)[:80]},
+                              ensure_ascii=False)
 
     @mcp.tool()
     def what_would_close(query: str, verdict: str = "UNKNOWN_NOT_PRESENT") -> str:

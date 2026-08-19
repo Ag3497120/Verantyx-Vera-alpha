@@ -155,6 +155,23 @@ def candidates_for_query(
         if common and proper:
             drop.add(base if proper_first else base + PROPER_SUFFIX)
     out = [c for c in out if c not in drop]
+    # facet 重なりの追記(2026-08-19、experiments/retrieval_reach)。従来の
+    # 補完は「直接ヒット0の時だけ」で、facet 語が別 core 名に当たると
+    # 封じられ、中頻度 facet 3語の到達は 27/300 だった。直接候補は不動の
+    # まま残枠だけを重なり順で埋める — tokyo vs film の「質量が本命を
+    # 押し出す」は起きない(押し出す席がない)。実測(300探針、同一
+    # ハーネス): 到達 27→196、誤答 278→190、正答 2→2 無傷、棄権 20→108。
+    # 正解が届かない時に consensus は棄権せず誤答していた — 追記の腕は
+    # 割れを起こし、その誤答を棄権に変える。
+    if len(out) < k and qset:
+        from collections import Counter as _Counter
+        _cnt: Dict[str, int] = _Counter()
+        for w in qset:
+            for c in _word_index(store).get(w, ()):
+                _cnt[c] += 1
+        extra = sorted((-(ov * 1000 + store.mass(c)), c)
+                       for c, ov in _cnt.items() if c not in out)
+        out = out + [c for _s, c in extra[:k - len(out)]]
     return out[:k]
 
 
@@ -241,6 +258,7 @@ def consensus_over_store(
     carry: str = "A",
     n_layers: int = 3,
     placement_invariant: bool = False,
+    direction_invariant: bool = False,
     circulation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """End-to-end: retrieve → shell → consensus (typed verdicts).
@@ -303,7 +321,111 @@ def consensus_over_store(
     if placement_invariant:
         _apply_placement_invariance(store, out, query, k=k, cfg=cfg,
                                     circulation=circulation)
+    if direction_invariant:
+        _qset, _h = query_content(query)
+        _apply_direction_invariance(store, out, _qset)
     return out
+
+
+_FRAME = re.compile(r"(に関係する|に関する|について|とは何|は何|を教えて"
+                    r"|ですか|でしょうか|ってなに|って何)")
+
+
+def frame_stripped(query: str, runs: List[str]) -> Set[str]:
+    """問いの枠パターンの中にしか現れない run を主題から外す(閉じた規則)。
+
+    実測(2026-08-19、PREREG_PROMOTION): 「〜に関係するのは何ですか」の
+    関係 が内容語として被覆に入り、逆方向の誤答が 0→23.7% に跳ねた。
+    枠組み語は問いの装置であって主題ではない。パターン外にも現れる語
+    (「親子関係の解消」の 関係)は残る — 位置が枠か主題かを分ける。
+    枠剥がし後の再測: 自然文包装 163正答/誤答0(裸3語と完全一致)。
+    """
+    spans = [m.span() for m in _FRAME.finditer(query or "")]
+    out: Set[str] = set()
+    for r in runs:
+        for m in re.finditer(re.escape(r), query or ""):
+            if not any(a <= m.start() and m.end() <= b for a, b in spans):
+                out.add(r)
+                break
+    return out
+
+
+def _word_index(store: CrossStore) -> Dict[str, List[str]]:
+    """語→core の転置索引。store に一度だけ築く(89k核0.2秒/740k核9秒)。
+
+    核が増えても照会は増えない — 遅かったのは全核走査という実装の欠陥で
+    あって構造ではない(操作者指摘 2026-08-19)。名前語も facet と同様に
+    引ける(core は自分の名前を facet に持たない)。"""
+    from .lex_filters import norm_words
+    idx = getattr(store, "_word_to_cores", None)
+    if idx is None:
+        idx = {}
+        for core, cross in store.crosses.items():
+            for w in set(cross) | norm_words(core):
+                idx.setdefault(w, []).append(core)
+        store._word_to_cores = idx
+    return idx
+
+
+def direction_band(store: CrossStore, qset: Set[str]) -> Tuple[Set[str], int]:
+    """逆方向の読み: 問いの内容語を最も多く覆う core の同点帯。
+
+    順方向(問い→名前で core を引く)と誤りの出方が別種の、もう一つの
+    読み。core の側から「この問いを自分の facet 集合がどれだけ覆うか」
+    だけを見る — 名前一致・質量・エネルギーは一切見ない。
+    """
+    from collections import Counter
+
+    from .lex_filters import norm_words
+
+    # 転置索引(2026-08-19、辞書1.4M投入後)。全core走査は89k核で0.2秒、
+    # 740k核で数秒に伸びた — 語→core の索引を store に一度だけ築く。
+    # 名前も被覆に数える(core は自分の名前を facet に持たない — 索引が
+    # 無かった頃、名前を数え忘れて「正当防衛とは」の帯から core 自身が
+    # 構造的に脱落し、門が正当な当選を殺した実測がある)。意味は走査版と
+    # 同一で、速さだけが変わる。
+    idx = _word_index(store)
+    cnt: Counter = Counter()
+    for w in qset:
+        for c in idx.get(w, ()):
+            cnt[c] += 1
+    if not cnt:
+        return set(), 0
+    best = max(cnt.values())
+    return ({c for c, ov in cnt.items() if ov == best}, best)
+
+
+def _apply_direction_invariance(
+    store: CrossStore, out: Dict[str, Any], qset: Set[str]
+) -> None:
+    """向きの不変性(2026-08-19、experiments/bidirectional_consensus)。
+
+    発案は操作者:「一方からしか見ていない。逆からやったものを重ねて、
+    まとめて投入することで相殺する」。同点換え(配置という単一変更)と
+    同型の変分 — **読む向きという単一変更**に不変な当選だけが本物。
+
+    実測(vera.db ja、300探針、事前登録): 順方向は正解が候補に居ないと
+    棄権せず誤答する(誤答206)。逆方向(被覆最大帯)は同点帯が一意の159問
+    で誤答0。重ね=順方向の当選が逆方向の帯に入る時だけ ANSWER:
+    誤答206→24、正答無傷。票は混ぜない — 門であって加点ではない。
+    """
+    if out.get("verdict") != "ANSWER" or not qset:
+        return
+    band, best = direction_band(store, qset)
+    ck = out.get("core_key") or out.get("core")
+    if not band or ck in band:
+        out["direction_invariant"] = True
+        return
+    rev = sorted(band, key=lambda c: store.mass(c))[:4]
+    out["verdict"] = "UNKNOWN_DIRECTION_DISAGREEMENT"
+    out["forward_core"] = out.get("core")
+    out["reverse_band"] = [display_sym(c) for c in rev]
+    out["reverse_coverage"] = best
+    out["core"] = None
+    out["text"] = ""
+    out["note"] = ("順方向(名前で引く)の当選が、逆方向(問いを最も覆う核の帯"
+                   ")に入らない。向きを変えると消える当選は向きの産物であって"
+                   "証拠の産物ではない — 両方の言い分を並べて棄権する")
 
 
 def _apply_placement_invariance(
@@ -593,6 +715,38 @@ def ja_consensus_ask(
     _apply_ja_coverage_gate(store, out, runs)
     if placement_invariant:
         _apply_placement_invariance(store, out, query, k=k, cfg=cfg, ja=True)
+        # 向きの不変性も同じ observe 傘の下(単一ソブリン: 同じ門を全扉で)。
+        # 被覆は枠剥がし後の主題で数える — 枠語(〜に関係する)混入は
+        # 逆方向の誤答を 0→23.7% に跳ねさせた実測がある。
+        _apply_direction_invariance(store, out, frame_stripped(query, runs))
+    # 逆方向の唯一候補(REVERSE_UNIQUE、2026-08-19)。順方向が棄権した
+    # 問いに限り、被覆最大帯が唯一で被覆≥2語なら、型付き回答として出す。
+    # ANSWER ではない — SEEDED と同じ非昇格の型で、到達経路(覆った語)を
+    # 名乗る。実測(PREREG_PROMOTION/2): 裸3語 163/0、自然文包装 163/0
+    # (枠剥がし後)、名前形100本の順方向 ANSWER は不変。
+    if out.get("verdict") != "ANSWER":
+        from .lex_filters import norm_words as _nw
+        _q2 = frame_stripped(query, runs)
+        if _q2:
+            _band, _best = direction_band(store, _q2)
+            if len(_band) == 1 and _best >= 2:
+                _c = next(iter(_band))
+                _cov = sorted(_q2 & (set(store.crosses.get(_c) or {})
+                                     | _nw(_c)))
+                out = dict(out)
+                out["forward_verdict"] = out.get("verdict")
+                out["verdict"] = "REVERSE_UNIQUE"
+                out["core"] = display_sym(_c)
+                out["core_key"] = _c
+                out["reverse_coverage"] = _best
+                out["covered"] = _cov
+                _fs = [t for t, _n in store.top_facets(_c, k=4)]
+                out["text"] = display_sym(_c) + (
+                    "は" + "、".join(display_sym(x) for x in _fs) if _fs else "")
+                out["note"] = ("順方向は棄権。逆方向(問いを最も覆う核)の"
+                               "唯一候補 — 覆った語: " + "、".join(_cov)
+                               + "。ANSWERではなく、被覆という到達経路ごと"
+                                 "示す型付き回答")
     return out
 
 

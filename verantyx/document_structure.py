@@ -46,6 +46,8 @@ itself.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import re
 import unicodedata
@@ -56,6 +58,21 @@ from typing import Any, Dict, List, Optional, Tuple
 #: `1. 必須要件` — a numbered heading. The number must be followed by a
 #: space, or 「1.5倍」 becomes a section.
 _HEADING = re.compile(r"^(\d+)[.．]\s+(\S.*)$")
+
+#: `## 概要` — a Markdown heading. The author typed the marks by hand, so
+#: unlike the bare-number form this cannot appear by accident in prose —
+#: the only false source is `#`-comments inside code, which the fence
+#: tracker in `_split_sections` excludes. 実測 2026-08-19: チャットログ
+#: 級のMarkdown文書(#/##見出し)が単一節フォールバックに畳まれ、
+#: 「どの節に何がある」が一切取れなかった — 見出し検出の狭さが文書分解の
+#: 律速だった。
+_MD_HEADING = re.compile(r"^(#{1,6})\s+(\S.*)$")
+
+#: 「【概要】」「■ 適用範囲」 — 日本語ビジネス文書の飾り見出し。全行が
+#: 【】に収まる短い行、または ■/◆ で始まる短い無終止の行だけを見出しに
+#: する(。で終わる行は文、長い行は本文)。●・・- は箇条書き(_BULLET)と
+#: 衝突するので見出し記号には数えない。
+_DECOR_HEADING = re.compile(r"^(?:【.{1,24}】|[■◆]\s*\S.{0,23})$")
 
 #: 「第2条 出張旅費」「第三章 総則」。日本語の規程はこの形で区切られるので、
 #: アラビア数字とピリオドしか見ていない読み手には、条文書は一枚の節として
@@ -173,12 +190,19 @@ def rejoin(text: str) -> List[str]:
                 out.append(buf)
                 buf = ""
             continue
-        if buf and (_BULLET.match(line) or _HEADING.match(s)):
+        if buf and (_BULLET.match(line) or _HEADING.match(s)
+                    or _MD_HEADING.match(s) or _JP_HEADING.match(s)):
             # A new item cannot be the tail of the previous one.
             out.append(buf)
             buf = ""
         buf = (buf + s) if buf else s
-        wrapped = (_display_width(line.rstrip()) >= floor
+        # 見出し行そのものが折返しに見えることがある(「## Assistant」は
+        # 終止記号なし・幅が floor を超えうる)。見出しは常に一行で完結 —
+        # 次の行を溶接しない。
+        is_head = bool(_MD_HEADING.match(s) or _JP_HEADING.match(s)
+                       or _HEADING.match(s) or _DECOR_HEADING.match(s))
+        wrapped = (not is_head
+                   and _display_width(line.rstrip()) >= floor
                    and not s.endswith(_CLOSED))
         if not wrapped:
             out.append(buf)
@@ -205,15 +229,39 @@ def _split_sections(
     """One pass of the split. `allow_arabic` gates `_HEADING`(「1. 」形)
     only — `_JP_HEADING`(「第N条」)stays on always, since its pattern is
     narrow enough that it has never been seen to misfire on ordinary
-    prose."""
+    prose. `_MD_HEADING`/`_DECOR_HEADING` も常時ON: 著者が手で打った
+    マークであり、実測された誤発火の類(裸の番号が本文の箇条書きに反応)
+    には属さない。Markdown の ## 節は 200 行を超えても正当(チャットログ
+    の ## User / ## Assistant)なので、暴走検知の不信対象にもしない。"""
     secs: List[Section] = [Section(ordinal=0, heading="", lines=[])]
     labels: Dict[str, str] = {}
+    #: コードフェンス内の `# comment` を見出しに立てないための状態。
+    in_fence = False
     #: 番号の単調性は見出しの種類ごとに数える。章と条が交互に現れる規程
     #: (第1章 → 第1条 第2条 → 第2章 → 第3条) を一本の数列として読むと、
     #: 章に戻った時点で以降の条が全て節に立たなくなる。
     tops: Dict[str, int] = {}
     for line in lines:
         head = _BULLET.sub("", line).strip()
+        if head.startswith("```"):
+            in_fence = not in_fence
+            secs[-1].lines.append(line)
+            continue
+        if in_fence:
+            # フェンス内はコード — 見出し検出は全種とも走らせない。
+            secs[-1].lines.append(line)
+            continue
+        mm = _MD_HEADING.match(head)
+        if mm:
+            tops["md"] = tops.get("md", 0) + 1
+            secs.append(Section(ordinal=tops["md"],
+                                heading=mm.group(2).strip()))
+            continue
+        if _DECOR_HEADING.match(head) and not head.endswith(("。", "．")):
+            tops["decor"] = tops.get("decor", 0) + 1
+            # 【概要】は行そのまま — 飾りごと引用に使われる名前。
+            secs.append(Section(ordinal=tops["decor"], heading=head))
+            continue
         jm = _JP_HEADING.match(head)
         if jm:
             n = _numeral(jm.group(1))
@@ -262,10 +310,10 @@ def sections(text: str) -> Tuple[List[Section], Dict[str, str]]:
     lines = rejoin(text)
     secs, labels = _split_sections(lines, allow_arabic=True)
     # 見出し検出の自己検査: 実際に立った節のどれかが暴走していないか。
-    # 暴走していれば、アラビア数字見出しは信用せず(第N条だけを残して)
-    # 引き直す — 偽の見出し構造より、見出し無しの正直な単一節の方が、
-    # 読み手にとって安全(引用は本文検索でそのまま届き、節名だけが
-    # 「不明」になる)。
+    # 暴走していれば、アラビア数字見出しは信用せず引き直す(第N条・
+    # Markdown・飾り見出しは残る — 誤発火の実測があるのは裸の番号だけで、
+    # ## User のような Markdown 節は 200 行を超えても正当)。偽の見出し
+    # 構造より、見出しの少ない正直な分割の方が読み手にとって安全。
     if any(len(s.lines) > _RUNAWAY_SECTION_LINES for s in secs):
         secs, labels = _split_sections(lines, allow_arabic=False)
     return secs, labels
@@ -307,7 +355,8 @@ def sidecar_path(store_path: Path) -> Path:
 
 def set_document(store_path: Path, source: str, *,
                  detached: Optional[bool] = None,
-                 priority: Optional[int] = None) -> Dict[str, Any]:
+                 priority: Optional[int] = None,
+                 date: Optional[str] = None) -> Dict[str, Any]:
     """接続の切替と優先度 — データは消さない。
 
     「外す」が削除だったため、一度取り込んだ文書を戻せなかった(実測
@@ -322,11 +371,19 @@ def set_document(store_path: Path, source: str, *,
             d["detached"] = bool(detached)
         if priority is not None:
             d["priority"] = int(priority)
+        if date is not None:
+            # 時系列(2026-08-19、操作者要請)。メモ同士は必ず矛盾する —
+            # 「Xが欠点」の後に「X修理済み」が来る。これは時間的上書きで
+            # あって規範衝突ではない。date は並び順と表示だけを変える:
+            # 同優先度なら新しい文書から読み、引用には日付が付く。
+            # 票には一切入らない — 古い記述は消えず、日付つきで並ぶ。
+            d["date"] = str(date)
         sidecar_path(store_path).write_text(
             json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
         return {"verdict": "SET", "source": source,
                 "detached": d.get("detached", False),
-                "priority": d.get("priority", 0)}
+                "priority": d.get("priority", 0),
+                "date": d.get("date")}
     return {"verdict": "UNKNOWN_NO_SUCH_DOCUMENT", "source": source,
             "have": [d.get("source") for d in book.get("documents", [])]}
 
@@ -619,10 +676,28 @@ def _title_descent(book: Dict[str, Any], subject: str):
     実測: 複数文書 6/7 → 7/7、単一文書の回帰 誤答 0。
     """
     terms = content_terms(subject)
+    docs = book.get("documents", []) or []
+
+    # 題名そのものを名指した問い(2026-08-19、P4修理)。「多型」に対し
+    # 多型.txt が在るなら、その文書がこの問いの主題である — 部分一致の
+    # 積み重ねではなく、題名の完全一致という最強の証拠。二語要求は
+    # 「題名一致だけで文書を決め打ちしない」ための規律だが、完全一致は
+    # 決め打ちではなく同定なので、その規律の対象外。実測(60文書):
+    # 「多型」が多型.txt を素通りしてバイオマーカー(医学).txt の本文行に
+    # 当たっていた。返すのは絞り込み(_TITLE_SCOPE_ONLY)だけ — 節を選ぶ
+    # のは従来の順路で、ここは範囲を狭めるだけに留める。
+    q_norm = _norm(subject)
+    if q_norm:
+        exact = [d for d in docs
+                 if _norm(str(d.get("source", "")).rsplit(".", 1)[0]) == q_norm]
+        if exact:
+            return {"verdict": "_TITLE_SCOPE_ONLY",
+                    "sources": [d.get("source") for d in exact],
+                    "note": "問いが文書の題名そのもの — この文書の中だけを見る"}
+
     if len(terms) < 2:
         return None
 
-    docs = book.get("documents", []) or []
     matched: List[Tuple[Dict[str, Any], List[str]]] = []
     for doc in docs:
         stem = _norm(str(doc.get("source", "")).rsplit(".", 1)[0])
@@ -633,6 +708,17 @@ def _title_descent(book: Dict[str, Any], subject: str):
             matched.append((doc, by_title))
     if not matched:
         return None
+
+    # 題名一致の強さで並べる(2026-08-19、P4修理)。従来は文書順の最初の
+    # 一致がそのまま経路になり、「哲学の庭」が 哲学.txt へ、「ハドロン
+    # 物理学」が プロジェクト:物理学.txt へ降りていた(60文書実測 3/30)。
+    # 問いをより多く覆う題名の方が良い経路である、というだけの順位づけ —
+    # 門ではないので、一致が一件しかない従来の場面では並びは変わらない。
+    # 覆う量は「一致した語の文字数の合計」で測る: 語数だけでは
+    # ハドロン/ハドロン物理/物理学 のような重なる切片が水増しになる。
+    matched.sort(key=lambda m: (-sum(len(_norm(t)) for t in m[1]),
+                                -len(m[1]),
+                                str(m[0].get("source"))))
 
     for doc, by_title in matched:
         rest = rank_probes(subject, [t for t in terms if t not in by_title], book)
@@ -658,12 +744,15 @@ def _title_descent(book: Dict[str, Any], subject: str):
                     hits.append({"section": sec.get("heading"),
                                  "text": one or "\n".join(lines),
                                  "lines": lines, "source": doc.get("source"),
+                                 "date": doc.get("date"),
                                  "line": one})
             if not hits:
                 continue
             if len(hits) >= 2:
                 joined = "\n".join(
-                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    "[%s%s／%s] %s" % (h["source"],
+                                       ("(%s)" % h.get("date")) if h.get("date") else "",
+                                       h["section"], h["text"])
                     for h in hits)
                 return {"verdict": "DOCUMENT_MULTI", "subject": subject,
                         "items": hits, "text": joined, "quoted": True,
@@ -699,12 +788,15 @@ def _title_descent(book: Dict[str, Any], subject: str):
                 for ln in (sec.get("lines") or []):
                     if pn in ln:
                         line_hits.append({"section": sec.get("heading"),
-                                           "text": ln, "source": doc.get("source")})
+                                           "text": ln, "source": doc.get("source"),
+                                           "date": doc.get("date")})
             if not line_hits:
                 continue
             if len(line_hits) >= 2:
                 joined = "\n".join(
-                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    "[%s%s／%s] %s" % (h["source"],
+                                       ("(%s)" % h.get("date")) if h.get("date") else "",
+                                       h["section"], h["text"])
                     for h in line_hits)
                 return {"verdict": "DOCUMENT_MULTI", "subject": subject,
                         "items": line_hits, "text": joined, "quoted": True,
@@ -792,6 +884,24 @@ def _reference_summary(result: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+_DEF_EDGES: Optional[Dict[str, List[str]]] = None
+
+
+def _def_edges() -> Dict[str, List[str]]:
+    """辞書辺(2026-08-19、experiments/def_edges)。jawiki 1,419,406定義文
+    から、二重ライセンス(漢字の区切りを共有 ∧ 異なる定義文で2回以上
+    同一文共起)で収穫した語→隣語。欠点↔弱点 の類。順位づけ・経路にだけ
+    使い、票と本文には入れない(jgen辞書実験: 順位可・主張54.8%不可)。"""
+    global _DEF_EDGES
+    if _DEF_EDGES is None:
+        p = corpus_root() / "build" / "def_edges.json"
+        try:
+            _DEF_EDGES = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _DEF_EDGES = {}
+    return _DEF_EDGES
+
+
 def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     """``_lookup`` に見出しベースの参考要約(reference)を重ねた薄い皮。
 
@@ -803,11 +913,60 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     # なく切断 — 一度取り込んだ文書は detached:True で残り、attach で
     # 戻る。priority は高いほど先に照合される(企業の複数文書で「これを
     # 優先して判断」の配線)。原本 book は変更しない。
+    # 時系列: 同優先度なら日付の新しい文書から照合する(date降順、無日付は
+    # 最後)。時間的上書き(「Xが欠点」→後日「X修理済み」)を、削除ではなく
+    # 並び順で表す — 古い記述は残り、引用には日付が付く。
+    # 安定3段(全て票の外): 名前順 → 日付降順(ISO文字列、無日付は最後)
+    # → 優先度降順。Pythonの安定ソートで後段が前段の同点を保つ。
     active = sorted(
         [d for d in book.get("documents", []) if not d.get("detached")],
-        key=lambda d: (-int(d.get("priority") or 0), str(d.get("source"))))
+        key=lambda d: str(d.get("source")))
+    active.sort(key=lambda d: (str(d.get("date") or "") == "",
+                               str(d.get("date") or "")),)
+    active[:] = sorted(
+        [d for d in active if d.get("date")],
+        key=lambda d: str(d.get("date")), reverse=True,
+    ) + [d for d in active if not d.get("date")]
+    active.sort(key=lambda d: -int(d.get("priority") or 0))
     book = {**book, "documents": active}
     result = _lookup(subject, book)
+    # 辞書辺の後退(2026-08-19、experiments/def_edges)。明記なし・不在が
+    # 確定した後でだけ動く: 不在語の辞書隣語(欠点→弱点)が文書に実在する
+    # なら、その引用を**置換を名乗って**返す。主題取りこぼし門(賢者の石)
+    # の後ろの席なので、複合語不在はここに来ても隣語を持たず不変。
+    if result.get("verdict") in ("DOCUMENT_NOT_SPECIFIED",
+                                 "UNKNOWN_NOT_IN_DOCUMENTS"):
+        absent = str(result.get("subject") or "").strip()
+        for partner in (_def_edges().get(absent) or [])[:4]:
+            # 置換形(veraの弱点)が題名絞り込み等で落ちる場合に備え、
+            # 裸の隣語でも引く — どちらも同じ門を全て通る。
+            _qs = []
+            if absent and absent in subject:
+                _qs.append(subject.replace(absent, partner))
+            _qs.append(partner)
+            r2 = None
+            for q2 in _qs:
+                _r = _lookup(q2, book)
+                if str(_r.get("verdict") or "").startswith("DOCUMENT") and \
+                        _r.get("verdict") != "DOCUMENT_NOT_SPECIFIED":
+                    r2 = _r
+                    break
+            if r2 is not None:
+                r2 = dict(r2)
+                r2["substituted"] = {"asked": absent, "used": partner,
+                                     "licence": "def_edge"}
+                r2["reached_via"] = "%s→辞書辺→%s" % (absent, partner)
+                r2["note"] = ("「%s」の記載は無い。辞書の定義文で繰り返し"
+                              "並記される隣語「%s」の記載を引用する — "
+                              "同義の主張ではなく、辺の隣という実測。%s"
+                              % (absent, partner, r2.get("note") or ""))
+                result = r2
+                break
+    if result.get("source"):
+        for d in active:
+            if d.get("source") == result.get("source") and d.get("date"):
+                result["source_date"] = d.get("date")
+                break
     ref = _reference_summary(result)
     if ref:
         result["reference"] = ref
@@ -979,6 +1138,17 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
         for doc in book.get("documents", []))
     _absent = {pr for pr in probes if pr not in _all_text}
 
+    # 主題の取りこぼし検査(2026-08-19、60文書スケール実測)。「賢者の石」は
+    # 石(1字)が探査語になれず probes=[賢者] だけになり、どの文書かの
+    # 「賢者」を含む行が DOCUMENT_LINE で立った — 聞かれていない物の行で
+    # 聞かれた物に答える捏造(書留/料金と同型)だが、不在の昇格は探査語
+    # 同士でしか働かなかった。探査語に覆われない内容字が主題に残るなら、
+    # 主題そのものが「最も特定的で不在の語」である。
+    _content_c = _re.compile(r"[一-龥ァ-ヶーA-Za-z0-9]")
+    _cover = "".join(probes)
+    _uncovered = [c for c in q if _content_c.match(c) and c not in _cover]
+    _subject_absent = bool(_uncovered) and q not in _all_text
+
     # 0. 複数根拠: 最優先の探査語が独立に複数の節へ着地するなら、
     # 単一に絞らず全部を列挙する。
     #
@@ -1008,7 +1178,8 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                         one = _stair_pick(lines, subject)
                         hits.append({"section": sec.get("heading"),
                                      "text": one or "\n".join(lines),
-                                     "source": doc.get("source")})
+                                     "source": doc.get("source"),
+                                     "date": doc.get("date")})
                         hit_docs.add(doc.get("source"))
             # 見出しに一件も当たらなかった文書にも、本文行にしか書いて
             # いない矛盾する定めがあり得る。見出しだけを比べると、その
@@ -1044,7 +1215,9 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                         break
             if len(hits) >= 2:
                 joined = "\n".join(
-                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    "[%s%s／%s] %s" % (h["source"],
+                                       ("(%s)" % h.get("date")) if h.get("date") else "",
+                                       h["section"], h["text"])
                     for h in hits)
                 return {"verdict": "DOCUMENT_MULTI",
                         "subject": subject,
@@ -1119,6 +1292,21 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                             "typo_candidates": typo_hint(book, _earlier_absent[0]),
                             "note": "不在は部分文字列検査で追試可能。近い語の定めを"
                                     "引用しただけで、「%s」の答えではない" % _earlier_absent[0]}
+                if hit and _subject_absent:
+                    # 主題(賢者の石)自体は文書のどこにも無く、覆えた部分
+                    # (賢者)の行しか無い — 行を答えに立てず明記なしを名乗る。
+                    return {"verdict": "DOCUMENT_NOT_SPECIFIED",
+                            "subject": subject,
+                            "section": sec.get("heading"),
+                            "term_absent": True,
+                            "governing": hit[:3],
+                            "source": doc.get("source"), "quoted": True,
+                            "text": "文書は「%s」を明記していない。「%s」の定め（%s）: %s"
+                                    % (subject, probe,
+                                       sec.get("heading"), " / ".join(hit[:3])),
+                            "typo_candidates": typo_hint(book, subject),
+                            "note": "不在は部分文字列検査で追試可能。近い語の行を"
+                                    "引用しただけで、「%s」の答えではない" % subject}
                 if hit:
                     return {"verdict": "DOCUMENT_LINE",
                             "subject": probe,

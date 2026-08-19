@@ -467,6 +467,145 @@ def ja_coverage_gate_fork() -> Dict[str, Any]:
     }
 
 
+def reverse_unique_fork() -> Dict[str, Any]:
+    """逆方向の唯一候補は、順方向の棄権の後ろでだけ、名乗って立つ。
+
+    3点: (a) 枠語(〜に関係するのは何ですか)は主題に入らない — 混入は
+    逆方向の誤答を0→23.7%に跳ねさせた実測がある(枠剥がし後163/0)。
+    (b) 発火は 順方向非ANSWER ∧ 帯唯一 ∧ 被覆≥2 の全部AND。verdict は
+    REVERSE_UNIQUE であって ANSWER ではなく、覆った語を名乗る。
+    (c) 順方向が ANSWER の問いには一切触れない。
+    """
+    from .consensus_store import (direction_band, frame_stripped,
+                                  ja_consensus_ask)
+    from .lang import ja_content_runs
+
+    st = CrossStore()
+    # 唯一の2語被覆核。日本語の run になるよう漢字語で作る。
+    for a in ("甲要素", "乙要素", "丙要素"):
+        st.ingest_sentence(f"標的核 has {a}")
+    st.ingest_sentence("甲要素 has 別物")
+
+    q = "甲要素と乙要素に関係するのは何ですか"
+    runs = ja_content_runs(q)
+    qs = frame_stripped(q, runs)
+    stripped_ok = "関係" not in qs and {"甲要素", "乙要素"} <= qs
+    band, best = direction_band(st, qs)
+    r = ja_consensus_ask(st, q, placement_invariant=True)
+    fired = (r.get("verdict") == "REVERSE_UNIQUE"
+             and r.get("core") == "標的核"
+             and r.get("reverse_coverage") == 2
+             and r.get("covered"))
+    # (c) 名前形は順方向 ANSWER のまま(REVERSE_UNIQUE が触らない)
+    r2 = ja_consensus_ask(st, "標的核とは", placement_invariant=True)
+    untouched = r2.get("verdict") != "REVERSE_UNIQUE"
+    ok = bool(stripped_ok and fired and untouched)
+    return {"fork": "REVERSE_UNIQUE", "pass": ok,
+            "result": {"stripped": bool(stripped_ok), "fired": bool(fired),
+                       "forward_untouched": bool(untouched),
+                       "band": sorted(band), "best": best,
+                       "verdict": r.get("verdict")}}
+
+
+def norm_vs_record_fork() -> Dict[str, Any]:
+    """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
+
+    `fusion.classify` の NORM_VS_RECORD は実装されていたが、`registers` を
+    渡す呼び出し元が一つも無く、`reg = registers or {}` が常に空で
+    ra/rb は "unknown" のまま — **一度も発火しない枝**だった(2026-08-19、
+    bridge.rs と同じ「実装済み未到達」)。分野名から登録を自給するように
+    して、ここで発火を固定する。
+
+    2点: (a) 法令(定める)×百科(記す)で同じ側面の逆極は NORM_VS_RECORD、
+    (b) 同じ登録どうしの逆極は CONTRADICTION_CANDIDATE のまま —
+    同一機会の検査は依然として無いので、候補以上には言わない。
+    """
+    import collections
+
+    from .fusion import Point, classify, field_register
+    from .ja_grammar import ASPECT_OF
+
+    by_aspect: Dict[str, Dict[str, str]] = collections.defaultdict(dict)
+    for f, (a, p) in ASPECT_OF.items():
+        by_aspect[a][p] = f
+    pick = next(((a, d) for a, d in by_aspect.items()
+                 if "+" in d and "-" in d), None)
+    if pick is None:
+        return {"experiment": "fusion", "fork": "NORM_VS_RECORD",
+                "skipped": "no polar pair in ASPECT_OF"}
+    _asp, d = pick
+
+    def _store(term: str) -> CrossStore:
+        st = CrossStore()
+        st.ingest_sentence("対象 は %s である" % term)
+        return st
+
+    pt = Point(concept="対象", by_field={"法令": {"対象"}, "百科": {"対象"}})
+    a = classify({"法令": {"x": _store(d["+"])},
+                  "百科": {"y": _store(d["-"])}}, pt)
+    pt2 = Point(concept="対象", by_field={"百科": {"対象"}, "多分野": {"対象"}})
+    b = classify({"百科": {"x": _store(d["+"])},
+                  "多分野": {"y": _store(d["-"])}}, pt2)
+    ok = (a.get("kind") == "NORM_VS_RECORD"
+          and sorted(a.get("registers") or []) == ["norm", "record"]
+          and b.get("kind") == "CONTRADICTION_CANDIDATE"
+          and field_register("法令") == "norm"
+          and field_register("未知の分野") == "unknown")
+    return {"experiment": "fusion", "fork": "NORM_VS_RECORD", "pass": bool(ok),
+            "result": {"norm_x_record": a.get("kind"),
+                       "record_x_record": b.get("kind"),
+                       "registers": a.get("registers")}}
+
+
+def direction_invariance_fork() -> Dict[str, Any]:
+    """向きの不変性: 読む向きを変えると消える当選は立ってはならない。
+
+    発案は操作者(2026-08-19):「一方からしか見ていない。逆からやったものを
+    重ねて、まとめて投入することで相殺する」。順方向(問い→名前で core を
+    引く)は、正解が候補に居ないとき棄権せず誤答する(実ストア実測
+    206/300)。逆方向(問いを最も覆う core の帯、名前も被覆に数える)は
+    誤りの出方が別種なので、両方向の一致だけを通す門が誤答を相殺する
+    (誤答206→26・正答無傷、experiments/bidirectional_consensus)。
+
+    2つの半分: (a) 逆方向の帯に入らない順方向 ANSWER は
+    UNKNOWN_DIRECTION_DISAGREEMENT へ降格し、両方向の言い分を名乗る。
+    (b) 名前で問いを覆う正当な当選は生き残る — core は自分の名前を
+    facet に持たないので、名前を被覆に数え忘れると門が正当な当選を
+    全滅させる(実測: 正当防衛とは/時効とは/傷害罪とは が死んだ)。
+    """
+    from .consensus_store import (_apply_direction_invariance,
+                                  direction_band)
+
+    st = CrossStore()
+    # 正解側: core "target" は問いの2語 aspx aspy を facet で覆う。
+    for a in ("aspx", "aspy", "aspz"):
+        st.ingest_sentence(f"target has {a}")
+    # 誤答側: core "aspx" — 問いの語そのものを名前に持つが、問いを
+    # 1語しか覆わない(順方向の直接ヒットが勝つ形)。
+    st.ingest_sentence("aspx has otherthing")
+
+    qset = {"aspx", "aspy"}
+    band, best = direction_band(st, qset)
+    # (a) 1語被覆の当選は帯(2語被覆=target)に入らず降格する
+    wrong = {"verdict": "ANSWER", "core": "aspx", "core_key": "aspx",
+             "text": "aspx otherthing"}
+    _apply_direction_invariance(st, wrong, qset)
+    demoted = wrong["verdict"] == "UNKNOWN_DIRECTION_DISAGREEMENT"         and wrong.get("forward_core") == "aspx" and wrong.get("reverse_band")
+    # (b) 帯に入る当選は生き残り、証明書が乗る
+    right = {"verdict": "ANSWER", "core": "target", "core_key": "target",
+             "text": "target aspx aspy"}
+    _apply_direction_invariance(st, right, qset)
+    survived = right["verdict"] == "ANSWER"         and right.get("direction_invariant") is True
+    # (b') 名前被覆: 問いが core 名そのもののとき、その core が帯に居る
+    band2, _b2 = direction_band(st, {"target"})
+    named = "target" in band2
+    ok = bool(demoted and survived and named)
+    return {"fork": "DIRECTION_INVARIANCE", "pass": ok,
+            "result": {"demoted": bool(demoted), "survived": bool(survived),
+                       "name_covered": bool(named),
+                       "band": sorted(band), "best": best}}
+
+
 def placement_invariance_fork() -> Dict[str, Any]:
     """An answer that depends on an arbitrary tie-break must not stand.
 
@@ -841,7 +980,8 @@ def document_draft_is_licensed_fork() -> Dict[str, Any]:
     from .lang import ja_content_runs
     from .writer import Writer
 
-    wpath = _P.home() / "Projects" / "vera-corpus" / "build" / "writer.json"
+    from .paths import corpus_root as _cr
+    wpath = _cr() / "build" / "writer.json"
     if not wpath.exists():
         return {"experiment": "cross_geometry",
                 "fork": "DOCUMENT_DRAFT_IS_LICENSED",
@@ -4334,6 +4474,9 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         placement_simulation_fork(),
         placement_cannot_manufacture_confidence_fork(),
         placement_invariance_fork(),
+        direction_invariance_fork(),
+        reverse_unique_fork(),
+        norm_vs_record_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),
         event_extractor_refuses_statute_prose_fork(),

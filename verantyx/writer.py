@@ -44,6 +44,36 @@ from .trace import Trace, walk
 from .vocabulary import Vocabulary, from_stores, statute_text
 
 
+#: 旧仮名(促音の大書き)の現代化 — 文型にだけ効く(2026-08-19)。
+#:
+#: 実測: speakable 597文型のうち16本(2.7%)が e-Gov の旧法文から
+#: 「によつて」「なつた」「つづつて」を運び、生成が「経費によつて精算
+#: する」を出していた。原文がそう書いているので破損ではない — 旧法の
+#: 正字である。だが読み手には誤字に見える。
+#:
+#: 触ってよい理由は provenance にある: 文型は**主張を運ばない**
+#: (compose_ja の冒頭「A form's source wrote that shape, not the claim」)。
+#: 引用は一切通らない — quote_in_words の引用文字列も、文書の text も、
+#: この表は見ない。形の綴りだけを今の読み手の綴りに直す。
+#:
+#: 閉じた列。機能語の語尾に限り、各項は上の実測に現れたものだけ。
+#: 「かつた/とつた」等の類推追加はしない — 測っていないものは入れない。
+_OLD_KANA = (
+    ("によつて", "によって"), ("であつて", "であって"),
+    ("であつた", "であった"), ("わたつて", "わたって"),
+    ("つづつて", "つづって"), ("もつて", "もって"),
+    ("あつた", "あった"), ("なつた", "なった"), ("よつて", "よって"),
+)
+
+
+def modernize_form(tpl: str) -> str:
+    """文型の旧仮名を現代表記へ。引用には決して使わない。"""
+    for old, new in _OLD_KANA:
+        if old in tpl:
+            tpl = tpl.replace(old, new)
+    return tpl
+
+
 @dataclass
 class Writer:
     """Everything composition needs, built once and reported on."""
@@ -221,14 +251,30 @@ class Writer:
             # 引き直せるので、積み込み時に再導出する。データの主張は
             # 変えない — 同じ文字列を今の読み手で読み直すだけ。
             import re as _re
-            for _i in range(1, len(form.cases)):
+            # 穴0も対象(2026-08-19): range(1,…) が主語穴を飛ばし、
+            # 「<0>されているのは…」に 領収書 が入った(される に続く穴は
+            # する名詞しか立てない)。
+            for _i in range(0, len(form.cases)):
                 if form.cases[_i] != "free":
                     continue
                 _m = _re.search("<%d>" % _i, form.template)
                 if _m and _SURU_LOAD.match(
                         form.template[_m.end():_m.end() + 4]):
                     form.cases[_i] = "verbalnoun"
-            w.forms[form.template] = form
+            # 綴りの現代化は型の再導出の後 — 型は文型文字列から引くので、
+            # 先に綴りを変えると「されて」等の判定が変わりうる。
+            _modern = modernize_form(form.template)
+            if _modern != form.template:
+                form.template = _modern
+            # 現代表記の双子と衝突したら回数の多い方を残す — 綴りを直した
+            # 結果として実測(頻度)を捨てないため。
+            _prev = w.forms.get(form.template)
+            if _prev is not None and _prev.count >= form.count:
+                _prev.count += form.count
+            else:
+                if _prev is not None:
+                    form.count += _prev.count
+                w.forms[form.template] = form
         w.built = d.get("built") or {}
         w.built["selection_restored"] = load_selection(d.get("selection") or {})
         JOIN.clear(); JOIN.update(d.get("joins") or {})

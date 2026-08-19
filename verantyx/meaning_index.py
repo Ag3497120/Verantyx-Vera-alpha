@@ -28,12 +28,14 @@ Same lesson as the quantized JGEN blocks: residency is the whole game.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterator, Mapping, Optional
 
-BUILD = Path.home() / "Projects" / "vera-corpus" / "build"
+BUILD = corpus_root() / "build"
 INDEX = BUILD / "meaning_index.db"
 
 

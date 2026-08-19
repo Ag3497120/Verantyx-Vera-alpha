@@ -20,6 +20,8 @@ citation is expected.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import argparse
 import json
 import queue
@@ -363,7 +365,7 @@ class H(BaseHTTPRequestHandler):
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--root", default=str(Path.home() / "Projects" / "vera-corpus"))
+    ap.add_argument("--root", default=str(corpus_root()))
     ap.add_argument("--page", required=True, help="directory holding vera3d.html")
     ap.add_argument("--port", type=int, default=8790)
     a = ap.parse_args(argv)

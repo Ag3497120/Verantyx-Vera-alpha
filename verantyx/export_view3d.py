@@ -25,6 +25,8 @@ structure puts it and stays there.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import argparse
 import json
 import math
@@ -199,7 +201,7 @@ def build(root: Path, *, max_cores_per_leaf: Optional[int] = None) -> Dict[str, 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--root", default=str(Path.home() / "Projects" / "vera-corpus"))
+    ap.add_argument("--root", default=str(corpus_root()))
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-cores-per-leaf", type=int, default=0)
     a = ap.parse_args(argv)

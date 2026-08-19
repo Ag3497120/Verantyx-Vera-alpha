@@ -34,6 +34,8 @@ not moved after the curve.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -44,7 +46,7 @@ MEASURE = "1-cosine"
 DEFAULT_THRESHOLD = 0.70
 DEFAULT_MIN_FAMILY = 3
 
-LEDGER = (Path.home() / "Projects" / "vera-corpus" / "build"
+LEDGER = (corpus_root() / "build"
           / "ingest_coherence_ledger.jsonl")
 
 VERDICT_COHERENT = "COHERENT"

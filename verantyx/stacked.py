@@ -263,6 +263,13 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
                  str(result.get("section") or "")]
 
     def draft_of(line: str):
+        # 否定の行は黙る(2026-08-19実測)。speakable は positive 形のみ
+        # (presence 証拠は ない を許可しない)なので、「対象としない」の
+        # 行から下書きを作ると「対象する」— 行の主張の反転 — しか出せない。
+        # 引用がそのまま立っている; 反転した下書きより沈黙。
+        if _re.search(r"(しない|されない|できない|ではない|はない|認めない"
+                      r"|ならない|ません)(。|$)", line.rstrip()):
+            return None
         runs = [r for r in (ja_content_runs(line) or []) if 2 <= len(r) <= 10]
         words = [r for r in runs if r in writer.vocab]
         # 係り受けの搬送: 行の中で各語の直後に立つ助詞を読む。閉じた
@@ -279,9 +286,15 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
         # 行の末尾形(閉集合、長い順) — 行が選んだ言い方を文型の順位へ。
         tail = ""
         _stripped = line.rstrip("。")
+        # 最長一致だが、文型側に一本も無い末尾は選ばない(2026-08-19実測:
+        # 「を必要とする」は行に合致するが該当文型0で、ライセンスが空振り
+        # した)。行にも文型にも合う最長の末尾へ — 「を必要とする」の行なら
+        # 「とする」に落ち、「<0>を<1>とする」が候補に入る。
         for t_ in ("を必要とする", "に限り認める", "とみなされる", "とされる",
-                   "とみなす", "とする", "である", "認める", "支給する"):
-            if _stripped.endswith(t_):
+                   "とみなす", "をいう", "を指す", "とする", "である",
+                   "認める", "支給する"):
+            if _stripped.endswith(t_) and any(
+                    k.rstrip("。").endswith(t_) for k in speakable):
                 tail = t_
                 break
         # 主語は問いの主題を優先。無ければ「〜を<Y>とする」型(定義)の Y —
@@ -294,9 +307,24 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
                 subject = s
                 break
         if not subject:
-            dm = _re.search(r"を([^、。]{2,8})とする$", _stripped)
-            if dm and dm.group(1) in writer.vocab:
-                subject = dm.group(1)
+            # 定義形2種: 「XをYとする」と「「X」とは、…をいう」。
+            qm = _re.search(r"「([^「」]{2,10})」とは", _stripped)
+            if qm and qm.group(1) in writer.vocab:
+                subject = qm.group(1)
+            dm = None if subject else _re.search(
+                r"([^、。をはがのにとでへ]{2,8})を([^、。]{2,8})とする$",
+                _stripped)
+            if dm:
+                # 定義形「XをYとする」: 主語(穴0)は X — 文型「<0>を<1>と
+                # する」で X が を穴、Y が と穴に立つと、行の核がそのまま
+                # 継がれる(「利用を原則とする」)。Y を主語にした旧規則は
+                # Y を穴0へ強制し「原則に利用があつたときも…」型の逆転を
+                # 生んでいた(2026-08-19実測)。Y は rest に残り、roles が
+                # Y→「と」を写すので と穴へ導かれる。
+                if dm.group(1) in writer.vocab:
+                    subject = dm.group(1)
+                elif dm.group(2) in writer.vocab:
+                    subject = dm.group(2)
         if not subject:
             marked = [w for w in words if roles.get(w) in ("は", "が")]
             subject = marked[0] if marked else (words[0] if words else "")
@@ -305,10 +333,37 @@ def quote_in_words(result: Dict[str, Any], writer: Any,
         rest = [w for w in words if w != subject]
         if not rest:
             return None
-        drafts = compose(speakable, subject, rest, limit=limit,
+        # ライセンスは行の登録から(2026-08-19)。文書の全「とする/ものと
+        # する」文型は register="norm" で、licence="unknown" では一本も
+        # 候補に入れなかった — 定義形が出ない実測の根はここ。引用行自身が
+        # norm 登録(その行が定めを主張している)なら、その行の言葉で紡ぐ
+        # 下書きも norm 形を継いでよい: 内容源が主張した登録だけを形が
+        # 主張する、という一方向の規則そのまま。modality の門(義務・禁止・
+        # 許可の形)は speakable の段で従来どおり閉じたまま。
+        # 文体を行に従わせる(2026-08-19)。speakable 594本のうち25本が
+        # 丁寧体で、法文の引用の隣で「新幹線は利用が移動にありました。」が
+        # 勝っていた。文体の混合は束ねる操作なので、**行が選んだ文体**を
+        # 継ぐ — 層であって併合ではない。行が丁寧体(です/ます)なら丁寧体の
+        # 文型を先に、常体なら常体を先に。順位であって門ではないので、
+        # 一致する文型が無ければ従来の並びのまま。
+        _POLITE_TAIL = ("です", "ます", "ました", "でした", "ません",
+                        "ください", "ですね", "でしょう")
+        _line_polite = _stripped.endswith(_POLITE_TAIL)
+
+        def _is_polite(tpl: str) -> bool:
+            return tpl.rstrip("。").endswith(_POLITE_TAIL)
+
+        speakable_r = {k: f for k, f in speakable.items()
+                       if _is_polite(k) == _line_polite}
+        if not speakable_r:
+            speakable_r = speakable
+
+        from .fusion import register_of
+        _lic = register_of(line)
+        drafts = compose(speakable_r, subject, rest, limit=limit,
                          content_from=[subject], vocab=writer.vocab,
-                         licence="unknown", roles=roles,
-                         order=order, tail=tail)
+                         licence=("norm" if _lic == "norm" else "unknown"),
+                         roles=roles, order=order, tail=tail)
         return [dict(d.as_dict(), line=line) for d in drafts] or None
 
     # 文量は内容に応じて可変(2026-08-19): 引用行が多ければ文も増える —

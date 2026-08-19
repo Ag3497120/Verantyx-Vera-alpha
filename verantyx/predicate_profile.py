@@ -14,13 +14,15 @@ plus that ``extractor`` key. Raw counts; the reader normalizes.
 """
 from __future__ import annotations
 
+from .paths import corpus_root  # noqa: E402
+
 import json
 import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-OUT = (Path.home() / "Projects" / "vera-corpus" / "build"
+OUT = (corpus_root() / "build"
        / "predicate_profiles.json")
 
 # ---------------------------------------------------------------------------

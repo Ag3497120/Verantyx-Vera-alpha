@@ -40,6 +40,23 @@ jobs:
           sys.exit(1 if bad else 0)
           "
 
+      - name: Install Lean toolchain (for LEAN_WITNESS_TYPES)
+        # The Lean fork checks three things a proof engine must keep apart:
+        # VERIFIED carries a toolchain-versioned witness, a failing proof
+        # lands in UNPROVEN, and `sorry` — which the kernel accepts with
+        # exit 0 — is caught by name. It needs a bare `lean`, NOT mathlib,
+        # so elan is a ~30s install rather than a multi-GB cache. Until
+        # 2026-08-19 this check ran only on the author's machine and CI
+        # allowed the skip by name; an allowance is not a measurement.
+        # `continue-on-error` keeps a Lean outage from turning the whole
+        # suite red — the named-skip allowance below still covers that case.
+        continue-on-error: true
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            -o elan-init.sh
+          sh elan-init.sh -y --default-toolchain leanprover/lean4:stable
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
       - name: Install optional extras
         # Only the extras the suite actually exercises. `hf` and `mcp` are
         # left out because nothing offline and deterministic needs them.
@@ -66,6 +83,10 @@ jobs:
           # 2026-08-15 while 153/153 forks passed — a gate that is always
           # red gates nothing. The skip is allowed BY NAME with its reason
           # checked, so a new silent skip still fails loudly.
+          # elan is installed a step earlier, so this fork should now RUN.
+          # The allowance stays as the fallback for a Lean outage
+          # (continue-on-error on that step) — a suite that goes red because
+          # leanprover.github.io is down gates nothing either.
           allowed = {'LEAN_WITNESS_TYPES': 'no lean toolchain'}
           bad_skips = {}
           for f, why in d.get('skipped', {}).items():

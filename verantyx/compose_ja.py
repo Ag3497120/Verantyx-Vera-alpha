@@ -100,6 +100,23 @@ Selection could only judge 43.8% of candidate fills at first (3.8
 observations per slot), but that was the smaller problem. A generator over
 this store is choosing from a bag that is 93% not-words.
 
+**Re-measured 2026-08-19, and the 43.8% above is stale.** The number was
+never re-taken after the statute bodies and the 1.4M dictionary definitions
+grew SELECTION to 14,087 slots / 441,433 triples. Instrumented at FILL TIME
+(counting every `selects()` call while generating document drafts for 13
+real questions, 224 calls over 11 sentences):
+
+    opinion (True or False)   85.7%
+    attested (True)           11.6%
+    no opinion (None)         14.3%
+
+So the thin-data era is over for this store, and the residue is a different
+shape from the one the paragraph above describes: selection now mostly says
+"no" (166 of 224), which is what a dense table is supposed to do. What a
+reader should NOT conclude is that drafts got 85.7% better — the opinion is
+consulted as a RANKING, not a gate, and clumsiness now comes from the form
+inventory rather than from a table with nothing to say.
+
 ## The vocabulary layer, and what it fixed
 
 `verantyx/vocabulary.py` sifts the facets to the ones a prose corpus uses as
@@ -171,7 +188,11 @@ _NOT_PROSE = re.compile(r"[=\{\}\[\]\\<>|#*A-Za-z0-9]|displaystyle")
 _PREDICATE = re.compile(
     r"(である|でない|する|しない|した|ある|ない|いる|られる|れる|になる|となる|できる"
     r"|です|でした|ではない|ません|ました|ます|ください|ございます|でしょう"
-    r"|ですね|ですか|ますか|ましょう)$")
+    r"|ですね|ですか|ますか|ましょう"
+    # 定義形の述語(2026-08-19)。法令の定義文は「〜をいう」「〜を指す」で
+    # 閉じるが、この表に無く全滅していた — 実測: bulk 1200法令に「とは、
+    # …をいう」文が1,802本ありながら、をいう末尾の文型は0本。
+    r"|いう|指す)$")
 
 #: What the character after a hole says the hole must hold.
 #:
@@ -485,7 +506,7 @@ VERBAL_NOUNS: Set[str] = set()
 #: している/します/し、 を見落としていた実測(2026-08-19): 「<2>している」
 #: の穴が free 型になり、する名詞でない語(方式)が詰まって「効力を方式
 #: している」ができた。境界の門(_SLOT_ALLOW)が通す活用と同じ集合を見る。
-_SURU = re.compile(r"(する|した|して|します|し[、。]|される|されて|しない)")
+_SURU = re.compile(r"(する|した|して|します|し[、。]|される|されて|された|しない)")
 
 
 def _case_after(text: str, at: int) -> str:
@@ -568,7 +589,10 @@ def harvest(
             tpl = "".join(parts)
             if not (MIN_HOLES <= len(cases) <= MAX_HOLES):
                 continue
-            if head_only and not tpl.startswith("<0>"):
+            if head_only and not (tpl.startswith("<0>")
+                                  or tpl.startswith("「<0>」")):
+                # 「<0>」とは、… は文頭形 — 先頭の鉤括弧は句読の飾りで、
+                # 断片(文中切り出し)ではない。定義文の主要形。
                 continue
             if _CUT_STEM.search(tpl):
                 continue
@@ -675,6 +699,7 @@ def compose(
         if subject not in vocab:
             return []
     out: List[Draft] = []
+    n_tail_out = 0
     # Rotate the form order per subject. Taking the most frequent form that
     # fits gave every step of a walk the same shape — eight sentences all
     # reading 「<0>も<1>に<2>する」, which is a template being recited rather
@@ -683,6 +708,17 @@ def compose(
     if ranked:
         off = sum(ord(c) for c in subject) % len(ranked)
         ranked = ranked[off:] + ranked[:off]
+    if tail:
+        # 末尾一致形を列挙の先頭へ(2026-08-19)。収集は8本で打ち切るので、
+        # 行が選んだ言い方(〜とする/である)の文型は、頻度順の奥に居ると
+        # 候補に一度も入らない — 収集幅を広げる案は実測で棄却済み(悪い
+        # 形も連れてくる)。並べ替えなら、末尾形も充填・継ぎ目・選択の
+        # 同じ門を全て通った上で候補に入るだけ。順位であって門ではない:
+        # 一致形が無ければ従来の並びのまま。
+        tm = [kv for kv in ranked if kv[0].rstrip("。").endswith(tail)]
+        if tm:
+            ranked = tm + [kv for kv in ranked if not
+                           kv[0].rstrip("。").endswith(tail)]
     for tpl, form in ranked:
         if not fits(subject, form.cases[0]):
             continue
@@ -692,6 +728,17 @@ def compose(
         used: Set[str] = {subject}
         ok = True
         n_attested = 0
+        role_hits = 0
+        role_miss = 0
+        if roles:
+            _c0 = tpl[len("<0>"):len("<0>") + 1] if tpl.startswith("<0>") else ""
+            if _c0 in "のをにがはとでへもや" and roles.get(subject):
+                # 主語穴も対称に: 一致は稼ぎ、逆転は失う。片側だけ数えると
+                # 「利用**で**なくなつた…」(行では 利用を)が無傷で同点に並んだ。
+                if roles.get(subject) == _c0:
+                    role_hits += 1
+                else:
+                    role_miss += 1
         for hole, case in enumerate(form.cases[1:], start=1):
             slot = form.slots[hole] if hole < len(form.slots) else None
             cand = [t for t in pool if t not in used and fits(t, case)]
@@ -701,8 +748,19 @@ def compose(
             # 一致が無ければ従来の並びのまま。「新幹線と利用を移動する」
             # (行では 移動に だったのに を の穴へ入った)型の役割逆転を、
             # 行自身の読みで抑える。
-            if roles and slot:
-                part = slot[0]
+            # 穴の直後の一文字を文型自身から読む。slots は「助詞+次の穴の
+            # 述語頭」が揃った時だけ立つので、「<1>とする」のような文末
+            # 穴には None が入り、役割の導きが効かなかった(2026-08-19
+            # 実測: 「利用を原則とする」の と穴に 移動 が入る)。文型の
+            # 字面は常にあるので、そこから読む — 解析ではなく写し。
+            _after = ""
+            _i = tpl.find(f"<{hole}>")
+            if _i >= 0:
+                _c = tpl[_i + len(f"<{hole}>"):_i + len(f"<{hole}>") + 1]
+                if _c in "のをにがはとでへもや":
+                    _after = _c
+            if roles and (slot or _after):
+                part = slot[0] if slot else _after
                 matched = [t for t in cand if roles.get(t) == part]
                 others = [t for t in cand if roles.get(t) != part]
                 cand = matched + others
@@ -726,6 +784,13 @@ def compose(
                 break
             picks.append(cand[0])
             used.add(cand[0])
+            if roles and (slot or _after) and roles.get(cand[0]):
+                if roles.get(cand[0]) == (slot[0] if slot else _after):
+                    role_hits += 1
+                else:
+                    # 行が書いた役割と違う穴に立った — 役割逆転の実測類
+                    # (「移動に」が も穴へ)。一致が稼ぐ分だけ失う。
+                    role_miss += 1
         if not ok:
             continue
         # The seam test, after the fills are known. A template cut inside a
@@ -754,10 +819,16 @@ def compose(
         if order:
             _pos = [order[p] for p in picks if p in order]
             _fid = sum(1 for a, b in zip(_pos, _pos[1:]) if a < b)
+        # 役割一致数も忠実度へ(2026-08-19)。末尾一致だけでは とする形が
+        # 8本同点になり、挿入順(頻度順)が勝敗を決めていた — 行が書いた
+        # 助詞を最も多く保った下書きが同点を割る。重みは tail(10) > 役割
+        # (2) > 語順(1): 行の言い方 > 行の役割 > 行の並び。
         out.append(Draft(text=text + "。", template=tpl, fills=picks,
                          content_from=list(content_from or []),
                          form_from=form.source, attested=n_attested,
-                         line_fidelity=_tail_hit * 10 + _fid))
+                         line_fidelity=_tail_hit * 10
+                         + (role_hits - role_miss) * 2 + _fid))
+        n_tail_out += _tail_hit
         # 実証済みの充填を持つ下書きを、持たない下書きより先に返す。
         # 従来は「最初に埋まった limit 本」で打ち切っており、意見なしの
         # 穴だけで埋まった形が、実証済みの形より先に口へ届いていた。
@@ -767,11 +838,22 @@ def compose(
         # 収集幅は8のまま。24へ広げる案は実測で棄却(2026-08-19):
         # att=0 の同点帯では、広げた候補が語順・役割の悪い形を連れてきて
         # 「会議の上限がある」→「上限を会議としている」と逆転した。
-        # 末尾一致形が8本に居ない場合に効かないのは事実だが、それは
-        # 文型側(定義形の収穫)の課題であって、収集幅では直らない。
-        if len(out) >= max(limit * 4, 8):
+        # ただし末尾一致ブロックは全数収集(同日実測): 頻度順の先頭8本が
+        # 枠を食い、count=8 の「<0>を<1>とする」——行の核そのもの——が
+        # 一度も候補に入らなかった。tail は行が選んだ言い方のライセンスで、
+        # 該当形は多くて数十本。汎用形の枠(8)はそのまま、tail 形だけ
+        # 枠外で数える — 棄却された「汎用の広幅」とは別物。
+        if len(out) - n_tail_out >= max(limit * 4, 8):
             break
-    out.sort(key=lambda d: (-d.attested, -d.line_fidelity))
+    # 行 > コーパス統計(2026-08-19): 末尾・役割・語順の忠実度が先、
+    # 実証は同点割り。行を持たない呼び出しでは全下書きが忠実度0で、
+    # 従来どおり実証が決める。逆順(実証が先)では att=1 の汎用形が
+    # 行の核「利用を原則とする」(att=0)を覆い隠した。
+    # 忠実度同点の最後は形の飾りの少なさ(行つき呼び出しのみ)。同点15の
+    # 「をもって、」と「を…とする」では、行の核をそのまま継ぐ短い方 —
+    # 行なしの呼び出し(忠実度0)では従来の回転順を保つ。
+    out.sort(key=lambda d: (-d.line_fidelity, -d.attested,
+                            len(d.template) if d.line_fidelity > 0 else 0))
     return out[:limit]
 
 
