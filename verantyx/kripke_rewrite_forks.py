@@ -92,6 +92,51 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
 
 
 
+
+def false_equation_canary_fork() -> Dict[str, Any]:
+    """壊れた規則集合では、偽の等式が証明できてしまう — それを検知する。
+
+    今日、駆動層が予算切れ同士を一致と読み、真の命題を空虚に「証明」した
+    (報告した 8/8 は偽で本当は 5/8)。Lean は捕まえられない — 独立検査は
+    主張の真偽を見るのであって導出の本物さは見ない。同じ**形**の穴は
+    「規則集合が壊れて何でも等しくなる」場合にも開く。
+
+    番犬は偽の等式が証明できないことを確かめる。**番犬自身を二度作り
+    直した**(experiments/vacuity): 構成子だけの偽(`0 = s(0)`)では
+    `add(?x,?y) → 0` を見逃し、閉じた項の偽(`add(s(0),0) = 0`)でも
+    まだ見逃した — 正しい規則が先に発火して壊れた規則が**影に隠れる**
+    からで、**変数を含む偽**(`add(x,y) = 0`)で初めて捕らえた。
+
+    2点: (a) 健全な定義では偽が証明できない (b) 壊れた規則を混ぜると
+    証明できてしまい、番犬が鳴く。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    def nf(e, rules):
+        rs = RuleStore()
+        for n, l, r in rules:
+            rs.add(n, l, r)
+        r = simplify(e, rs, budget=200)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    def provable(l, r, rules):
+        a, b = nf(l, rules), nf(r, rules)
+        return a is not None and b is not None and a == b
+
+    DEFS = [("add_0", "add(?x, 0)", "?x"),
+            ("add_s", "add(?x, s(?y))", "s(add(?x, ?y))")]
+    FALSE = [("0", "s(0)"), ("add(s(0), 0)", "0"), ("add(x, y)", "0")]
+
+    quiet = not any(provable(l, r, DEFS) for l, r in FALSE)
+    broken = DEFS + [("BROKEN", "add(?x, ?y)", "0")]
+    barks = [f"{l} = {r}" for l, r in FALSE if provable(l, r, broken)]
+
+    ok = bool(quiet and barks)
+    return {"experiment": "rewrite", "fork": "FALSE_EQUATION_CANARY",
+            "pass": ok,
+            "result": {"healthy_is_quiet": bool(quiet), "barks": barks}}
+
+
 def terminating_is_not_confluent_fork() -> Dict[str, Any]:
     """停止することと、同じ形に落ちることは別である。
 
@@ -514,6 +559,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         inductive_search_fork(),
         budget_is_not_agreement_fork(),
         terminating_is_not_confluent_fork(),
+        false_equation_canary_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
