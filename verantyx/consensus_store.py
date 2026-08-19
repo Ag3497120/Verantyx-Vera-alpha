@@ -169,9 +169,19 @@ def candidates_for_query(
         for w in qset:
             for c in _word_index(store).get(w, ()):
                 _cnt[c] += 1
-        extra = sorted((-(ov * 1000 + store.mass(c)), c)
-                       for c, ov in _cnt.items() if c not in out)
-        out = out + [c for _s, c in extra[:k - len(out)]]
+        # 同じ重なり数の中は**特定性**で並べる(2026-08-19、PREREG3)。
+        # 質量順は 89k/740k 核では効いたが、jawiki 本文で 1.19M 核になると
+        # overlap=3 の核が数千あり、その中で汎用核の巨大質量が正解の中頻度
+        # 核を6枠から押し出した — 同一300問で reachable 171→15、
+        # wrong 206→223。docstring が警告していた "tokyo vs film" が規模で
+        # 顕在化した形。特定性 = 重なり / その核の面数 は「自分の面のうち
+        # 何割がこの問いに当たるか」で、店が持つ実測だけで決まる。
+        # 直接ヒット(名前一致)の順位はここでは一切触らない。
+        extra = sorted(
+            (-ov, -(ov / max(1, len(store.crosses.get(c) or ()))),
+             -store.mass(c), c)
+            for c, ov in _cnt.items() if c not in out)
+        out = out + [t[-1] for t in extra[:k - len(out)]]
     return out[:k]
 
 
