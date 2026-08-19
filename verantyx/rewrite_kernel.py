@@ -118,7 +118,15 @@ def term_to_str(t: Term) -> str:
         sa, sb = term_to_str(a), term_to_str(b)
         if isinstance(a, tuple) and a[0] in ("+", "-") and op == "*":
             sa = f"({sa})"
-        if isinstance(b, tuple) and b[0] in ("+", "-", "*") and op in ("-", "*"):
+        # 右側の複合項は、演算子が左結合である限り**常に**括弧が要る。
+        # 以前は op が - か * のときだけ括弧を付けており、`a + (b + c)` が
+        # `a + b + c` と印字されて `(a + b) + c` に読み直されていた
+        # (往復 2/8 で破綻、2026-08-19実測)。Int では両方とも真の等式に
+        # なるので実害は出ていなかったが、印字は項の表現であって
+        # 「たまたま同値な別の項」ではない。非結合的な演算子を載せた
+        # 瞬間に嘘になるし、実際この欠陥は測定を一件誤らせた
+        # (帰納法の壁の実験で、結合律が「導出された」ように見えた)。
+        if isinstance(b, tuple) and b[0] in ("+", "-", "*"):
             sb = f"({sb})"
         return f"{sa} {op} {sb}"
     return f"{op}({', '.join(term_to_str(a) for a in t[1:])})"

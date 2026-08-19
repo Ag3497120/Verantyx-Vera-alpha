@@ -85,6 +85,45 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
     }
 
 
+
+def rewrite_roundtrip_fork() -> Dict[str, Any]:
+    """印字した項は、読み直すと同じ項である。
+
+    `term_to_str` は右側の複合項に、演算子が - か * のときだけ括弧を
+    付けていた。そのため `a + (b + c)` が `a + b + c` と印字され、
+    読み直すと `(a + b) + c` — **別の項**になる(2026-08-19実測、往復
+    2/8 で破綻)。Int では両方とも真の等式になるので実害は出ていなかったが、
+    印字は項の表現であって「たまたま同値な別の項」ではない。非結合的な
+    演算子を載せた瞬間に嘘になる。
+
+    そしてこの欠陥は実際に**測定を誤らせた**: 帰納法の壁の実験で、
+    印字文字列を比べたために加法の結合律が「導出された」ように見えた
+    (カーネルは内部では正しく区別していた)。
+
+    往復性は表現の最低条件なので、ここで固定する。
+    """
+    from .rewrite_kernel import parse_term, term_to_str
+
+    cases = ["(a + (b + c))", "((a + b) + c)", "(a - (b - c))",
+             "((a - b) - c)", "(a * (b + c))", "((a * b) + c)",
+             "(a - (b + c))", "(a + (b - c))", "(a * (b * c))",
+             "((a + b) * c)", "(1 + (2 * 3))", "((a + 0) - (b - c))"]
+    broken = []
+    for src in cases:
+        t = parse_term(src)
+        if t is None:
+            broken.append((src, "unparsed"))
+            continue
+        again = parse_term(term_to_str(t))
+        if again != t:
+            broken.append((src, term_to_str(t)))
+    ok = not broken
+    return {"experiment": "rewrite", "fork": "REWRITE_PRINT_ROUNDTRIP",
+            "pass": ok,
+            "result": {"cases": len(cases), "broken": len(broken),
+                       "examples": broken[:3]}}
+
+
 def rewrite_algebra_fork() -> Dict[str, Any]:
     """代数規則セット + wire 定数畳み込み (トレース付き正規形)."""
     a = simplify("x + 0")
@@ -161,6 +200,7 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         kripke_validity_fork(),
         kripke_unknown_refuses_fork(),
         rewrite_algebra_fork(),
+        rewrite_roundtrip_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
