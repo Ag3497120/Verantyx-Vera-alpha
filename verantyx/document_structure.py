@@ -353,7 +353,8 @@ def sidecar_path(store_path: Path) -> Path:
 
 def set_document(store_path: Path, source: str, *,
                  detached: Optional[bool] = None,
-                 priority: Optional[int] = None) -> Dict[str, Any]:
+                 priority: Optional[int] = None,
+                 date: Optional[str] = None) -> Dict[str, Any]:
     """接続の切替と優先度 — データは消さない。
 
     「外す」が削除だったため、一度取り込んだ文書を戻せなかった(実測
@@ -368,11 +369,19 @@ def set_document(store_path: Path, source: str, *,
             d["detached"] = bool(detached)
         if priority is not None:
             d["priority"] = int(priority)
+        if date is not None:
+            # 時系列(2026-08-19、操作者要請)。メモ同士は必ず矛盾する —
+            # 「Xが欠点」の後に「X修理済み」が来る。これは時間的上書きで
+            # あって規範衝突ではない。date は並び順と表示だけを変える:
+            # 同優先度なら新しい文書から読み、引用には日付が付く。
+            # 票には一切入らない — 古い記述は消えず、日付つきで並ぶ。
+            d["date"] = str(date)
         sidecar_path(store_path).write_text(
             json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
         return {"verdict": "SET", "source": source,
                 "detached": d.get("detached", False),
-                "priority": d.get("priority", 0)}
+                "priority": d.get("priority", 0),
+                "date": d.get("date")}
     return {"verdict": "UNKNOWN_NO_SUCH_DOCUMENT", "source": source,
             "have": [d.get("source") for d in book.get("documents", [])]}
 
@@ -704,12 +713,15 @@ def _title_descent(book: Dict[str, Any], subject: str):
                     hits.append({"section": sec.get("heading"),
                                  "text": one or "\n".join(lines),
                                  "lines": lines, "source": doc.get("source"),
+                                 "date": doc.get("date"),
                                  "line": one})
             if not hits:
                 continue
             if len(hits) >= 2:
                 joined = "\n".join(
-                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    "[%s%s／%s] %s" % (h["source"],
+                                       ("(%s)" % h.get("date")) if h.get("date") else "",
+                                       h["section"], h["text"])
                     for h in hits)
                 return {"verdict": "DOCUMENT_MULTI", "subject": subject,
                         "items": hits, "text": joined, "quoted": True,
@@ -745,12 +757,15 @@ def _title_descent(book: Dict[str, Any], subject: str):
                 for ln in (sec.get("lines") or []):
                     if pn in ln:
                         line_hits.append({"section": sec.get("heading"),
-                                           "text": ln, "source": doc.get("source")})
+                                           "text": ln, "source": doc.get("source"),
+                                           "date": doc.get("date")})
             if not line_hits:
                 continue
             if len(line_hits) >= 2:
                 joined = "\n".join(
-                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    "[%s%s／%s] %s" % (h["source"],
+                                       ("(%s)" % h.get("date")) if h.get("date") else "",
+                                       h["section"], h["text"])
                     for h in line_hits)
                 return {"verdict": "DOCUMENT_MULTI", "subject": subject,
                         "items": line_hits, "text": joined, "quoted": True,
@@ -849,11 +864,28 @@ def lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
     # なく切断 — 一度取り込んだ文書は detached:True で残り、attach で
     # 戻る。priority は高いほど先に照合される(企業の複数文書で「これを
     # 優先して判断」の配線)。原本 book は変更しない。
+    # 時系列: 同優先度なら日付の新しい文書から照合する(date降順、無日付は
+    # 最後)。時間的上書き(「Xが欠点」→後日「X修理済み」)を、削除ではなく
+    # 並び順で表す — 古い記述は残り、引用には日付が付く。
+    # 安定3段(全て票の外): 名前順 → 日付降順(ISO文字列、無日付は最後)
+    # → 優先度降順。Pythonの安定ソートで後段が前段の同点を保つ。
     active = sorted(
         [d for d in book.get("documents", []) if not d.get("detached")],
-        key=lambda d: (-int(d.get("priority") or 0), str(d.get("source"))))
+        key=lambda d: str(d.get("source")))
+    active.sort(key=lambda d: (str(d.get("date") or "") == "",
+                               str(d.get("date") or "")),)
+    active[:] = sorted(
+        [d for d in active if d.get("date")],
+        key=lambda d: str(d.get("date")), reverse=True,
+    ) + [d for d in active if not d.get("date")]
+    active.sort(key=lambda d: -int(d.get("priority") or 0))
     book = {**book, "documents": active}
     result = _lookup(subject, book)
+    if result.get("source"):
+        for d in active:
+            if d.get("source") == result.get("source") and d.get("date"):
+                result["source_date"] = d.get("date")
+                break
     ref = _reference_summary(result)
     if ref:
         result["reference"] = ref
@@ -1065,7 +1097,8 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                         one = _stair_pick(lines, subject)
                         hits.append({"section": sec.get("heading"),
                                      "text": one or "\n".join(lines),
-                                     "source": doc.get("source")})
+                                     "source": doc.get("source"),
+                                     "date": doc.get("date")})
                         hit_docs.add(doc.get("source"))
             # 見出しに一件も当たらなかった文書にも、本文行にしか書いて
             # いない矛盾する定めがあり得る。見出しだけを比べると、その
@@ -1101,7 +1134,9 @@ def _lookup(subject: str, book: Dict[str, Any]) -> Dict[str, Any]:
                         break
             if len(hits) >= 2:
                 joined = "\n".join(
-                    "[%s／%s] %s" % (h["source"], h["section"], h["text"])
+                    "[%s%s／%s] %s" % (h["source"],
+                                       ("(%s)" % h.get("date")) if h.get("date") else "",
+                                       h["section"], h["text"])
                     for h in hits)
                 return {"verdict": "DOCUMENT_MULTI",
                         "subject": subject,
