@@ -118,7 +118,15 @@ def term_to_str(t: Term) -> str:
         sa, sb = term_to_str(a), term_to_str(b)
         if isinstance(a, tuple) and a[0] in ("+", "-") and op == "*":
             sa = f"({sa})"
-        if isinstance(b, tuple) and b[0] in ("+", "-", "*") and op in ("-", "*"):
+        # 右側の複合項は、演算子が左結合である限り**常に**括弧が要る。
+        # 以前は op が - か * のときだけ括弧を付けており、`a + (b + c)` が
+        # `a + b + c` と印字されて `(a + b) + c` に読み直されていた
+        # (往復 2/8 で破綻、2026-08-19実測)。Int では両方とも真の等式に
+        # なるので実害は出ていなかったが、印字は項の表現であって
+        # 「たまたま同値な別の項」ではない。非結合的な演算子を載せた
+        # 瞬間に嘘になるし、実際この欠陥は測定を一件誤らせた
+        # (帰納法の壁の実験で、結合律が「導出された」ように見えた)。
+        if isinstance(b, tuple) and b[0] in ("+", "-", "*"):
             sb = f"({sb})"
         return f"{sa} {op} {sb}"
     return f"{op}({', '.join(term_to_str(a) for a in t[1:])})"
@@ -268,15 +276,39 @@ def _fold_const(t: Term) -> Optional[Tuple[Term, str]]:
     return None
 
 
+def term_size(t: Term) -> int:
+    """項のノード数。順序の第一要素。"""
+    if isinstance(t, tuple):
+        return 1 + sum(term_size(x) for x in t[1:])
+    return 1
+
+
+def order_key(t: Term):
+    """項の全順序 `(サイズ, 印字)`。向き付き書き換えの減少測度。
+
+    対称規則(可換律など)は有限個の置換しか生まないので、この順序で
+    真に減少する適用だけを許せば停止する — 順序付き書き換えの古典的手法。
+    """
+    return (term_size(t), term_to_str(t))
+
+
 def _step(
     t: Term,
     rules: RuleStore,
     allowed: Optional[Set[str]],
+    oriented: Optional[Set[str]] = None,
 ) -> Optional[Tuple[Term, str]]:
-    """leftmost-innermost で最初に発火する書き換えを 1 回 (決定論)."""
+    """leftmost-innermost で最初に発火する書き換えを 1 回 (決定論).
+
+    ``oriented`` に挙げた規則は、**結果が項順序で真に小さくなる時だけ**
+    適用される。対称規則(`?a + ?b → ?b + ?a`)は無向きだと a+b→b+a→a+b と
+    往復して停止しないが(実測 60→19)、向きを付けると停止し、さらに置換を
+    同一視する(a+b+c の12通り→単一の正規形)。探索ではない — 適用可否を
+    決定論的な述語で決めるだけ。experiments/ordered_rewrite。
+    """
     if isinstance(t, tuple):
         for i, sub in enumerate(t[1:], start=1):
-            r = _step(sub, rules, allowed)
+            r = _step(sub, rules, allowed, oriented)
             if r is not None:
                 new_sub, rule_name = r
                 return (t[:i] + (new_sub,) + t[i + 1:]), rule_name
@@ -288,7 +320,11 @@ def _step(
             continue
         b = match(rule.lhs, t, {})
         if b is not None:
-            return subst(rule.rhs, b), rule.name
+            out = subst(rule.rhs, b)
+            if oriented and rule.name in oriented and \
+                    not (order_key(out) < order_key(t)):
+                continue
+            return out, rule.name
     return None
 
 
@@ -297,17 +333,23 @@ def simplify(
     rules: Optional[RuleStore] = None,
     *,
     allowed: Optional[Sequence[str]] = None,
+    oriented: Optional[Sequence[str]] = None,
     budget: int = 200,
 ) -> Dict[str, Any]:
-    """正規形まで書き換え。トレース付き・型付き verdict."""
+    """正規形まで書き換え。トレース付き・型付き verdict.
+
+    ``oriented`` は向き付き適用にする規則名(既定 None = 従来どおり)。
+    既定を変えていないので、既存の測定の前提は一切動かない。
+    """
     rules = rules or default_algebra_rules()
     t = parse_term(expr)
     if t is None:
         return {"verdict": "UNKNOWN_UNPARSED", "term": None, "steps": []}
     allow = set(allowed) if allowed is not None else None
+    orient = set(oriented) if oriented else None
     steps: List[Dict[str, str]] = []
     for _ in range(budget):
-        r = _step(t, rules, allow)
+        r = _step(t, rules, allow, orient)
         if r is None:
             return {
                 "verdict": "ANSWER",

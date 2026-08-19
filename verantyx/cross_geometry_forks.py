@@ -624,6 +624,90 @@ def norm_vs_record_fork() -> Dict[str, Any]:
                        "registers": a.get("registers")}}
 
 
+def quote_is_substring_fork() -> Dict[str, Any]:
+    """引用として出す行は、必ず原文の部分文字列である。
+
+    `document_structure.verify_quoted` は「事前登録が機構全体を賭けた
+    機械検査」と自ら述べながら、**呼び出し元が一つも無かった**
+    (2026-08-19、到達性の棚卸しで発覚: 公開定義1,410本中、参照ゼロが57本)。
+    実店の18問で測ると全部通る — つまり保証は**正しいコードの運**で
+    成り立っており、構造で支えられてはいなかった。ここに荷重をかける。
+
+    3点: (a) 正しい引用は通る (b) 一文字でも原文に無い行は落ちる
+    (c) ラベル値(value)も同じ検査を受ける。
+    """
+    from .document_structure import index, lookup, verify_quoted
+
+    text = ("第1条 目的\n"
+            "この規程は出張旅費の取扱いを定める。\n"
+            "第2条 上限\n"
+            "宿泊費は一泊15,000円を上限とする。\n"
+            "提出期限: 月末まで\n")
+    book = {"documents": [index(text, "出張旅費規程.txt")]}
+
+    r = lookup("宿泊費", book)
+    genuine = str(r.get("verdict") or "").startswith("DOCUMENT") \
+        and verify_quoted(r, text)
+
+    # (b) 原文に無い行を混ぜたら落ちる
+    tampered = dict(r)
+    tampered["lines"] = list(r.get("lines") or []) + [
+        "宿泊費は一泊30,000円を上限とする。"]
+    catches = not verify_quoted(tampered, text)
+
+    # (c) ラベル値も検査される
+    lab = lookup("提出期限", book)
+    label_ok = verify_quoted(lab, text)
+    lab_bad = dict(lab)
+    lab_bad["value"] = "翌月10日まで"
+    label_catches = not verify_quoted(lab_bad, text)
+
+    ok = bool(genuine and catches and label_ok and label_catches)
+    return {"experiment": "cross_geometry", "fork": "QUOTE_IS_SUBSTRING",
+            "pass": ok,
+            "result": {"genuine_passes": bool(genuine),
+                       "tampered_caught": bool(catches),
+                       "label_passes": bool(label_ok),
+                       "label_tampered_caught": bool(label_catches)}}
+
+
+def read_at_shows_both_sides_fork() -> Dict[str, Any]:
+    """食い違う二分野は、併合されずに両方返る。
+
+    `fusion.read_at` は「平均せずに見せる」ための器官なのに、呼び出し元が
+    一つも無かった(2026-08-19、到達性の棚卸し)。二空間を併合しないという
+    設計の看板機能に出口が無かったので、`vera_read_at` 扉を付け、ここで
+    荷重をかける。
+
+    2点: (a) 両分野が別々の読みを持つとき、両方が by_field に残る
+    (b) 何も選ばない — 単一の core や text に畳まれない。
+    """
+    # read_at の絞り込みは「概念が **facet として** 現れる分野」だけを
+    # 見る(core 名だけでは通らない — direction_band で名前を数え忘れて
+    # 帯から core 自身が脱落したのと同じ罠が、この関数にも在る)。
+    # 固定具はその条件を満たす形にする: 対象 が facet に立つ。
+    a = CrossStore()
+    a.ingest_sentence("甲説 は 対象 に ついて 述べる")
+    a.ingest_sentence("対象 は 甲説 である")
+    b = CrossStore()
+    b.ingest_sentence("乙説 は 対象 に ついて 述べる")
+    b.ingest_sentence("対象 は 乙説 である")
+
+    from .fusion import read_at
+
+    r = read_at({"分野A": {"x": a}, "分野B": {"y": b}}, "対象")
+    both = sorted(r.get("fields") or []) == ["分野A", "分野B"]
+    rows = r.get("by_field") or {}
+    kept = all(len(rows.get(f) or []) >= 1 for f in ("分野A", "分野B"))
+    # 何も選んでいない: 単一の答えに畳む鍵を持たない
+    no_pick = "core" not in r and "text" not in r and "verdict" not in r
+    ok = bool(both and kept and no_pick)
+    return {"experiment": "cross_geometry", "fork": "READ_AT_SHOWS_BOTH_SIDES",
+            "pass": ok,
+            "result": {"fields": r.get("fields"), "kept_both": bool(kept),
+                       "picks_nothing": bool(no_pick)}}
+
+
 def direction_invariance_fork() -> Dict[str, Any]:
     """向きの不変性: 読む向きを変えると消える当選は立ってはならない。
 
@@ -4557,6 +4641,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         reverse_unique_fork(),
         reverse_specific_fork(),
         norm_vs_record_fork(),
+        quote_is_substring_fork(),
+        read_at_shows_both_sides_fork(),
         ja_coverage_gate_fork(),
         reified_event_fork(),
         event_extractor_refuses_statute_prose_fork(),

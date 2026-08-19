@@ -72,12 +72,28 @@ def is_proper_key(sym: str) -> bool:
 
 
 def is_junk_core(tok: str) -> bool:
+    """A token that must never stand as a core.
+
+    STOP_CORES is a hand-written list of 139 words and it was the ONLY
+    lexical test here — so 26 of 27 basic English function words walked
+    straight through it, and `the` stands in the ja store as a core with
+    **6,074 facets** (measured 2026-08-19). Meanwhile `_cap_content` a few
+    lines below has been consulting the role tagger the whole time, and the
+    tagger already knows: the=DET, of=ADP, is=AUX — 25/25 function words
+    judged correctly, 8/8 content words left alone, and 15/15 Japanese cores
+    (正当防衛, 時効, 経費 …) tagged NOUN so nothing Japanese is touched.
+
+    Implemented, and unreached from this one function. The list stays — the
+    tagger is layered on top of it, not swapped for it.
+    """
     tok = tok.casefold().strip()
     if len(tok) < 2:
         return True
     if tok in STOP_CORES:
         return True
     if not any(c.isalpha() for c in tok):
+        return True
+    if is_function_role(tag_role(tok)):
         return True
     return False
 

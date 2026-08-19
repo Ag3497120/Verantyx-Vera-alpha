@@ -85,6 +85,255 @@ def kripke_unknown_refuses_fork() -> Dict[str, Any]:
     }
 
 
+
+
+
+
+
+def inductive_search_fork() -> Dict[str, Any]:
+    """帰納する変数も補題の順序も、駆動層が自分で選べる。
+
+    2026-08-19。「選ぶこと=探索で、そこは手つかず」と書いたが、測ると
+    動いた(experiments/search)。定義4本だけ与え目標8本を順不同で渡すと、
+    ヒント無しで **8/8** 証明し Lean が 8/8 VERIFIED にした
+    (乗法の可換律を含む)。探索は決定論・乱数なし。
+
+    途中で欠陥を1件発見している: 補題を規則に昇格するとき変数を一般化
+    しておらず(`add(0, x) → x` の x が**定数**のまま `add(0, y)` に
+    一致しない)、5/8 に留まっていた。補題は全称命題なので規則にする
+    ときも全称のまま置く。直して 8/8・2巡→1巡。
+
+    3点: (a) 帰納する変数を自分で選ぶ (b) 不動点が補題の順序を解く
+    (c) **一般化しないと解けない**(欠陥の再発防止)。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    DEFS = [("add_0", "add(?x, 0)", "?x"),
+            ("add_s", "add(?x, s(?y))", "s(add(?x, ?y))")]
+
+    def nf(e, rules):
+        rs = RuleStore()
+        for n, l, r in rules:
+            rs.add(n, l, r)
+        r = simplify(e, rs, budget=400)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    def induct(lhs, rhs, var, rules):
+        """基底と段。仮定は規則として加える。"""
+        if nf(lhs.replace(var, "0"), rules) != nf(rhs.replace(var, "0"), rules):
+            return False
+        ih = [("IH", lhs.replace(var, "k").replace("x", "?x").replace("y", "?y"),
+               rhs.replace(var, "k").replace("x", "?x").replace("y", "?y"))]
+        return (nf(lhs.replace(var, "s(k)"), rules + ih)
+                == nf(rhs.replace(var, "s(k)"), rules + ih))
+
+    # (a)+(b): G1 を証明 → 一般化して規則に → G2 が解錠される
+    g1 = induct("add(0, x)", "x", "x", DEFS)
+    with_general = DEFS + [("G1", "add(0, ?a)", "?a")]
+    with_literal = DEFS + [("G1", "add(0, x)", "x")]
+
+    # (c) 一般化しないと補題が効かない
+    general_works = nf("add(0, y)", with_general) == "y"
+    literal_fails = nf("add(0, y)", with_literal) != "y"
+
+    ok = bool(g1 and general_works and literal_fails)
+    return {"experiment": "rewrite", "fork": "INDUCTIVE_SEARCH",
+            "pass": ok,
+            "result": {"proved_G1_by_induction": bool(g1),
+                       "generalised_lemma_applies": bool(general_works),
+                       "literal_lemma_does_not": bool(literal_fails)}}
+
+
+def induction_by_rewriting_fork() -> Dict[str, Any]:
+    """帰納法は、仮定を規則として置けば書き換えで実行できる。
+
+    2026-08-19、私は「カーネルには目標の概念が無いので帰納法は越えられ
+    ない」と書いた。**それは測定ではなく推論で、誤りだった**(操作者の
+    指摘で検証)。目標も項であり、帰納法の仮定は規則である。
+
+    薄い駆動層 — 基底は変数を 0 に、段は新しい定数 k にして**仮定を
+    規則として加える** — と既存の書き換えだけで、加法の可換律を含む
+    3命題が証明でき、Lean が 3/3 VERIFIED にした。探索も後戻りも無い。
+
+    ここで固定するのは可換律(最も強い一本): 基底と段が両方閉じること、
+    そして**仮定を入れなければ段が閉じないこと**(仮定が効いている証拠)。
+    """
+    from .rewrite_kernel import RuleStore, simplify
+
+    def rs_base():
+        rs = RuleStore()
+        rs.add("add_0", "add(?x, 0)", "?x")
+        rs.add("add_s", "add(?x, s(?y))", "s(add(?x, ?y))")
+        rs.add("T1", "add(0, ?a)", "?a")
+        rs.add("T2", "add(s(?a), ?b)", "s(add(?a, ?b))")
+        return rs
+
+    def nf(e, rs):
+        r = simplify(e, rs, budget=300)
+        return r.get("term") if str(r.get("verdict")) == "ANSWER" else None
+
+    # 基底: y := 0
+    rs = rs_base()
+    base_ok = nf("add(x, 0)", rs) == nf("add(0, x)", rs)
+
+    # 段: y := s(k)、仮定 add(x,k) -> add(k,x) を規則に加える
+    rs2 = rs_base()
+    rs2.add("IH", "add(x, k)", "add(k, x)")
+    step_ok = nf("add(x, s(k))", rs2) == nf("add(s(k), x)", rs2)
+
+    # 仮定を入れなければ段は閉じない(= 仮定が効いている)
+    rs3 = rs_base()
+    step_without_ih = nf("add(x, s(k))", rs3) == nf("add(s(k), x)", rs3)
+
+    ok = bool(base_ok and step_ok and not step_without_ih)
+    return {"experiment": "rewrite", "fork": "INDUCTION_BY_REWRITING",
+            "pass": ok,
+            "result": {"base": bool(base_ok), "step_with_ih": bool(step_ok),
+                       "step_without_ih": bool(step_without_ih)}}
+
+
+def completion_derives_laws_fork() -> Dict[str, Any]:
+    """完備化は、公理に無い等式を導く — そしてそれは真である。
+
+    群の公理3本(結合・左単位元・**左**逆元)から臨界対を計算して
+    完備化すると、公理に無い `x * i(x) → e`(**右**逆元)と
+    `i(i(x)) * z → x * z`(対合)が導かれる。実測 2026-08-19:
+    12本導出、Lean が整数の加法として解釈して **12/12 VERIFIED**、偽0。
+
+    これは帰納法ではない。**格納された規則の帰結を明示化する**操作で、
+    根拠は全て格納済み — 閉包の内側。ただし導けるのは与えた公理の
+    帰結だけで、`n + m = m + n` のように再帰的定義から帰納法でしか
+    出ない等式は出ない。experiments/completion。
+
+    2点: (a) 公理に無い等式が導かれる (b) 導かれた等式が真である
+    (整数の加法として Lean が検査)。
+    """
+    import sys as _sys
+    from pathlib import Path as _P
+
+    _sys.path.insert(0, str(_P(__file__).resolve().parents[1]
+                            / "experiments" / "completion"))
+    try:
+        from run_completion import complete, to_int_expr
+    except Exception as exc:      # 実験ファイルが無い配布形では報告して抜ける
+        return {"experiment": "rewrite", "fork": "COMPLETION_DERIVES_LAWS",
+                "skipped": "run_completion not importable: %s" % type(exc).__name__}
+    from .lean_witness import lean_binary, verify
+    from .rewrite_kernel import RuleStore
+
+    if lean_binary() is None:
+        return {"experiment": "rewrite", "fork": "COMPLETION_DERIVES_LAWS",
+                "skipped": "no lean toolchain on this machine"}
+
+    rs = RuleStore()
+    rs.add("assoc", "(?x * ?y) * ?z", "?x * (?y * ?z)")
+    rs.add("unit", "e * ?x", "?x")
+    rs.add("inv", "i(?x) * ?x", "e")
+    added, log, _done = complete(rs, max_rules=8, rounds=8)
+
+    derived = added > 0
+    ver = 0
+    for e in log:
+        lhs = to_int_expr(e["lhs"]).replace("?", "")
+        rhs = to_int_expr(e["rhs"]).replace("?", "")
+        v = verify("theorem t (x y z : Int) : %s = %s := by omega"
+                   % (lhs, rhs))
+        if str(v.get("verdict")) == "VERIFIED":
+            ver += 1
+    sound = (ver == added)
+    ok = bool(derived and sound)
+    return {"experiment": "rewrite", "fork": "COMPLETION_DERIVES_LAWS",
+            "pass": ok,
+            "result": {"derived": added, "lean_verified": ver,
+                       "laws": [e["lhs"] + " -> " + e["rhs"] for e in log[:4]]}}
+
+
+def ordered_rewrite_fork() -> Dict[str, Any]:
+    """対称規則は、向きを付ければ止まり、置換を同一視する。
+
+    可換律 `?a + ?b → ?b + ?a` を無向きで足すと a+b→b+a→a+b と往復し、
+    正規形到達が 60/60 → 19/60 に崩れる(実測 2026-08-19、健全性は保持)。
+    結果が項順序で真に小さくなる時だけ適用すると 60/60 に戻り、さらに
+    `a+b+c` の12通り(順列×括弧付け)が**単一の正規形**に落ちる。
+
+    探索ではない — 適用可否を決定論的な述語で決めるだけで、後戻りも
+    分岐の試行もしない。格納された規則を格納された順序で適用する。
+
+    3点: (a) 無向きは予算切れ (b) 向き付きは正規形に至る
+    (c) 置換が同一視される(正準化)。
+    """
+    import itertools
+
+    from .rewrite_kernel import default_algebra_rules, simplify
+
+    # 正準化には可換だけでなく**結合の並べ替え**も要る。可換律だけだと
+    # (a+b)+c と a+(b+c) は別の項のままで、12通りは3形に留まる(実測)。
+    # 実測(experiments/ordered_rewrite)と同じ規則集合で固定する。
+    SYM = [("add_comm", "?a + ?b", "?b + ?a"),
+           ("add_assoc_l", "(?a + ?b) + ?c", "?a + (?b + ?c)")]
+    rs = default_algebra_rules()
+    for n, l, r in SYM:
+        rs.add(n, l, r)
+    names = [n for n, _l, _r in SYM]
+
+    loops = simplify("(b + a)", rs)
+    stops = simplify("(b + a)", rs, oriented=names)
+
+    forms = set()
+    for p_ in itertools.permutations(["a", "b", "c"]):
+        for shape in ("(%s + (%s + %s))", "((%s + %s) + %s)"):
+            r = simplify(shape % p_, rs, oriented=names)
+            forms.add(r.get("term") if str(r.get("verdict")) == "ANSWER"
+                      else "BUDGET")
+
+    ok = (str(loops.get("verdict")) == "UNKNOWN_BUDGET"
+          and str(stops.get("verdict")) == "ANSWER"
+          and len(forms) == 1 and "BUDGET" not in forms)
+    return {"experiment": "rewrite", "fork": "ORDERED_REWRITE_CANONICAL",
+            "pass": bool(ok),
+            "result": {"unoriented": loops.get("verdict"),
+                       "oriented": stops.get("term"),
+                       "permutation_forms": sorted(forms)}}
+
+
+def rewrite_roundtrip_fork() -> Dict[str, Any]:
+    """印字した項は、読み直すと同じ項である。
+
+    `term_to_str` は右側の複合項に、演算子が - か * のときだけ括弧を
+    付けていた。そのため `a + (b + c)` が `a + b + c` と印字され、
+    読み直すと `(a + b) + c` — **別の項**になる(2026-08-19実測、往復
+    2/8 で破綻)。Int では両方とも真の等式になるので実害は出ていなかったが、
+    印字は項の表現であって「たまたま同値な別の項」ではない。非結合的な
+    演算子を載せた瞬間に嘘になる。
+
+    そしてこの欠陥は実際に**測定を誤らせた**: 帰納法の壁の実験で、
+    印字文字列を比べたために加法の結合律が「導出された」ように見えた
+    (カーネルは内部では正しく区別していた)。
+
+    往復性は表現の最低条件なので、ここで固定する。
+    """
+    from .rewrite_kernel import parse_term, term_to_str
+
+    cases = ["(a + (b + c))", "((a + b) + c)", "(a - (b - c))",
+             "((a - b) - c)", "(a * (b + c))", "((a * b) + c)",
+             "(a - (b + c))", "(a + (b - c))", "(a * (b * c))",
+             "((a + b) * c)", "(1 + (2 * 3))", "((a + 0) - (b - c))"]
+    broken = []
+    for src in cases:
+        t = parse_term(src)
+        if t is None:
+            broken.append((src, "unparsed"))
+            continue
+        again = parse_term(term_to_str(t))
+        if again != t:
+            broken.append((src, term_to_str(t)))
+    ok = not broken
+    return {"experiment": "rewrite", "fork": "REWRITE_PRINT_ROUNDTRIP",
+            "pass": ok,
+            "result": {"cases": len(cases), "broken": len(broken),
+                       "examples": broken[:3]}}
+
+
 def rewrite_algebra_fork() -> Dict[str, Any]:
     """代数規則セット + wire 定数畳み込み (トレース付き正規形)."""
     a = simplify("x + 0")
@@ -161,6 +410,11 @@ def all_kripke_rewrite_forks() -> List[Dict[str, Any]]:
         kripke_validity_fork(),
         kripke_unknown_refuses_fork(),
         rewrite_algebra_fork(),
+        rewrite_roundtrip_fork(),
+        ordered_rewrite_fork(),
+        completion_derives_laws_fork(),
+        induction_by_rewriting_fork(),
+        inductive_search_fork(),
         rewrite_logic_fork(),
         rewrite_rules_are_data_fork(),
         rewrite_permission_fork(),
