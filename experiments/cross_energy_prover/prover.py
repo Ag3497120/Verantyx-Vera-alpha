@@ -722,9 +722,14 @@ class Prover:
             self.ledger.failed.add(key)
             return False, "too_large"
 
-        a = nf(lhs, self.rules, self.oriented)
-        b = nf(rhs, self.rules, self.oriented)
+        # 直接検査にも ml 文脈を供給(PREREG10 — 同じ門を全検査で)
+        _fired_d: List[str] = []
+        a = nf(lhs, self.rules + self.ml_rules,
+               self.oriented + self.ml_oriented, fired=_fired_d)
+        b = nf(rhs, self.rules + self.ml_rules,
+               self.oriented + self.ml_oriented, fired=_fired_d)
         if a is not None and b is not None and a == b:
+            self._cite(_fired_d)
             self.ledger.proved[key] = "direct"
             return True, "direct"
 
