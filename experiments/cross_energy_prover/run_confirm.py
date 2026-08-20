@@ -71,7 +71,14 @@ def to_lean(t):
     raise ValueError(op)
 
 
-TACTICS = ["simp", "omega", "simp <;> omega"]
+# omega は線形算術のみ・素の simp は乗法の結合/分配の補題を引かない。
+# B9/B12(真の定理)が UNPROVEN_ALL_TACTICS になった実測を受けて、核の
+# 補題を名指しする戦術を足した — 検査器の修理であって基準の変更ではない
+# (induction_by_rewriting の「omega が全目標消化後に失敗」と同じ型)。
+TACTICS = ["simp", "omega", "simp <;> omega",
+           "simp [Nat.add_mul, Nat.mul_add]",
+           "simp [Nat.mul_assoc]",     # 混ぜた simp 集合は落ちる(実測) —
+           "ac_rfl"]                   # 単独指定と ac_rfl が確実に閉じる
 
 
 def lean_lemma(lhs, rhs):

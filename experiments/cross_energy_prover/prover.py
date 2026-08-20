@@ -269,15 +269,39 @@ def _abstract(t: Any, alien_ok) -> List[Tuple[Any, Dict[str, Any]]]:
     for st in subterms(t):
         if not isinstance(st, str) and alien_ok(st) and st not in aliens:
             aliens.append(st)
+    # PREREG3 変更1: マスク列挙(先頭3個)に、極小異質項の一括変数化と
+    # 極大異質項の一括変数化を**追加**する。一般結合律のような3箇所同時の
+    # 抽象は、マスクの走査順では構造的に生まれなかった(確認2の実測)。
+    def _contains(big: Any, small: Any) -> bool:
+        return big != small and small in subterms(big)
+
+    minimal = [a for a in aliens
+               if not any(_contains(a, b) for b in aliens)]
+    maximal = [a for a in aliens
+               if not any(_contains(b, a) for b in aliens)]
+    extra_sets = []
+    if minimal:
+        extra_sets.append(minimal[:4])
+    if maximal and maximal != minimal:
+        extra_sets.append(maximal[:4])
+
     aliens = aliens[:3]
+    chosen_sets = [
+        [a for i, a in enumerate(aliens) if mask >> i & 1]
+        for mask in range(1, 1 << len(aliens))
+    ] + extra_sets
     out: List[Tuple[Any, Dict[str, Any]]] = []
-    for mask in range(1 << len(aliens)):
-        chosen = [a for i, a in enumerate(aliens) if mask >> i & 1]
+    for chosen in chosen_sets:
         if not chosen:
             continue
         env: Dict[str, Any] = {}
-        fresh_l = iter(["x", "y", "z"])
-        fresh_n = iter(["a", "b", "c"])
+        # 既に t に居る変数名は新変数に使わない(衝突すると別物が同一視
+        # される)。極小/極大の一括変数化では3個以上要るので池も広げる。
+        _used = set(t_vars(t))
+        fresh_l = iter([n for n in ("x", "y", "z", "l", "m")
+                        if n not in _used])
+        fresh_n = iter([n for n in ("a", "b", "c", "n")
+                        if n not in _used])
         def repl(u: Any) -> Any:
             for c in chosen:
                 if u == c:
@@ -497,15 +521,27 @@ def is_symmetric(l: Any, r: Any) -> bool:
 
 class Prover:
     def __init__(self, rules: Optional[List[Tuple[str, str, str]]] = None,
-                 max_depth: int = 3, wave: int = 6) -> None:
+                 max_depth: int = 3, wave: int = 6,
+                 proof_ledger: Any = None) -> None:
         self.rules = list(rules or DEFS)
         self.oriented: List[str] = []
         self.ledger = TrialLedger()
+        # 永続の台帳(verantyx.proof_ledger.ProofLedger)。渡されたときだけ
+        # 書く — 実験の決定論は不変(台帳は読み書きされるが票を持たない)。
+        self.persist = proof_ledger
         self.max_depth = max_depth
         self.wave = wave          # 1つの詰まりで試す候補数(十字の腕数)
         self.stats = {"nodes": 0, "invented": 0, "refuted_pruned": 0,
                       "lemmas": []}
         self.trace: List[Dict[str, Any]] = []
+        # 前セッションの失敗をエネルギー減点に流し込む — プロセスを跨いだ
+        # 「二度目は探索でなく参照」。proved は規則にはしない(規則昇格は
+        # このプロセスで再証明されたものだけ — 台帳は記憶であって公理でない)。
+        if self.persist is not None:
+            for k, status in self.persist.trials.items():
+                if status == "failed" and " = " in k:
+                    l, r = k.split(" = ", 1)
+                    self.ledger.failed.add((l, r))
 
     # -- 補題の昇格 --------------------------------------------------------
     def _promote(self, name: str, l: Any, r: Any) -> None:
@@ -552,6 +588,8 @@ class Prover:
             if len(self.rules) == n_rules:
                 break
         self.ledger.failed.add(key)
+        if self.persist is not None:
+            self.persist.record_trial(key[0], key[1], "failed")
         return False, "no_induction_closed"
 
     def _induct(self, lhs: Any, rhs: Any, v: str, depth: int,
@@ -618,11 +656,15 @@ class Prover:
                 continue
             name = "L%d" % len(self.rules)
             self._promote(name, cand["lhs"], cand["rhs"])
-            self.stats["lemmas"].append(
-                "%s: %s = %s" % (name, term_to_str(cand["lhs"]),
-                                 term_to_str(cand["rhs"])
-                                 if not isinstance(cand["rhs"], str)
-                                 else cand["rhs"]))
+            _ls = term_to_str(cand["lhs"])
+            _rs = (term_to_str(cand["rhs"])
+                   if not isinstance(cand["rhs"], str) else cand["rhs"])
+            self.stats["lemmas"].append("%s: %s = %s" % (name, _ls, _rs))
+            if self.persist is not None:
+                self.persist.add_lemma(
+                    _ls, _rs, how=_how, origin_goal=dump["center"],
+                    ground_passed=cand["ground_passed"])
+                self.persist.record_trial(_ls, _rs, "proved")
             used.append(name)
             a = nf(s0, self.rules + ctx, self.oriented)
             b = nf(s1, self.rules + ctx, self.oriented)

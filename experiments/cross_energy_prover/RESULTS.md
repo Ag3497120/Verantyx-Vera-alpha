@@ -54,6 +54,38 @@ PREREG.md / PREREG2.md、生データは results_dev.json / results_confirm.json
 - 発明された補題には冗長なもの(C4 の L11〜L17)が混ざる。全て真で
   Lean 検査済みだが、最小の梯子ではない。
 
+## 追補: 確認3(PREREG3、2026-08-20) — C1が閉じ、台帳が器官に刻まれた
+
+変更2つ(事前登録どおり): ①同時抽象 — 極小/極大異質項の一括変数化を
+マスク列挙に**追加**。②verantyx/proof_ledger.py — 補題(lean証人つき)・
+試行台帳(プロセス跨ぎの failed_before)・未証明目標(gap_graph.GapNode)
+への**ネイティブ配線**(MCP不経由 — 扉は薄い束縛、器官の唯一の写しに
+しない)。MCPサーバー実測: 扉131本中114本は薄い束縛で、資産の本体は
+既にネイティブ。>40行の厚い扉17本は棚卸し対象として残る。
+
+結果(results_confirm3.json):
+
+    C1 rev(app(x,y)) = app(rev(y),rev(x))   ← **閉じた**。一般結合律
+       app(app(?x,?y),?z)→app(?x,app(?y,?z)) を極小異質項の同時抽象が
+       生成し、発明補題4本で証明(16ノード)
+    確認2で通った11本                        退行なし
+    目標台帳バッテリー B1..B12               9/12 証明
+    主張の Lean 検査                         **21/21 VERIFIED、不健全0**
+    台帳: 補題57本(**Lean 57/57 VERIFIED**)・試行59・未証明目標3
+         (B1/B7/B10、failure_type と needs つきで gaps に実在)
+
+検査器の修理2件(基準の変更ではない、induction_by_rewriting と同じ型):
+omega は非線形不可・素の simp は乗法の結合/分配を引かない — B9/B12 は
+真の定理なのに UNPROVEN_ALL_TACTICS になった。`simp [Nat.add_mul,
+Nat.mul_add]`・`simp [Nat.mul_assoc]`・`ac_rfl` を戦術に追加。補題を
+混ぜた simp 集合は落ちる(実測)ので単独指定。
+
+未証明3本の敗因(台帳に記録済み):
+- B7 mul(a,s(0))=a: 詰まり s(add(0,kn)) に抽象すべき異質項が無い
+  (kn はサイズ1)。**改名のみの候補**(抽象ゼロ+fresh改名)が要る —
+  次の事前登録の単一変更候補
+- B1/B10: add の可換・入れ子を跨ぐ補題連鎖。LPO/KBO と一般AC宣言の領域
+
 ## 位置づけ(未解決問題への正直な距離)
 
 これは「未解決問題を解く」装置ではまだない。示したのは:
