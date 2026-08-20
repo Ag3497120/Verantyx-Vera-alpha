@@ -187,8 +187,12 @@ MAX_TERM = 80   # 項サイズの門。超えたら None(予算切れと同じ�
 
 
 def nf(term: Any, rules: List[Tuple[str, str, str]],
-       oriented: Optional[List[str]] = None, budget: int = 600) -> Optional[Any]:
-    """正規形(AC正規化込み)。予算切れ・サイズ超過は None — 一致ではない。"""
+       oriented: Optional[List[str]] = None, budget: int = 600,
+       fired: Optional[List[str]] = None) -> Optional[Any]:
+    """正規形(AC正規化込み)。予算切れ・サイズ超過は None — 一致ではない。
+
+    ``fired`` にリストを渡すと、発火した規則名が追記される(引用の記録)。
+    """
     if not isinstance(term, str) and t_size(term) > MAX_TERM:
         return None
     e = term if isinstance(term, str) else term_to_str(term)
@@ -200,6 +204,8 @@ def nf(term: Any, rules: List[Tuple[str, str, str]],
         return None
     if str(r.get("verdict")) != "ANSWER":
         return None
+    if fired is not None:
+        fired.extend(s["rule"] for s in r.get("steps", []))
     out = parse_term(r.get("term"))
     if t_size(out) > MAX_TERM:
         return None
@@ -596,10 +602,69 @@ def is_symmetric(l: Any, r: Any) -> bool:
             and sorted(map(str, l[1:])) == sorted(map(str, r[1:])))
 
 
+def load_mathlib_context(path: Optional[Path] = None):
+    """mathlib等式断片を手渡し用の文脈規則に変換する(PREREG7)。
+
+    昇格も蓄積もしない — IH と同じ「この文脈でだけ使ってよい規則」の席。
+    演算子を署名に写し(+→add, *→mul)、向きは LPO(normal/reversed は
+    無条件適用、比較不能は既存の順序門つき)。返り値:
+    (rules[(name,lhs,rhs)], oriented_names)。名前は ml: 接頭辞 —
+    発火の引用が台帳で mathlib 由来と分かる。
+    """
+    import json as _json
+    p = path or (Path.home() / "Projects" / "vera-corpus" / "build"
+                 / "mathlib_eq_rules.json")
+    if not p.exists():
+        return [], []
+    rows = _json.loads(p.read_text(encoding="utf-8")).get("rules", [])
+
+    def conv(side: str) -> Optional[str]:
+        t = parse_term(side)
+        if t is None:
+            return None
+        def go(u):
+            if isinstance(u, tuple):
+                op = {"+": "add", "*": "mul"}.get(u[0], u[0])
+                return (op,) + tuple(go(a) for a in u[1:])
+            return u
+        return term_to_str(go(t))
+
+    rules, oriented = [], []
+    skipped: List[str] = []
+    load_mathlib_context.skipped = skipped   # 報告用(不搭載の明示)
+    for r in rows:
+        pl, pr = conv(r["lhs"]), conv(r["rhs"])
+        if pl is None or pr is None:
+            continue
+        def strip(u):
+            if isinstance(u, str) and u.startswith("?"):
+                return u[1:] if u[1:] in VAR_TYPES else "a"
+            if isinstance(u, tuple):
+                return (u[0],) + tuple(strip(x) for x in u[1:])
+            return u
+        tl, tr = strip(parse_term(pl)), strip(parse_term(pr))
+        name = "ml:" + r["name"]
+        # AC冗長規則は渡さない(PREREG9)。この証明器の「一致」は既に
+        # ac_norm(比較の正規化)が担っており、可換・結合・回転の族を
+        # 書き換え規則としても渡すと「一致」の意味が二重化して循環する
+        # (実測: comm が 297/600 発で段が予算切れ — fork 168 の再発)。
+        if ac_norm(tl) == ac_norm(tr):
+            skipped.append(name)
+            continue
+        _l, _r, kind = orient_by_lpo(tl, tr)
+        if kind == "reversed":
+            pl, pr = pr, pl
+        rules.append((name, pl, pr))
+        if kind == "undirected":
+            oriented.append(name)
+    return rules, oriented
+
+
 class Prover:
     def __init__(self, rules: Optional[List[Tuple[str, str, str]]] = None,
                  max_depth: int = 3, wave: int = 6,
-                 proof_ledger: Any = None) -> None:
+                 proof_ledger: Any = None,
+                 mathlib_context: Optional[Tuple[List, List]] = None) -> None:
         self.rules = list(rules or DEFS)
         self.oriented: List[str] = []
         self.ledger = TrialLedger()
@@ -608,8 +673,11 @@ class Prover:
         self.persist = proof_ledger
         self.max_depth = max_depth
         self.wave = wave          # 1つの詰まりで試す候補数(十字の腕数)
+        # mathlib 手渡し文脈(PREREG7)。票を持たず、昇格せず、nf の文脈に
+        # だけ供給される。cited に発火した mathlib 名が溜まる。
+        self.ml_rules, self.ml_oriented = mathlib_context or ([], [])
         self.stats = {"nodes": 0, "invented": 0, "refuted_pruned": 0,
-                      "lemmas": []}
+                      "lemmas": [], "cited": []}
         self.trace: List[Dict[str, Any]] = []
         # 前セッションの失敗をエネルギー減点に流し込む — プロセスを跨いだ
         # 「二度目は探索でなく参照」。proved は規則にはしない(規則昇格は
@@ -619,6 +687,11 @@ class Prover:
                 if status == "failed" and " = " in k:
                     l, r = k.split(" = ", 1)
                     self.ledger.failed.add((l, r))
+
+    def _cite(self, fired: List[str]) -> None:
+        for n in fired:
+            if n.startswith("ml:") and n not in self.stats["cited"]:
+                self.stats["cited"].append(n)
 
     # -- 補題の昇格 --------------------------------------------------------
     def _promote(self, name: str, l: Any, r: Any) -> None:
@@ -680,8 +753,16 @@ class Prover:
         step_val: Any = ("s", "kn") if ty == "N" else ("cons", "h0", "kl")
         k_const = "kn" if ty == "N" else "kl"
 
-        b0 = nf(t_subst(lhs, {v: base_val}), self.rules, self.oriented)
-        b1 = nf(t_subst(rhs, {v: base_val}), self.rules, self.oriented)
+        # mathlib 手渡し(PREREG7): 基底・段の検査の文脈にだけ供給。
+        # 昇格しない。発火は cited に引用として残る。
+        _fired: List[str] = []
+
+        def _ctx_nf(t, extra):
+            return nf(t, self.rules + extra + self.ml_rules,
+                      self.oriented + self.ml_oriented, fired=_fired)
+
+        b0 = _ctx_nf(t_subst(lhs, {v: base_val}), [])
+        b1 = _ctx_nf(t_subst(rhs, {v: base_val}), [])
         if b0 is None or b1 is None:
             return False, "base_budget"
         if b0 != b1:
@@ -689,16 +770,17 @@ class Prover:
             ok, _ = self._close_stuck(b0, b1, depth, seen)
             if not ok:
                 return False, "base_open"
-            b0 = nf(t_subst(lhs, {v: base_val}), self.rules, self.oriented)
-            b1 = nf(t_subst(rhs, {v: base_val}), self.rules, self.oriented)
+            b0 = _ctx_nf(t_subst(lhs, {v: base_val}), [])
+            b1 = _ctx_nf(t_subst(rhs, {v: base_val}), [])
             if b0 is None or b0 != b1:
                 return False, "base_open"
 
         ih = [("IH", generalise_str(t_subst(lhs, {v: k_const})),
                generalise_str(t_subst(rhs, {v: k_const})))]
-        s0 = nf(t_subst(lhs, {v: step_val}), self.rules + ih, self.oriented)
-        s1 = nf(t_subst(rhs, {v: step_val}), self.rules + ih, self.oriented)
+        s0 = _ctx_nf(t_subst(lhs, {v: step_val}), ih)
+        s1 = _ctx_nf(t_subst(rhs, {v: step_val}), ih)
         if s0 is not None and s1 is not None and s0 == s1:
+            self._cite(_fired)
             return True, "induction on %s" % v
         if s0 is None or s1 is None:
             return False, "step_budget"
@@ -708,9 +790,10 @@ class Prover:
         ok, used = self._close_stuck(s0, s1, depth, seen, extra=ih)
         if not ok:
             return False, "step_open"
-        s0 = nf(t_subst(lhs, {v: step_val}), self.rules + ih, self.oriented)
-        s1 = nf(t_subst(rhs, {v: step_val}), self.rules + ih, self.oriented)
+        s0 = _ctx_nf(t_subst(lhs, {v: step_val}), ih)
+        s1 = _ctx_nf(t_subst(rhs, {v: step_val}), ih)
         if s0 is not None and s1 is not None and s0 == s1:
+            self._cite(_fired)
             return True, "induction on %s + %s" % (v, used)
         return False, "step_open_after_lemmas"
 
@@ -724,6 +807,16 @@ class Prover:
         証明そのものには渡さない — 補題は文脈の外でも真でなければ
         規則に昇格できない。
         """
+        # 参照が発明に先行する: mathlib 文脈だけで閉じるならここで終わり
+        if self.ml_rules:
+            _fired0: List[str] = []
+            a0 = nf(s0, self.rules + list(extra or []) + self.ml_rules,
+                    self.oriented + self.ml_oriented, fired=_fired0)
+            b0_ = nf(s1, self.rules + list(extra or []) + self.ml_rules,
+                     self.oriented + self.ml_oriented, fired=_fired0)
+            if a0 is not None and b0_ is not None and a0 == b0_:
+                self._cite(_fired0)
+                return True, "mathlib_context"
         cands = invent_candidates(s0, s1, self.rules)
         self.stats["invented"] += len(cands)
         ranked, dump = cross_agenda(cands, s0, s1, self.ledger)
@@ -746,8 +839,12 @@ class Prover:
                     ground_passed=cand["ground_passed"])
                 self.persist.record_trial(_ls, _rs, "proved")
             used.append(name)
-            a = nf(s0, self.rules + ctx, self.oriented)
-            b = nf(s1, self.rules + ctx, self.oriented)
+            _fired2: List[str] = []
+            a = nf(s0, self.rules + ctx + self.ml_rules,
+                   self.oriented + self.ml_oriented, fired=_fired2)
+            b = nf(s1, self.rules + ctx + self.ml_rules,
+                   self.oriented + self.ml_oriented, fired=_fired2)
             if a is not None and b is not None and a == b:
+                self._cite(_fired2)
                 return True, "+".join(used)
         return (False, "") if not used else (False, "+".join(used))

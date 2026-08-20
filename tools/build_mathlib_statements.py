@@ -79,6 +79,44 @@ def split_header(header: str):
 
 _SECTION = re.compile(r"^section(\s+[A-Za-z0-9_.']+)?\s*$")
 _VARIABLE = re.compile(r"^variable[s]?\s+(.*)$")
+_CLASS = re.compile(r"^(?:@\[[^\]]*\]\s*)?class\s+([A-Za-z0-9_.'₀-₉]+)")
+_FIELD = re.compile(r"^\s{2,}(?:protected\s+)?([a-z][A-Za-z0-9_']*)\s*:"
+                    r"\s*(∀.+)$")
+
+
+def class_fields(path: Path):
+    """`class X … where` のフィールド(∀ 形の等式公理)を定理と同格に拾う。
+
+    zero_mul / mul_zero / zero_add 等は mathlib では定理でなくクラスの
+    フィールド — 旧抽出の「クラスのフィールドは構造上不在」の穴
+    (PREREG8)。健全性は呼び出し側の決定門が持つ。
+    """
+    lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+    i = 0
+    while i < len(lines):
+        m = _CLASS.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        cls = m.group(1)
+        # where までヘッダを辿る(extends 節が複数行のことがある)
+        j = i
+        while j < len(lines) and "where" not in lines[j] and j - i < 8:
+            j += 1
+        j += 1
+        # インデントされたフィールド行を読む(空行は許す、dedent で終了)
+        while j < len(lines):
+            ln = lines[j]
+            if ln.strip() == "":
+                j += 1
+                continue
+            if not ln.startswith("  "):
+                break
+            f = _FIELD.match(ln)
+            if f:
+                yield f"{cls}.{f.group(1)}", f.group(2).strip(), j + 1
+            j += 1
+        i = j
 
 
 def _binder_groups(text: str):
@@ -356,6 +394,26 @@ def main():
                 else:
                     rejected.append({"name": twin.casefold(),
                                      "why": "twin_refuted_or_unparsed"})
+
+    # クラスフィールド(PREREG8): 定理と同格に、同じ決定門を通す
+    for p in files:
+        rel = str(p.relative_to(MATHLIB))
+        if not rel.startswith("Mathlib/") or rel.startswith("Mathlib/Tactic"):
+            continue
+        for fname, stmt, line in class_fields(p):
+            key = fname.casefold()
+            if key in stmts:
+                continue
+            stmts[key] = {"stmt": stmt, "binders": [], "file": rel,
+                          "line": line, "kind": "class_field"}
+            r = nat_eq_rule(key, [], stmt)
+            if r is None:
+                continue
+            if "__rejected__" in r:
+                rejected.append({"name": key, "why": r["__rejected__"]})
+            else:
+                r["kind"] = "class_field"
+                eq_rules.append(r)
 
     # 証人はファイル単位(旧店の kernel 検証はファイルごと): 証人つき名の
     # 居るファイル = kernel が通したファイル。その中の等式は同じ run の

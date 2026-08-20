@@ -50,7 +50,8 @@ class ProofLedger:
     # -- 補題(証人つき) ----------------------------------------------------
     def add_lemma(self, lhs: str, rhs: str, *, how: str, origin_goal: str,
                   ground_passed: int, lean_verdict: Optional[str] = None,
-                  lean_tactic: Optional[str] = None) -> Dict[str, Any]:
+                  lean_tactic: Optional[str] = None,
+                  cited: Optional[List[str]] = None) -> Dict[str, Any]:
         for row in self.lemmas:
             if row["lhs"] == lhs and row["rhs"] == rhs:
                 if lean_verdict and not row.get("lean_verdict"):
@@ -61,6 +62,9 @@ class ProofLedger:
                "origin_goal": origin_goal, "ground_passed": ground_passed,
                "lean_verdict": lean_verdict, "lean_tactic": lean_tactic,
                "ts": time.time()}
+        if cited:
+            # mathlib 由来の引用 — 参照が発明に先行した証拠を台帳に残す
+            row["cited"] = list(cited)
         self.lemmas.append(row)
         return row
 
