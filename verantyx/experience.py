@@ -119,9 +119,22 @@ def _rows_from_refusals(path: Path, cap: int = 200) -> List[Dict[str, Any]]:
     return out
 
 
+def _resolve_root() -> Path:
+    """リポジトリ根。凍結バイナリでは __file__ が展開先を指すため、
+    ①環境変数 ②__file__ の親(gap_graph.json が居れば) ③cwd の順。"""
+    import os
+    env = os.environ.get("VERA_REPO_ROOT")
+    if env:
+        return Path(env)
+    cand = Path(__file__).resolve().parent.parent
+    if (cand / "gap_graph.json").exists():
+        return cand
+    return Path.cwd()
+
+
 def compile_view(repo_root: Path | None = None) -> Dict[str, Any]:
     """8箇所の在庫を読むだけで9型に写す。元の在庫は不動。"""
-    root = repo_root or Path(__file__).resolve().parent.parent
+    root = repo_root or _resolve_root()
     build = corpus_root() / "build"
     exp = root / "experiments"
     rows: List[Dict[str, Any]] = []
