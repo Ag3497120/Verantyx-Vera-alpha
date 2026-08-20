@@ -31,7 +31,7 @@ def main():
             "htrunc(f,400)": "CONTEXT_BOUND"}
     got = {f["fact"]: f["verdict"] for f in r["facts"]}
     res["L1"] = {"want": want, "got": got, "ok": got == want,
-                 "facts_folded": f"9観測 → {r['n_facts']}事実"}
+                 "facts_folded": f"{sum(len(f['contexts']) for f in r['facts'])}観測 → {r['n_facts']}事実"}
 
     # L2: 合成の偽転移主張を検出
     claims = [
@@ -70,10 +70,15 @@ def main():
     src = Path(__file__).resolve().parents[1] / "harness_algebra" \
         / "harness_facts.json"
     raw = json.loads(src.read_text(encoding="utf-8"))
+    # 文脈鍵は model@battery(2026-08-21、課題集合も文脈と判明した後)。
+    # 検査側が古い鍵のままだと、実装ではなく検査が落ちる — 一度そうなった。
     counted = {}
     for f in raw["facts"]:
         key = normalize_fact(str(f.get("fact", "")))
-        counted.setdefault(key, set()).add(str(f.get("model")))
+        ctx = str(f.get("model"))
+        if f.get("battery"):
+            ctx = f"{ctx}@{f['battery']}"
+        counted.setdefault(key, set()).add(ctx)
     res["L5"] = {k: sorted(v) for k, v in counted.items()}
     res["L5_ok"] = all(
         set(res["L5"].get(f["fact"], [])) == set(f["contexts"])

@@ -4,11 +4,14 @@
    "fact": "hretry(f,3)",
    "verdict": "CONTEXT_BOUND",
    "contexts": {
-    "qwen2.5-0.5b-instruct": "adopt",
-    "qwen2.5-coder-7b-instruct": "abstain",
-    "gemma-2-9b": "abstain"
+    "qwen2.5-0.5b-instruct@easy24": "adopt",
+    "qwen2.5-coder-7b-instruct@easy24": "abstain",
+    "gemma-2-9b@easy24": "abstain",
+    "qwen2.5-0.5b-instruct@hard24": "abstain",
+    "qwen2.5-coder-7b-instruct@hard24": "abstain",
+    "gemma-2-9b@hard24": "abstain"
    },
-   "n_contexts": 3,
+   "n_contexts": 6,
    "raw_names": [
     "hretry(f,3) が成功を増やす",
     "hretry(f,3)"
@@ -18,11 +21,14 @@
    "fact": "htrunc(f,400)",
    "verdict": "CONTEXT_BOUND",
    "contexts": {
-    "qwen2.5-0.5b-instruct": "adopt",
-    "qwen2.5-coder-7b-instruct": "abstain",
-    "gemma-2-9b": "abstain"
+    "qwen2.5-0.5b-instruct@easy24": "adopt",
+    "qwen2.5-coder-7b-instruct@easy24": "abstain",
+    "gemma-2-9b@easy24": "abstain",
+    "qwen2.5-0.5b-instruct@hard24": "harm",
+    "qwen2.5-coder-7b-instruct@hard24": "harm",
+    "gemma-2-9b@hard24": "harm"
    },
-   "n_contexts": 3,
+   "n_contexts": 6,
    "raw_names": [
     "htrunc(f,400) が成功を増やす",
     "htrunc(f,400)"
@@ -32,13 +38,17 @@
    "fact": "htrunc(f,64)",
    "verdict": "TRANSFERRED",
    "contexts": {
-    "qwen2.5-coder-7b-instruct": "harm",
-    "qwen2.5-0.5b-instruct": "harm",
-    "gemma-2-9b": "harm"
+    "qwen2.5-coder-7b-instruct@easy24": "harm",
+    "qwen2.5-0.5b-instruct@easy24": "harm",
+    "gemma-2-9b@easy24": "harm",
+    "qwen2.5-0.5b-instruct@hard24": "harm",
+    "qwen2.5-coder-7b-instruct@hard24": "harm",
+    "gemma-2-9b@hard24": "harm"
    },
-   "n_contexts": 3,
+   "n_contexts": 6,
    "raw_names": [
-    "htrunc(f,64) は害"
+    "htrunc(f,64) は害",
+    "htrunc(f,64)"
    ]
   }
  ],
@@ -54,7 +64,7 @@
    "htrunc(f,64)": "TRANSFERRED"
   },
   "ok": true,
-  "facts_folded": "9観測 → 3事実"
+  "facts_folded": "18観測 → 3事実"
  },
  "L2": [
   {
@@ -63,9 +73,12 @@
    "claimed": "TRANSFERRED",
    "observed": "CONTEXT_BOUND",
    "contexts": {
-    "qwen2.5-0.5b-instruct": "adopt",
-    "qwen2.5-coder-7b-instruct": "abstain",
-    "gemma-2-9b": "abstain"
+    "qwen2.5-0.5b-instruct@easy24": "adopt",
+    "qwen2.5-coder-7b-instruct@easy24": "abstain",
+    "gemma-2-9b@easy24": "abstain",
+    "qwen2.5-0.5b-instruct@hard24": "abstain",
+    "qwen2.5-coder-7b-instruct@hard24": "abstain",
+    "gemma-2-9b@hard24": "abstain"
    },
    "note": "主張と観測が食い違う — 観測が名指す"
   },
@@ -139,19 +152,28 @@
  "L4_ok": true,
  "L5": {
   "hretry(f,3)": [
-   "gemma-2-9b",
-   "qwen2.5-0.5b-instruct",
-   "qwen2.5-coder-7b-instruct"
+   "gemma-2-9b@easy24",
+   "gemma-2-9b@hard24",
+   "qwen2.5-0.5b-instruct@easy24",
+   "qwen2.5-0.5b-instruct@hard24",
+   "qwen2.5-coder-7b-instruct@easy24",
+   "qwen2.5-coder-7b-instruct@hard24"
   ],
   "htrunc(f,400)": [
-   "gemma-2-9b",
-   "qwen2.5-0.5b-instruct",
-   "qwen2.5-coder-7b-instruct"
+   "gemma-2-9b@easy24",
+   "gemma-2-9b@hard24",
+   "qwen2.5-0.5b-instruct@easy24",
+   "qwen2.5-0.5b-instruct@hard24",
+   "qwen2.5-coder-7b-instruct@easy24",
+   "qwen2.5-coder-7b-instruct@hard24"
   ],
   "htrunc(f,64)": [
-   "gemma-2-9b",
-   "qwen2.5-0.5b-instruct",
-   "qwen2.5-coder-7b-instruct"
+   "gemma-2-9b@easy24",
+   "gemma-2-9b@hard24",
+   "qwen2.5-0.5b-instruct@easy24",
+   "qwen2.5-0.5b-instruct@hard24",
+   "qwen2.5-coder-7b-instruct@easy24",
+   "qwen2.5-coder-7b-instruct@hard24"
   ]
  },
  "L5_ok": true,

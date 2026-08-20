@@ -86,7 +86,15 @@ def unify(facts_paths: Optional[List[Path]] = None) -> Dict[str, Any]:
             raw = str(f.get("fact", ""))
             if raw not in slot["raw_names"]:
                 slot["raw_names"].append(raw)
+            # 文脈は**モデルだけではない**。2026-08-21 実測: 課題集合を
+            # 難しくしたら、easy24 で 0.5B 限定だった採択が3モデルとも
+            # 一致に変わり、htrunc(f,400) は採択→害へ反転した。同じ
+            # ハーネス項が課題分布で逆の評価になる — 版を鍵に含めないと、
+            # 台帳は害になる規則を「効く」として手渡すことになる。
             ctx = str(f.get("model", "?"))
+            battery = f.get("battery")
+            if battery:
+                ctx = f"{ctx}@{battery}"
             slot["contexts"][ctx] = cls
             slot["labels"].setdefault(ctx, []).append(
                 str(f.get("verdict", "")))
