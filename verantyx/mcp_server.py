@@ -1851,6 +1851,31 @@ def serve(store_path: str) -> int:
         return json.dumps(_prove(lhs, rhs), ensure_ascii=False, default=str)
 
     @mcp.tool()
+    def vera_experience(state: str = "", limit: int = 20) -> str:
+        """The experience ledger, read-only: everything this system has
+        PROVED, REFUTED, failed at, refused, imported, or measured,
+        compiled from its scattered stores into nine evidence states —
+        CLAIM / EVIDENCE / GAP / FAILURE / COUNTEREXAMPLE / TRANSFER /
+        RULE / PROCEDURE / WITNESS. これは Memory ではなく経験のコン
+        パイル: 各行が出所ファイルを名指し、原本に辿れない行は台帳に
+        居られない。The stores themselves are never modified — this is
+        a view, not a merge (束ねない). Pass `state` to filter one
+        state; empty returns the counts and sources. Measured at birth
+        (2026-08-20): 1,509 rows from 27 sources, including 318
+        counterexamples that previously had no first-class home."""
+        from .experience import compile_view
+
+        v = compile_view()
+        if not state:
+            return json.dumps({k: v[k] for k in
+                               ("counts", "n_rows", "sources", "note")},
+                              ensure_ascii=False, default=str)
+        rows = [r for r in v["rows"] if r["state"] == state.upper()]
+        return json.dumps({"state": state.upper(), "total": len(rows),
+                           "rows": rows[:max(1, limit)]},
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def vera_prove_sections(lhs: str, rhs: str) -> str:
         """The stereo cross reading of a proof: derive from each section.
 
