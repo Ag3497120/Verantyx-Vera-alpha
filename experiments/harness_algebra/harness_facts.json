@@ -50,8 +50,33 @@
    "measured": "6→2 (−4)、再現 −4、反転 0(abstain) — ラベル不安定",
    "verdict": "HARMFUL_UNSTABLE",
    "witness": null
+  },
+  {
+   "fact": "hretry(f,3)",
+   "model": "gemma-2-9b",
+   "measured": "24→24 (+0) 全走",
+   "verdict": "ABSTAIN(天井)",
+   "witness": "verified:run:gemma-2-9b@2026-08-20"
+  },
+  {
+   "fact": "htrunc(f,400)",
+   "model": "gemma-2-9b",
+   "measured": "24→24 (+0) 全走",
+   "verdict": "ABSTAIN(天井)",
+   "witness": "verified:run:gemma-2-9b@2026-08-20"
+  },
+  {
+   "fact": "htrunc(f,64) は害",
+   "model": "gemma-2-9b",
+   "measured": "24→18 (−6) 全走一致",
+   "verdict": "HARMFUL",
+   "witness": "verified:run:gemma-2-9b@2026-08-20"
   }
  ],
  "transfer": "小で採択の2事実は中では棄権(天井) — モデル縛りの実証",
- "ts": 1787227464.519874
+ "ts": 1787227464.519874,
+ "contour_3models": {
+  "retry3/trunc400": "0.5Bのみ採択。7B(Qwen科)・9B(gemma科)は天井で棄権 — 輪郭は科でなく能力の天井で決まる(この課題集合では)",
+  "trunc64": "7B −6 / 9B −6 全走一致(同数!)。0.5B も害方向 — 情報破壊由来の害はモデルを跨いで生き残り、モデルの弱さ由来の利得は跨がない"
+ }
 }
