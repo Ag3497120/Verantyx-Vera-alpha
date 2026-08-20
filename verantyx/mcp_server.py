@@ -1876,6 +1876,30 @@ def serve(store_path: str) -> int:
                           ensure_ascii=False, default=str)
 
     @mcp.tool()
+    def vera_transfer() -> str:
+        """Which of this system's learned facts survived a change of
+        context, and which were bound to the one they were learned in.
+
+        The calibration step `transfer_outcomes` deliberately deferred
+        ("no calibration analysis ... those need real accumulated data to
+        be anything but a guess"), now that data exists. Measured
+        2026-08-20 across three local models: 9 observations fold into 3
+        facts — truncating input to 64 chars is HARMFUL in all three
+        (TRANSFERRED), while retry×3 and truncate-to-400 help only the
+        0.5B model (CONTEXT_BOUND).
+
+        The machine reports WHETHER a fact transferred, never WHY. A
+        dimension ("this is grounded in the task structure, so it should
+        transfer") is a human hypothesis and needs its own evidence; the
+        ledger carries hypotheses but does not invent them. A fact seen
+        in one context only is UNKNOWN_SINGLE_CONTEXT — no prediction —
+        and a dimension with too few observations returns
+        UNKNOWN_TOO_FEW_CONTEXTS rather than a number."""
+        from .transfer_reading import read as _read
+
+        return json.dumps(_read(), ensure_ascii=False, default=str)
+
+    @mcp.tool()
     def vera_prove_sections(lhs: str, rhs: str) -> str:
         """The stereo cross reading of a proof: derive from each section.
 

@@ -668,6 +668,40 @@ def attest_polarity_fork() -> Dict[str, Any]:
                        "agreement": agree.get("verdict")}}
 
 
+def transfer_reading_fork() -> Dict[str, Any]:
+    """転移は数える。なぜ転移したかは主張しない(fork 171本目)。
+
+    `transfer_outcomes` が「実データが溜まるまで」と保留した較正段。
+    4点固定: (a) 全文脈で一致した事実は TRANSFERRED (b) 割れた事実は
+    CONTEXT_BOUND (c) 1文脈しか無い事実は UNKNOWN_SINGLE_CONTEXT —
+    予測しない (d) 観測が閾値未満の次元は数字を出さず
+    UNKNOWN_TOO_FEW_CONTEXTS。
+    """
+    from .transfer_reading import calibrate, judge_transfer
+
+    agree = judge_transfer({"fact": "h(a)", "raw_names": ["h(a)"],
+                            "contexts": {"m1": "harm", "m2": "harm",
+                                         "m3": "harm"},
+                            "labels": {}, "source": "fixture"})
+    split = judge_transfer({"fact": "h(b)", "raw_names": ["h(b)"],
+                            "contexts": {"m1": "adopt", "m2": "abstain"},
+                            "labels": {}, "source": "fixture"})
+    lone = judge_transfer({"fact": "h(c)", "raw_names": ["h(c)"],
+                           "contexts": {"m1": "adopt"},
+                           "labels": {}, "source": "fixture"})
+    thin = calibrate([lone], {"h(c)": "薄い次元"})["薄い次元"]
+    counted = calibrate([agree, split], {"h(a)": "d", "h(b)": "d"})["d"]
+    ok = (agree["verdict"] == "TRANSFERRED"
+          and split["verdict"] == "CONTEXT_BOUND"
+          and lone["verdict"] == "UNKNOWN_SINGLE_CONTEXT"
+          and thin["verdict"] == "UNKNOWN_TOO_FEW_CONTEXTS"
+          and counted["verdict"] == "COUNTED")
+    return {"fork": "TRANSFER_READING", "pass": bool(ok),
+            "result": {"agree": agree["verdict"], "split": split["verdict"],
+                       "single": lone["verdict"], "thin": thin["verdict"],
+                       "counted": counted["verdict"]}}
+
+
 def norm_vs_record_fork() -> Dict[str, Any]:
     """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
 
@@ -4736,6 +4770,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         reverse_specific_fork(),
         prover_three_outcomes_fork(),
         attest_polarity_fork(),
+        transfer_reading_fork(),
         norm_vs_record_fork(),
         quote_is_substring_fork(),
         read_at_shows_both_sides_fork(),
