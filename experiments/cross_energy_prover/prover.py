@@ -214,20 +214,29 @@ def nf(term: Any, rules: List[Tuple[str, str, str]],
     if not isinstance(term, str) and t_size(term) > MAX_TERM:
         return None
     e = term if isinstance(term, str) else term_to_str(term)
-    try:
-        r = simplify(e, make_store(rules), oriented=oriented or None,
-                     budget=budget)
-    except RecursionError:
-        # 増大規則が深さ方向に爆発した — 予算切れと同じ「主張しない」
-        return None
-    if str(r.get("verdict")) != "ANSWER":
-        return None
-    if fired is not None:
-        fired.extend(s["rule"] for s in r.get("steps", []))
-    out = parse_term(r.get("term"))
-    if t_size(out) > MAX_TERM:
-        return None
-    return ac_norm(out)
+    store = make_store(rules)
+    # AC正準化と書き換えの有界不動点(PREREG13)。ac_norm が並べ直した
+    # 後にだけ発火する規則がある(実測: add(b, s(kn)) への add_s)。
+    # ac_norm は正準化であって規則ではない — 「一致」の一本化は不変。
+    prev = None
+    for _round in range(5):
+        try:
+            r = simplify(e, store, oriented=oriented or None, budget=budget)
+        except RecursionError:
+            return None
+        if str(r.get("verdict")) != "ANSWER":
+            return None
+        if fired is not None:
+            fired.extend(s["rule"] for s in r.get("steps", []))
+        out = parse_term(r.get("term"))
+        if t_size(out) > MAX_TERM:
+            return None
+        canon = ac_norm(out)
+        if canon == prev:
+            return canon
+        prev = canon
+        e = canon if isinstance(canon, str) else term_to_str(canon)
+    return prev
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +391,9 @@ def _enumerate_rhs(vs: List[str], want_ty: str, max_size: int = 7) -> List[Any]:
 
 def invent_candidates(stuck_l: Any, stuck_r: Any,
                       rules: List[Tuple[str, str, str]],
-                      max_cands: int = 24) -> List[Dict[str, Any]]:
+                      max_cands: int = 24,
+                      audit: Optional[Dict[str, int]] = None
+                      ) -> List[Dict[str, Any]]:
     """詰まった段の等式から補題候補を発明し、接地検査で淘汰する。"""
     def alien(st: Any) -> bool:
         syms = t_symbols(st)
@@ -433,6 +444,10 @@ def invent_candidates(stuck_l: Any, stuck_r: Any,
                         continue
                     g = ground_check(lhs, rhs)
                     if g["verdict"] != "PASSED":
+                        if audit is not None:
+                            k = ("cand_refuted" if g["verdict"] == "REFUTED"
+                                 else "cand_undecided")
+                            audit[k] = audit.get(k, 0) + 1
                         continue
                     out.append({"lhs": lhs, "rhs": rhs,
                                 "origin": term_to_str(st),
@@ -991,7 +1006,7 @@ class Prover:
             if a0 is not None and b0_ is not None and a0 == b0_:
                 self._cite(_fired0)
                 return True, "mathlib_context"
-        cands = invent_candidates(s0, s1, self.rules)
+        cands = invent_candidates(s0, s1, self.rules, audit=self.stats)
         self.stats["invented"] += len(cands)
         ranked, dump = cross_agenda(cands, s0, s1, self.ledger)
         self.trace.append(dump)

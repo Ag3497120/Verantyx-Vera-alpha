@@ -52,6 +52,8 @@ def to_lean(t):
             return "0"
         if t == "nil":
             return "([] : List Nat)"
+        if t in ("true", "false"):
+            return t
         return t
     op = t[0]
     if op == "s":
@@ -68,6 +70,11 @@ def to_lean(t):
         return "(%s).reverse" % to_lean(t[1])
     if op == "len":
         return "(%s).length" % to_lean(t[1])
+    # PREREG12/13 の署名: 不等式は等式に畳まれている(le=Nat.ble)
+    if op == "le":
+        return "(Nat.ble %s %s)" % (to_lean(t[1]), to_lean(t[2]))
+    if op == "monus":
+        return "(%s - %s)" % (to_lean(t[1]), to_lean(t[2]))
     raise ValueError(op)
 
 
@@ -76,6 +83,10 @@ def to_lean(t):
 # 補題を名指しする戦術を足した — 検査器の修理であって基準の変更ではない
 # (induction_by_rewriting の「omega が全目標消化後に失敗」と同じ型)。
 TACTICS = ["simp", "omega", "simp <;> omega",
+           "simp [Nat.ble_eq] <;> omega", "simp [Nat.ble_eq]",
+           # Bool=false / Bool=Bool 形(le の否定的補題)の閉じ方(実測)
+           "simp only [← Bool.not_eq_true, Nat.ble_eq]; omega",
+           "rw [Bool.eq_iff_iff]; simp only [Nat.ble_eq]; omega",
            "simp [Nat.add_mul, Nat.mul_add]",
            "simp [Nat.mul_assoc]",     # 混ぜた simp 集合は落ちる(実測) —
            "ac_rfl"]                   # 単独指定と ac_rfl が確実に閉じる
