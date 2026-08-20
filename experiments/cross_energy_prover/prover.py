@@ -286,14 +286,14 @@ def _abstract(t: Any, alien_ok) -> List[Tuple[Any, Dict[str, Any]]]:
         extra_sets.append(maximal[:4])
 
     aliens = aliens[:3]
+    # PREREG4: 空集合(改名のみ)も候補にする — 詰まりに異質項が無い
+    # とき(B7 の s(add(0,kn)))、部分項そのものが補題の左辺になれる。
     chosen_sets = [
         [a for i, a in enumerate(aliens) if mask >> i & 1]
         for mask in range(1, 1 << len(aliens))
-    ] + extra_sets
+    ] + extra_sets + [[]]
     out: List[Tuple[Any, Dict[str, Any]]] = []
     for chosen in chosen_sets:
-        if not chosen:
-            continue
         env: Dict[str, Any] = {}
         # 既に t に居る変数名は新変数に使わない(衝突すると別物が同一視
         # される)。極小/極大の一括変数化では3個以上要るので池も広げる。
@@ -512,8 +512,85 @@ def generalise_str(t: Any) -> str:
     return term_to_str(g) if not isinstance(g, str) else g
 
 
+# ---------------------------------------------------------------------------
+# LPO(lexicographic path order)— 印字でなく項の構造で向きを決める(PREREG6)
+# ---------------------------------------------------------------------------
+#: 優先順位: 定義される側 > 定義に使われる側。
+_PREC = {"rev": 9, "len": 8, "app": 7, "mul": 6, "add": 5,
+         "s": 3, "cons": 2, "nil": 1, "0": 0}
+
+
+def _head(t: Any) -> str:
+    if isinstance(t, tuple):
+        return t[0]
+    return str(t)
+
+
+def _prec(sym: str) -> int:
+    return _PREC.get(sym, 0)
+
+
+def _is_var(t: Any) -> bool:
+    return isinstance(t, str) and (t in VAR_TYPES or t in FRESH)
+
+
+def lpo_gt(s: Any, t: Any) -> bool:
+    """s >lpo t(厳密)。変数は「s に現れる変数」の場合のみ下位。"""
+    if s == t:
+        return False
+    if _is_var(t):
+        return t in _strs(s) if not _is_var(s) else False
+    if _is_var(s):
+        return False
+    s_args = list(s[1:]) if isinstance(s, tuple) else []
+    t_args = list(t[1:]) if isinstance(t, tuple) else []
+    # (a) ある引数 si ≥ t
+    for a in s_args:
+        if a == t or lpo_gt(a, t):
+            return True
+    f, g = _head(s), _head(t)
+    if _prec(f) > _prec(g):
+        return all(lpo_gt(s, b) for b in t_args)
+    if f == g:
+        # (c) 引数列の辞書式比較 + s > 各 tj
+        for a, b in zip(s_args, t_args):
+            if a == b:
+                continue
+            if lpo_gt(a, b):
+                return all(lpo_gt(s, c) for c in t_args)
+            return False
+        return False
+    return False
+
+
+def orient_by_lpo(l: Any, r: Any) -> Tuple[Any, Any, str]:
+    """(格納すべき lhs, rhs, 種別)。種別: normal / reversed / undirected。"""
+    if lpo_gt(l, r):
+        return l, r, "normal"
+    if lpo_gt(r, l):
+        return r, l, "reversed"
+    return l, r, "undirected"
+
+
+def _defs_are_lpo_decreasing() -> List[str]:
+    """構築時検査(PREREG6 V3): 定義10本が全て lhs >lpo rhs であること。"""
+    bad = []
+    for name, l, r in DEFS:
+        tl, tr = parse_term(l), parse_term(r)
+        # パターン変数 ?x は変数扱いにする(閉じた変換)
+        def strip(u: Any) -> Any:
+            if isinstance(u, str) and u.startswith("?"):
+                return u[1:]
+            if isinstance(u, tuple):
+                return (u[0],) + tuple(strip(a) for a in u[1:])
+            return u
+        if not lpo_gt(strip(tl), strip(tr)):
+            bad.append(name)
+    return bad
+
+
 def is_symmetric(l: Any, r: Any) -> bool:
-    if isinstance(l, str) or isinstance(r, str) or l == r:
+    if not isinstance(l, tuple) or not isinstance(r, tuple) or l == r:
         return False
     return (l[0] == r[0] and len(l) == len(r)
             and sorted(map(str, l[1:])) == sorted(map(str, r[1:])))
@@ -545,8 +622,11 @@ class Prover:
 
     # -- 補題の昇格 --------------------------------------------------------
     def _promote(self, name: str, l: Any, r: Any) -> None:
-        gl, gr = generalise_str(l), generalise_str(r)
-        self.rules = self.rules + [(name, gl, gr)]
+        # 確認4で採択された形(発明時のサイズ非増大門 + 対称のみ向き付き)。
+        # PREREG6 は昇格・持ち越しの向きを LPO に載せ替えたが V1 違反で
+        # 棄却(B9/B10 後退) — LPO は orient_by_lpo として実装済み・未採択。
+        self.rules = self.rules + [(name, generalise_str(l),
+                                    generalise_str(r))]
         if is_symmetric(l, r):
             self.oriented.append(name)
 
