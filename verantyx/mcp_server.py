@@ -2027,7 +2027,20 @@ def serve(store_path: str) -> int:
 
         It says "this corpus does not support that", NEVER "that is false".
         A subject the corpus never covered is unsupported and may be
-        perfectly true."""
+        perfectly true.
+
+        Polarity is judged separately from support, because support alone
+        cannot see it: this path reads kanji/katakana runs and Japanese
+        negation lives in the hiragana that follows them. Measured
+        2026-08-20 (found independently by a blind evaluator and by the
+        author): 「実費を支給する」 and 「実費を支給しない」 both scored
+        support 1.0 and both returned ANSWER. Now the corpus's own poles
+        decide: it answers CONTRADICTED_BY_CORPUS when the store holds the
+        opposite pole as evidence (naming the facet), and
+        UNKNOWN_POLARITY_UNJUDGED when the store holds the word but never
+        recorded its polarity — a refusal, because a support figure that
+        scores a claim and its negation identically cannot stand behind
+        either. fork 170 pins all three outcomes."""
         from .attest_llm import check_all
 
         return json.dumps(check_all(store, subject, text), ensure_ascii=False)

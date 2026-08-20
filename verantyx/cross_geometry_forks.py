@@ -613,6 +613,61 @@ def prover_three_outcomes_fork() -> Dict[str, Any]:
                        "ill_typed": illtyped.get("verdict")}}
 
 
+def attest_polarity_fork() -> Dict[str, Any]:
+    """主張の採点は、肯定と否定を同じ点にしてはならない(fork 170本目)。
+
+    2026-08-20 実測(隔離環境・第三者のブラインド評価と二者独立):
+        「実費を支給する」   -> ANSWER support=1.0
+        「実費を支給しない」 -> ANSWER support=1.0   ← 完全同点
+    機序は構成上のもの — 採点器は漢字・カタカナの連しか見ず、否定は
+    ひらがなに居た。極性の器官は在るのに呼ばれていなかった(実装済み
+    未到達)。3点固定:
+      (a) 店が反対の極を**証拠として**持てば CONTRADICTED_BY_CORPUS で、
+          その facet を名指す
+      (b) 店が語だけ持ち極性を記録していなければ
+          UNKNOWN_POLARITY_UNJUDGED — 黙って同点にしない
+      (c) 極性の争点が無い主張は従来どおり ANSWER
+    """
+    from .attest_llm import check_all
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .polarity import ingest_polar_ja
+
+    doc = CrossStore(track_provenance=True)
+    ingest_documents(doc, [Document(
+        source="規程.txt",
+        text="会社は、従業員に対し、通勤に要する実費を支給する。"
+             "自家用車通勤の場合は1キロメートルあたり15円を支給する。"
+             "月額30000円を上限とする。")])
+    pos = check_all(doc, "会社", "従業員に対し通勤に要する実費を支給する")
+    neg = check_all(doc, "会社", "従業員に対し通勤に要する実費を支給しない")
+
+    # 主題は MIN_FACETS(3)以上を持たせる — 2文では TOO_THIN で
+    # 極性まで届かない(この治具を薄く作って一度落とした)。
+    pol = CrossStore(track_provenance=True)
+    for s in ("避難所は開設している。", "水道は復旧していない。",
+              "避難所は受付中である。", "水道は断水している。"):
+        ingest_polar_ja(pol, s)
+        pol.ingest_sentence(s)
+    contra = check_all(pol, "水道", "水道は復旧している")
+    agree = check_all(pol, "避難所", "避難所は開設している")
+
+    ok_split = (pos.get("verdict") == "ANSWER"
+                and neg.get("verdict") == "UNKNOWN_POLARITY_UNJUDGED")
+    ok_contra = (contra.get("verdict") == "CONTRADICTED_BY_CORPUS"
+                 and bool(contra.get("contradictions"))
+                 and contra["contradictions"][0].get("facet"))
+    ok_agree = agree.get("verdict") == "ANSWER"
+    ok = bool(ok_split and ok_contra and ok_agree)
+    return {"fork": "ATTEST_POLARITY", "pass": ok,
+            "result": {"positive": pos.get("verdict"),
+                       "negated": neg.get("verdict"),
+                       "contradicted": contra.get("verdict"),
+                       "facet": (contra.get("contradictions") or [{}])[0]
+                       .get("facet"),
+                       "agreement": agree.get("verdict")}}
+
+
 def norm_vs_record_fork() -> Dict[str, Any]:
     """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
 
@@ -4680,6 +4735,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         reverse_unique_fork(),
         reverse_specific_fork(),
         prover_three_outcomes_fork(),
+        attest_polarity_fork(),
         norm_vs_record_fork(),
         quote_is_substring_fork(),
         read_at_shows_both_sides_fork(),
