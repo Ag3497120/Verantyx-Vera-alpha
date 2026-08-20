@@ -1,0 +1,57 @@
+{
+ "votes": "none",
+ "note": "実LLMハーネス経験則 — モデル名・日付・条件つき。確率の主張ではなく記録",
+ "conditions": {
+  "temperature": 0.7,
+  "battery": "24課題(算術12/JSON6/抽出6)",
+  "adoption_line": "+2問",
+  "runs": "本走+再現走+順序反転走",
+  "infra": "LM Studio @ M1 Max via Thunderbolt/SSHトンネル"
+ },
+ "facts": [
+  {
+   "fact": "hretry(f,3) が成功を増やす",
+   "model": "qwen2.5-0.5b-instruct",
+   "measured": "6→9 (+3)、再現 9→10 (+1)、反転 5→10 (+5)",
+   "verdict": "ADOPTED",
+   "witness": "verified:run:qwen2.5-0.5b@2026-08-20"
+  },
+  {
+   "fact": "htrunc(f,400) が成功を増やす",
+   "model": "qwen2.5-0.5b-instruct",
+   "measured": "6→8 (+2)、再現 +1、反転 +3",
+   "verdict": "ADOPTED",
+   "witness": "verified:run:qwen2.5-0.5b@2026-08-20"
+  },
+  {
+   "fact": "hretry(f,3)",
+   "model": "qwen2.5-coder-7b-instruct",
+   "measured": "24→24 (+0) 全走",
+   "verdict": "ABSTAIN(天井)",
+   "witness": "verified:run:qwen2.5-coder-7b@2026-08-20"
+  },
+  {
+   "fact": "htrunc(f,400)",
+   "model": "qwen2.5-coder-7b-instruct",
+   "measured": "24→24 (+0) 全走",
+   "verdict": "ABSTAIN(天井)",
+   "witness": "verified:run:qwen2.5-coder-7b@2026-08-20"
+  },
+  {
+   "fact": "htrunc(f,64) は害",
+   "model": "qwen2.5-coder-7b-instruct",
+   "measured": "24→18 (−6) 全走一致",
+   "verdict": "HARMFUL",
+   "witness": "verified:run:qwen2.5-coder-7b@2026-08-20"
+  },
+  {
+   "fact": "htrunc(f,64) は害",
+   "model": "qwen2.5-0.5b-instruct",
+   "measured": "6→2 (−4)、再現 −4、反転 0(abstain) — ラベル不安定",
+   "verdict": "HARMFUL_UNSTABLE",
+   "witness": null
+  }
+ ],
+ "transfer": "小で採択の2事実は中では棄権(天井) — モデル縛りの実証",
+ "ts": 1787227464.519874
+}
