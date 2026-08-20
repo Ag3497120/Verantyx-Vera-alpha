@@ -660,6 +660,40 @@ def load_mathlib_context(path: Optional[Path] = None):
     return rules, oriented
 
 
+def load_list_context(path: Optional[Path] = None):
+    """Lean core の List 断片(build_list_rules.py の出力)を手渡しに。
+
+    規則は既に我々の署名で、1本ずつこの機体の Lean が VERIFIED 済み
+    (verified:lean4:local)。向き(LPO)と AC 冗長門は nat 側と共通。
+    """
+    import json as _json
+    p = path or (Path.home() / "Projects" / "vera-corpus" / "build"
+                 / "mathlib_list_rules.json")
+    if not p.exists():
+        return [], []
+    rows = _json.loads(p.read_text(encoding="utf-8")).get("rules", [])
+    rules, oriented = [], []
+    for r in rows:
+        pl, pr = r["lhs"], r["rhs"]
+        def strip(u):
+            if isinstance(u, str) and u.startswith("?"):
+                return u[1:] if u[1:] in VAR_TYPES else "a"
+            if isinstance(u, tuple):
+                return (u[0],) + tuple(strip(x) for x in u[1:])
+            return u
+        tl, tr = strip(parse_term(pl)), strip(parse_term(pr))
+        name = "ml:" + r["name"]
+        if ac_norm(tl) == ac_norm(tr):
+            continue
+        _l, _r, kind = orient_by_lpo(tl, tr)
+        if kind == "reversed":
+            pl, pr = pr, pl
+        rules.append((name, pl, pr))
+        if kind == "undirected":
+            oriented.append(name)
+    return rules, oriented
+
+
 class Prover:
     def __init__(self, rules: Optional[List[Tuple[str, str, str]]] = None,
                  max_depth: int = 3, wave: int = 6,
@@ -718,6 +752,15 @@ class Prover:
             return False, "depth"
         seen = seen | {key}
         self.stats["nodes"] += 1
+        # 目標レベルの反駁門(PREREG11): 偽の目標は「証明できない」でなく
+        # REFUTED(反例を名指す)。失敗(拒否)と偽を混ぜない。
+        if depth == 0:
+            _gc = ground_check(lhs, rhs)
+            if _gc["verdict"] == "REFUTED":
+                self.ledger.failed.add(key)
+                if self.persist is not None:
+                    self.persist.record_trial(key[0], key[1], "refuted")
+                return False, "REFUTED:" + str(_gc.get("witness"))
         if t_size(lhs) + t_size(rhs) > MAX_TERM:
             self.ledger.failed.add(key)
             return False, "too_large"
