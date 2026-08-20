@@ -272,6 +272,20 @@ def _ground_terms(ty: str) -> List[Any]:
 _GROUND = {"N": _ground_terms("N"), "L": _ground_terms("L")}
 
 
+#: 接地検査の記憶。(lhs, rhs) → 結果。ground_check は店にも時間にも
+#: 依存しない**決定論の純関数**なので、記憶しても判定は一切変わらない
+#: — 変わるのは速さだけ。実測(2026-08-20、M1): 接地検査1,381回のうち
+#: 相異なるのは358件、**重複74%**。同じ反例を7回引き直していた。
+#: _GROUND(接地域)を差し替える監査経路があるので、鍵に接地域の版も含める。
+_GROUND_MEMO: Dict[Any, Dict[str, Any]] = {}
+_GROUND_STATS = {"calls": 0, "hits": 0}
+
+
+def _ground_epoch() -> int:
+    """接地域の版。_GROUND を差し替えたら記憶が無効になる。"""
+    return sum(len(v) for v in _GROUND.values())
+
+
 def ground_check(lhs: Any, rhs: Any, max_cases: int = 64) -> Dict[str, Any]:
     """全変数に接地項を代入し、DEFS だけで両辺を評価して比較する。
 
@@ -279,6 +293,14 @@ def ground_check(lhs: Any, rhs: Any, max_cases: int = 64) -> Dict[str, Any]:
     そこで食い違えば等式は偽(REFUTED、反例を名指す)。全て一致なら
     PASSED(検査数つき)。予算切れが混じれば UNDECIDED(主張しない)。
     """
+    key = (term_to_str(lhs) if isinstance(lhs, tuple) else lhs,
+           term_to_str(rhs) if isinstance(rhs, tuple) else rhs,
+           max_cases, _ground_epoch())
+    _GROUND_STATS["calls"] += 1
+    memo = _GROUND_MEMO.get(key)
+    if memo is not None:
+        _GROUND_STATS["hits"] += 1
+        return memo
     vs = t_vars(lhs) + [v for v in t_vars(rhs) if v not in t_vars(lhs)]
     domains = [_GROUND[VAR_TYPES[v]] for v in vs]
     cases = list(itertools.product(*domains))[:max_cases] if vs else [()]
@@ -288,16 +310,20 @@ def ground_check(lhs: Any, rhs: Any, max_cases: int = 64) -> Dict[str, Any]:
         a = nf(t_subst(lhs, env), DEFS)
         b = nf(t_subst(rhs, env), DEFS)
         if a is None or b is None:
-            return {"verdict": "UNDECIDED", "passed": passed,
-                    "reason": "budget"}
+            return _GROUND_MEMO.setdefault(
+                key, {"verdict": "UNDECIDED", "passed": passed,
+                      "reason": "budget"})
         if a != b:
-            return {"verdict": "REFUTED", "passed": passed,
-                    "witness": {v: term_to_str(t) if not isinstance(t, str)
-                                else t for v, t in env.items()},
-                    "lhs_value": term_to_str(a) if not isinstance(a, str) else a,
-                    "rhs_value": term_to_str(b) if not isinstance(b, str) else b}
+            return _GROUND_MEMO.setdefault(key, {
+                "verdict": "REFUTED", "passed": passed,
+                "witness": {v: term_to_str(t) if not isinstance(t, str)
+                            else t for v, t in env.items()},
+                "lhs_value": term_to_str(a) if not isinstance(a, str) else a,
+                "rhs_value": term_to_str(b) if not isinstance(b, str)
+                else b})
         passed += 1
-    return {"verdict": "PASSED", "passed": passed}
+    return _GROUND_MEMO.setdefault(key, {"verdict": "PASSED",
+                                         "passed": passed})
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +398,12 @@ def _enumerate_rhs(vs: List[str], want_ty: str, max_size: int = 7) -> List[Any]:
     memo_key = (tuple(sorted(vs)), want_ty)
     if memo_key in _ENUM_MEMO:
         return _ENUM_MEMO[memo_key]
+    # 出力は最適化前と**完全同一**(順序を含む)。変えたのは二つの無駄だけ:
+    #   ① t_size をその場で再帰計算していた(実測: 1目標で4,618万回、
+    #      27.3秒中15.5秒)→ 部分項の大きさを持ち回って足し算にする
+    #   ② `t not in grown[ret] + new[ret]` がリスト連結+線形走査で
+    #      二乗になっていた → 印字を鍵にした集合で判定する
+    # どちらも純粋な速さの修理で、判定にも順序にも触れていない。
     by_ty: Dict[str, List[Any]] = {"N": [], "L": [], "B": []}
     for v in vs:
         by_ty[VAR_TYPES[v]].append(v)
@@ -379,6 +411,16 @@ def _enumerate_rhs(vs: List[str], want_ty: str, max_size: int = 7) -> List[Any]:
     by_ty["L"].append("nil")
     by_ty["B"].extend(["true", "false"])
     grown = dict(by_ty)
+    #: 項 → 大きさ。葉は 1、合成は 1 + 子の和。
+    size_of: Dict[Any, int] = {}
+    seen_of: Dict[str, set] = {}
+    for ty in ("N", "L", "B"):
+        # 鍵は**項そのもの**(タプルはハッシュ可能)。一度 term_to_str で
+        # 鍵を作る版を書いて、候補ごとに文字列を組む方が遅いことを実測した
+        # — 元のタプル比較は C 側で早期脱出していた。
+        seen_of[ty] = set(grown[ty])
+        for t in grown[ty]:
+            size_of[t] = 1
     for _round in range(3):
         new: Dict[str, List[Any]] = {"N": [], "L": [], "B": []}
         for f, (args, ret) in sorted(SIG.items()):
@@ -386,12 +428,19 @@ def _enumerate_rhs(vs: List[str], want_ty: str, max_size: int = 7) -> List[Any]:
                 continue
             pools = [grown[a] for a in args]
             for combo in itertools.product(*pools):
+                sz = 1 + sum(size_of.get(c, t_size(c)) for c in combo)
+                if sz > max_size:
+                    continue
                 t = (f,) + tuple(combo)
-                if t_size(t) <= max_size and t not in grown[ret] + new[ret]:
-                    new[ret].append(t)
+                if t in seen_of[ret]:
+                    continue
+                seen_of[ret].add(t)
+                size_of[t] = sz
+                new[ret].append(t)
         for ty in ("N", "L", "B"):
-            grown[ty] = grown[ty] + new[ty]
-            grown[ty] = grown[ty][:400]
+            grown[ty] = (grown[ty] + new[ty])[:400]
+            # 400 で切った分は次巡の材料から外れる — 鍵集合も揃える
+            seen_of[ty] = set(grown[ty])
     cands = [t for t in grown[want_ty] if set(t_vars(t)) <= set(vs)]
     out = sorted(cands, key=lambda t: (t_size(t), term_to_str(t)
                                        if not isinstance(t, str) else t))
@@ -801,6 +850,11 @@ class Prover:
                       "lemmas": [], "cited": [], "cond_fired": [],
                       "cond_refused": 0}
         self.trace: List[Dict[str, Any]] = []
+        #: 1目標あたりの接地検査の予算。超えたら黙って止まらず、
+        #: REFUSED の理由に invention_budget_exhausted を載せる
+        #: (UNKNOWN_BUDGET と同じ族 — 予算切れは判定ではない)。
+        self.invention_budget = 4000
+        self._budget_used = 0
         # 前セッションの失敗をエネルギー減点に流し込む — プロセスを跨いだ
         # 「二度目は探索でなく参照」。proved は規則にはしない(規則昇格は
         # このプロセスで再証明されたものだけ — 台帳は記憶であって公理でない)。
@@ -981,6 +1035,9 @@ class Prover:
         self.ledger.failed.add(key)
         if self.persist is not None:
             self.persist.record_trial(key[0], key[1], "failed")
+        if self.stats.get("budget_exhausted"):
+            return False, ("invention_budget_exhausted:%d"
+                           % self.invention_budget)
         return False, "no_induction_closed"
 
     def _induct(self, lhs: Any, rhs: Any, v: str, depth: int,
@@ -1058,7 +1115,13 @@ class Prover:
             if a0 is not None and b0_ is not None and a0 == b0_:
                 self._cite(_fired0)
                 return True, "mathlib_context"
+        if self._budget_used >= self.invention_budget:
+            self.stats["budget_exhausted"] = True
+            return False, ""
+        before = _GROUND_STATS["calls"] - _GROUND_STATS["hits"]
         cands = invent_candidates(s0, s1, self.rules, audit=self.stats)
+        self._budget_used += max(0, (_GROUND_STATS["calls"]
+                                     - _GROUND_STATS["hits"]) - before)
         self.stats["invented"] += len(cands)
         ranked, dump = cross_agenda(cands, s0, s1, self.ledger)
         self.trace.append(dump)
