@@ -51,8 +51,14 @@ SIG: Dict[str, Tuple[Tuple[str, ...], str]] = {
     "app":  (("L", "L"), "L"),
     "rev":  (("L",), "L"),
     "len":  (("L",), "N"),
+    # PREREG12: 不等式は等式に畳む — le は B 値の再帰関数、
+    # 命題 a≤b は等式 le(a,b)=true。monus は切り捨て減算。
+    "true":  ((), "B"),
+    "false": ((), "B"),
+    "le":    (("N", "N"), "B"),
+    "monus": (("N", "N"), "N"),
 }
-CONSTRUCTORS = {"0", "s", "nil", "cons"}
+CONSTRUCTORS = {"0", "s", "nil", "cons", "true", "false"}
 DEFINED = {f for f in SIG if f not in CONSTRUCTORS}
 AC_OPS = ("add", "mul")
 
@@ -67,6 +73,18 @@ DEFS = [
     ("rev_cons", "rev(cons(?h, ?t))", "app(rev(?t), cons(?h, nil))"),
     ("len_nil", "len(nil)", "0"),
     ("len_cons", "len(cons(?h, ?t))", "s(len(?t))"),
+    ("le_0", "le(0, ?y)", "true"),
+    ("le_s0", "le(s(?x), 0)", "false"),
+    ("le_ss", "le(s(?x), s(?y))", "le(?x, ?y)"),
+    ("monus_0", "monus(?x, 0)", "?x"),
+    ("monus_0l", "monus(0, ?y)", "0"),
+    ("monus_ss", "monus(s(?x), s(?y))", "monus(?x, ?y)"),
+]
+
+#: 条件付き規則(PREREG12 v0)。条件は放電義務 — マッチ代入の下で
+#: 先に証明できた時だけ発火する。仮定される条件は存在しない。
+COND_RULES = [
+    ("R_le0", "monus(?x, ?y)", "0", ("le(?x, ?y)", "true")),
 ]
 
 #: 変数はこの表に載った名前だけ(閉じた表 — 開いた賢さは持ち込まない)
@@ -335,14 +353,15 @@ def _enumerate_rhs(vs: List[str], want_ty: str, max_size: int = 7) -> List[Any]:
     memo_key = (tuple(sorted(vs)), want_ty)
     if memo_key in _ENUM_MEMO:
         return _ENUM_MEMO[memo_key]
-    by_ty: Dict[str, List[Any]] = {"N": [], "L": []}
+    by_ty: Dict[str, List[Any]] = {"N": [], "L": [], "B": []}
     for v in vs:
         by_ty[VAR_TYPES[v]].append(v)
     by_ty["N"].append("0")
     by_ty["L"].append("nil")
+    by_ty["B"].extend(["true", "false"])
     grown = dict(by_ty)
     for _round in range(3):
-        new: Dict[str, List[Any]] = {"N": [], "L": []}
+        new: Dict[str, List[Any]] = {"N": [], "L": [], "B": []}
         for f, (args, ret) in sorted(SIG.items()):
             if not args:
                 continue
@@ -351,7 +370,7 @@ def _enumerate_rhs(vs: List[str], want_ty: str, max_size: int = 7) -> List[Any]:
                 t = (f,) + tuple(combo)
                 if t_size(t) <= max_size and t not in grown[ret] + new[ret]:
                     new[ret].append(t)
-        for ty in ("N", "L"):
+        for ty in ("N", "L", "B"):
             grown[ty] = grown[ty] + new[ty]
             grown[ty] = grown[ty][:400]
     cands = [t for t in grown[want_ty] if set(t_vars(t)) <= set(vs)]
@@ -450,6 +469,35 @@ def _strs(t: Any) -> List[str]:
 # ---------------------------------------------------------------------------
 # 器官3: 十字のアジェンダ — 腕に候補、エネルギーが順序を決める
 # ---------------------------------------------------------------------------
+def match_pat(pat: Any, term: Any, b: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """?変数つきパターンの一致(一階・決定論)。"""
+    if isinstance(pat, str) and pat.startswith("?"):
+        v = pat[1:]
+        if v in b:
+            return b if b[v] == term else None
+        b2 = dict(b)
+        b2[v] = term
+        return b2
+    if isinstance(pat, tuple):
+        if (not isinstance(term, tuple) or term[0] != pat[0]
+                or len(term) != len(pat)):
+            return None
+        for p_, t_ in zip(pat[1:], term[1:]):
+            b = match_pat(p_, t_, b)
+            if b is None:
+                return None
+        return b
+    return b if pat == term else None
+
+
+def subst_pat(pat: Any, b: Dict[str, Any]) -> Any:
+    if isinstance(pat, str) and pat.startswith("?"):
+        return b[pat[1:]]
+    if isinstance(pat, tuple):
+        return (pat[0],) + tuple(subst_pat(a, b) for a in pat[1:])
+    return pat
+
+
 class TrialLedger:
     """試行の記憶。二度目は探索でなく参照(資産探索と同じ型)。"""
 
@@ -522,8 +570,9 @@ def generalise_str(t: Any) -> str:
 # LPO(lexicographic path order)— 印字でなく項の構造で向きを決める(PREREG6)
 # ---------------------------------------------------------------------------
 #: 優先順位: 定義される側 > 定義に使われる側。
-_PREC = {"rev": 9, "len": 8, "app": 7, "mul": 6, "add": 5,
-         "s": 3, "cons": 2, "nil": 1, "0": 0}
+_PREC = {"rev": 9, "len": 8, "app": 7, "monus": 7, "le": 7,
+         "mul": 6, "add": 5,
+         "s": 3, "cons": 2, "nil": 1, "0": 0, "true": 0, "false": 0}
 
 
 def _head(t: Any) -> str:
@@ -711,7 +760,8 @@ class Prover:
         # だけ供給される。cited に発火した mathlib 名が溜まる。
         self.ml_rules, self.ml_oriented = mathlib_context or ([], [])
         self.stats = {"nodes": 0, "invented": 0, "refuted_pruned": 0,
-                      "lemmas": [], "cited": []}
+                      "lemmas": [], "cited": [], "cond_fired": [],
+                      "cond_refused": 0}
         self.trace: List[Dict[str, Any]] = []
         # 前セッションの失敗をエネルギー減点に流し込む — プロセスを跨いだ
         # 「二度目は探索でなく参照」。proved は規則にはしない(規則昇格は
@@ -721,6 +771,75 @@ class Prover:
                 if status == "failed" and " = " in k:
                     l, r = k.split(" = ", 1)
                     self.ledger.failed.add((l, r))
+
+    # -- 条件付き書き換え(PREREG12) ---------------------------------------
+    def _cond_try(self, t: Any, depth: int, seen: Set[Tuple[str, str]],
+                  fired: List[str]) -> Optional[Any]:
+        """条件付き規則を一箇所だけ適用(外側優先)。条件は先に放電。
+
+        放電: 条件の代入例が接地なら nf で決定(構成子まで落ちる)。
+        変数・新鮮定数を含むなら、新鮮定数を変数化した全称形を再帰的に
+        prove する — 全称形の証明は代入例の成立を含意する(強い側への
+        放電、健全)。放電できなければ発火しない — 黙った仮定は無い。
+        """
+        for name, lp_s, rp_s, (cl_s, cr_s) in COND_RULES:
+            lp, rp = parse_term(lp_s), parse_term(rp_s)
+            cl, cr = parse_term(cl_s), parse_term(cr_s)
+            b = match_pat(lp, t, {})
+            if b is not None:
+                ci_l, ci_r = subst_pat(cl, b), subst_pat(cr, b)
+                if self._discharge(ci_l, ci_r, depth, seen):
+                    self.stats["cond_fired"].append(name)
+                    if name not in fired:
+                        fired.append("cond:" + name)
+                    return subst_pat(rp, b)
+                self.stats["cond_refused"] += 1
+        if isinstance(t, tuple):
+            for i, a in enumerate(t[1:], start=1):
+                r = self._cond_try(a, depth, seen, fired)
+                if r is not None:
+                    return t[:i] + (r,) + t[i + 1:]
+        return None
+
+    def _discharge(self, cl: Any, cr: Any, depth: int,
+                   seen: Set[Tuple[str, str]]) -> bool:
+        has_var = bool(t_vars(cl) + t_vars(cr))
+        has_fresh = any(s in FRESH for s in _strs(cl) + _strs(cr))
+        if not has_var and not has_fresh:
+            a = nf(cl, self.rules, self.oriented)
+            b = nf(cr, self.rules, self.oriented)
+            return a is not None and b is not None and a == b
+        gl, gr = _rename_fresh(cl), _rename_fresh(cr)
+        ok, _how = self.prove(gl, gr, depth + 1, seen)
+        return ok
+
+    def _cond_close(self, a: Any, b: Any, depth: int,
+                    seen: Set[Tuple[str, str]], extra: List,
+                    fired: List[str]) -> bool:
+        """正規形どうしが割れた後、条件付き書き換えで閉じるか(有界)。"""
+        if not COND_RULES:
+            return False
+        ta, tb = a, b
+        for _ in range(4):
+            changed = False
+            for is_a in (True, False):
+                t = ta if is_a else tb
+                r = self._cond_try(t, depth, seen, fired)
+                if r is not None:
+                    n = nf(r, self.rules + extra + self.ml_rules,
+                           self.oriented + self.ml_oriented, fired=fired)
+                    if n is None:
+                        continue
+                    if is_a:
+                        ta = n
+                    else:
+                        tb = n
+                    changed = True
+            if ta == tb:
+                return True
+            if not changed:
+                return False
+        return ta == tb
 
     def _cite(self, fired: List[str]) -> None:
         for n in fired:
@@ -775,6 +894,10 @@ class Prover:
             self._cite(_fired_d)
             self.ledger.proved[key] = "direct"
             return True, "direct"
+        if a is not None and b is not None and                 self._cond_close(a, b, depth, seen, [], _fired_d):
+            self._cite(_fired_d)
+            self.ledger.proved[key] = "direct+cond"
+            return True, "direct+cond:" + "+".join(self.stats["cond_fired"])
 
         # 不動点: 補題が昇格したら、失敗した変数の帰納をやり直す
         # (探索実験の「不動点が補題の順序を自動で解く」の変数版)。
@@ -830,6 +953,9 @@ class Prover:
         if s0 is not None and s1 is not None and s0 == s1:
             self._cite(_fired)
             return True, "induction on %s" % v
+        if s0 is not None and s1 is not None and                 self._cond_close(s0, s1, depth, seen, ih, _fired):
+            self._cite(_fired)
+            return True, "induction on %s + cond" % v
         if s0 is None or s1 is None:
             return False, "step_budget"
 
