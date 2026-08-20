@@ -221,3 +221,36 @@ add_s)が眠っていた。(simplify→ac_norm) の有界不動点(≤5巡)に�
 **補題への完了基準5点は今後の全確認で常設**(run_confirm13 の監査部が
 台帳の全補題を舐める)。条件付き補題の発明は「Q3に必要」ではなくなった
 が、前線としては残る(条件つき規則を発明する器は未着手)。
+
+## 追補8: 配線 — 証明器が器官になり、扉になった(2026-08-20)
+
+「扉は薄い束縛であって、器官の唯一の写しではない」に従って3手:
+
+1. `experiments/cross_energy_prover/prover.py` → **`verantyx/prover.py`**
+   に昇格(コーパス根の直書きも `paths.corpus_root()` へ)。実験側は
+   `sys.modules` 別名の薄い皮にした — **写しは一つ**。実験が
+   `P._GROUND` を差し替えると器官の側が差し替わる(写しを二つ持つと、
+   測ったものと出荷したものが乖離する)。
+2. Lean 証人の翻訳(`to_lean` / 戦術在庫)と公開API
+   (`prove_equation` / `sections_agree` / `signature`)を器官に同居。
+3. 扉2本: **`vera_prove`**(証明・反駁・拒否の三値)と
+   **`vera_prove_sections`**(断面合意オラクル)。扉 115 → **117**。
+
+fork 169本目 `PROVER_THREE_OUTCOMES` で4点固定: 真は PROVED+Lean証人 /
+偽は REFUTED+**反例を名指す** / 届かないものは REFUSED+needs(反例は
+無い — 不在と否定を混ぜない)/ 署名外は UNKNOWN_ILL_TYPED。
+forks **82/82**。
+
+凍結バイナリでの実測(IDE が叩くのと同じ経路):
+
+    vera_prove("app(x,y)", "app(y,x)")            REFUTED  x=[0], y=[1]
+    vera_prove("rev(app(x,y))", "app(rev(y),rev(x))")
+                                                   PROVED   Lean VERIFIED
+                                                   引用 ml:list.reverse_append
+    vera_prove("le(a, add(a,b))", "true")          PROVED   Lean VERIFIED
+    vera_prove_sections("add(a,b)", "add(b,a)")    a/b 両断面 proved・
+                                                   conflict false
+
+所見(記録): 以前 HEAD でも落ちていた `DOCUMENT_DRAFT_IS_LICENSED` が
+今日は通る。私はこの fork を触っていない — **状態依存の門**の疑いで、
+固定具を自給に直す必要がある(門が再現しないなら門ではない)。

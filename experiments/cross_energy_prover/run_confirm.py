@@ -75,6 +75,10 @@ def to_lean(t):
         return "(Nat.ble %s %s)" % (to_lean(t[1]), to_lean(t[2]))
     if op == "monus":
         return "(%s - %s)" % (to_lean(t[1]), to_lean(t[2]))
+    if op == "min":
+        return "(Nat.min %s %s)" % (to_lean(t[1]), to_lean(t[2]))
+    if op == "max":
+        return "(Nat.max %s %s)" % (to_lean(t[1]), to_lean(t[2]))
     raise ValueError(op)
 
 
@@ -87,6 +91,9 @@ TACTICS = ["simp", "omega", "simp <;> omega",
            # Bool=false / Bool=Bool 形(le の否定的補題)の閉じ方(実測)
            "simp only [← Bool.not_eq_true, Nat.ble_eq]; omega",
            "rw [Bool.eq_iff_iff]; simp only [Nat.ble_eq]; omega",
+           # min/max: 定義展開+場合分け(omega はこの版では min/max 不可)
+           "simp only [Nat.min_def, Nat.max_def] <;> "
+           "repeat (first | omega | split)",
            "simp [Nat.add_mul, Nat.mul_add]",
            "simp [Nat.mul_assoc]",     # 混ぜた simp 集合は落ちる(実測) —
            "ac_rfl"]                   # 単独指定と ac_rfl が確実に閉じる

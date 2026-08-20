@@ -1812,6 +1812,60 @@ def serve(store_path: str) -> int:
 
         return json.dumps(_lookup(name), ensure_ascii=False, default=str)
 
+    @mcp.tool()
+    def vera_prove(lhs: str, rhs: str) -> str:
+        """Prove an equation, refute it with a counterexample, or refuse.
+
+        Three outcomes, never two — that division is the whole point:
+
+            PROVED    the rewriting kernel derived it (inventing the
+                      lemmas it needed), and Lean checked the claim
+                      independently. Carries the invented lemmas, the
+                      mathlib/core rules it CITED instead of inventing,
+                      and the Lean tactic that closed it
+            REFUTED   a finite ground model makes the two sides differ —
+                      the equation is false, and the **counterexample is
+                      named** so a reader can recompute it
+            REFUSED   this engine did not reach it. `needs` says what is
+                      missing. **Never read as false**: no counterexample
+                      was found, and absence is not negation
+
+        Terms are written in the closed signature (`vera_prove` with an
+        out-of-signature symbol answers UNKNOWN_ILL_TYPED and lists what
+        it holds): naturals 0/s/add/mul/monus, the boolean-valued le
+        (a ≤ b is the equation `le(a,b) = true`), lists nil/cons/app/
+        rev/len. Variables come from a closed table — a,b,c,n are
+        naturals, x,y,z,l,m are lists.
+
+            vera_prove("rev(app(x, y))", "app(rev(y), rev(x))")  -> PROVED
+            vera_prove("app(x, y)", "app(y, x)")                 -> REFUTED
+                                       x=[0], y=[1]
+
+        Measured 2026-08-20 (experiments/cross_energy_prover): 41 of 41
+        goals proved with no lemmas given, 7 of 7 false ones refuted with
+        counterexamples, every claim Lean-verified, unsound 0. The
+        invention gate killed 2,265 false candidates before any of them
+        could be promoted."""
+        from .prover import prove_equation as _prove
+
+        return json.dumps(_prove(lhs, rhs), ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_prove_sections(lhs: str, rhs: str) -> str:
+        """The stereo cross reading of a proof: derive from each section.
+
+        「複数の外に出ている断面から中心に向かってアクセスし、一致した
+        時に探索終了」 — each induction variable is a section, and each
+        one derives independently. What this buys is an oracle that needs
+        no answer key: if one section PROVES what another REFUTES, the
+        derivation depends on the order it was read, and that is a
+        soundness alarm rather than an answer. `conflict: true` should
+        never appear; `agree_proved` says how many sections reached the
+        same conclusion."""
+        from .prover import sections_agree as _sections
+
+        return json.dumps(_sections(lhs, rhs), ensure_ascii=False,
+                          default=str)
 
     @mcp.tool()
     def vera_explain(term: str) -> str:

@@ -574,6 +574,45 @@ def reverse_specific_fork() -> Dict[str, Any]:
                        "unique_kept": bool(unique_kept)}}
 
 
+def prover_three_outcomes_fork() -> Dict[str, Any]:
+    """証明器の扉は、証明・反駁・拒否の三つを混ぜない(fork 169本目)。
+
+    「不在と否定を混ぜない」の証明版。届かなかったこと(REFUSED)を偽
+    (REFUTED)として返す扉は、この製品が拒否のために作られた門を自分で
+    くぐることになる。4点固定:
+      (a) 真の等式は PROVED、主張は Lean が検分している
+      (b) 偽の等式は REFUTED で、**反例を名指す**(再計算できる)
+      (c) 届かない等式は REFUSED で needs を運ぶ — 反例は無い
+      (d) 署名の外の記号は UNKNOWN_ILL_TYPED(推測で受けない)
+    """
+    from .prover import prove_equation, signature
+
+    proved = prove_equation("rev(rev(x))", "x")
+    refuted = prove_equation("app(x, y)", "app(y, x)")
+    refused = prove_equation("min(a, b)", "min(b, a)")
+    illtyped = prove_equation("quux(a)", "a")
+
+    ok_proved = (proved.get("verdict") == "PROVED"
+                 and str(proved.get("lean", {}).get("verdict"))
+                 in ("VERIFIED", "UNKNOWN_TOOLCHAIN_MISSING"))
+    ok_refuted = (refuted.get("verdict") == "REFUTED"
+                  and bool(refuted.get("counterexample")))
+    ok_refused = (refused.get("verdict") == "REFUSED"
+                  and bool(refused.get("needs"))
+                  and "counterexample" not in refused)
+    ok_typed = (illtyped.get("verdict") == "UNKNOWN_ILL_TYPED"
+                and "le" in signature()["functions"])
+    ok = bool(ok_proved and ok_refuted and ok_refused and ok_typed)
+    return {"fork": "PROVER_THREE_OUTCOMES", "pass": ok,
+            "result": {"proved": proved.get("verdict"),
+                       "lean": proved.get("lean", {}).get("verdict"),
+                       "refuted": refuted.get("verdict"),
+                       "counterexample": refuted.get("counterexample"),
+                       "refused": refused.get("verdict"),
+                       "needs": refused.get("needs"),
+                       "ill_typed": illtyped.get("verdict")}}
+
+
 def norm_vs_record_fork() -> Dict[str, Any]:
     """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
 
@@ -4640,6 +4679,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         direction_invariance_fork(),
         reverse_unique_fork(),
         reverse_specific_fork(),
+        prover_three_outcomes_fork(),
         norm_vs_record_fork(),
         quote_is_substring_fork(),
         read_at_shows_both_sides_fork(),
