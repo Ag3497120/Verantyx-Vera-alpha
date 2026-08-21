@@ -14,6 +14,8 @@ BROKEN と言えることを測るため**。通るだけの自己検査は自�
 from __future__ import annotations
 
 import itertools
+import json
+from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 #: 治具は小さく閉じたものにする(導入直後に叩くので速さが要る)。
@@ -133,6 +135,139 @@ def _verdict(probes: List[Dict[str, Any]]) -> Dict[str, Any]:
             "guarantees": probes, "failed": failed}
 
 
+# ---------------------------------------------------------------------------
+# ① 配線 — 静かに壊れないこと(PREREG8)
+# ---------------------------------------------------------------------------
+#: 探す設定ファイル(閉じた表)。無い場所は「未導入」であって故障ではない。
+_HOOK_SETTINGS = ["~/.claude/settings.json", "~/.claude/settings.local.json",
+                  ".claude/settings.json", ".claude/settings.local.json"]
+_MCP_CONFIGS = [".mcp.json", "~/.claude.json",
+                "~/Library/Application Support/Claude/"
+                "claude_desktop_config.json", "~/.cursor/mcp.json"]
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _hook_commands(cfg: Any) -> List[str]:
+    """設定から番人の台本を指す command だけを拾う(閉じた読み方)。"""
+    out: List[str] = []
+    hooks = (cfg or {}).get("hooks") if isinstance(cfg, dict) else None
+    if not isinstance(hooks, dict):
+        return out
+    for entries in hooks.values():
+        for entry in (entries if isinstance(entries, list) else []):
+            for h in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
+                cmd = str(h.get("command", ""))
+                if "hook_prompt" in cmd or "hook_stop" in cmd \
+                        or "hook_posttool" in cmd:
+                    out.append(cmd)
+    return out
+
+
+def installation_check(repo_root: Any = None,
+                       settings_files: Any = None,
+                       mcp_files: Any = None) -> Dict[str, Any]:
+    """配線が生きているかを見る — 保証(G/S)とは別の問い。
+
+    番人は CLI が落ちれば素通しする(利用者の作業を Vera の都合で
+    止めない)。裏返すと**配線が死んでも画面は正常に見える**。三週間
+    守られていなかったことに後から気づく、が一番怖い故障なので、
+    ここだけは名指しで報せる。
+
+    未導入は故障ではない(単体だけ使う人がいる)。だから三値:
+    WIRED / PARTIAL / NOT_WIRED。**健全な環境で PARTIAL を出したら
+    この検査ごと棄てる**(狼少年の番人は切られる)。
+    """
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[1]
+    rows: List[Dict[str, Any]] = []
+    configured = 0
+
+    # W1 フックの設定と、それが指す台本
+    for rel in (settings_files if settings_files is not None
+                else _HOOK_SETTINGS):
+        path = Path(rel).expanduser()
+        cfg = _read_json(path) if path.is_file() else None
+        cmds = _hook_commands(cfg)
+        if not cmds:
+            continue
+        configured += 1
+        for cmd in cmds:
+            script = next((tok for tok in cmd.split()
+                           if tok.endswith(".py")), "")
+            exists = bool(script) and Path(script).expanduser().is_file()
+            rows.append({"what": "hook", "where": str(path), "cmd": cmd[:120],
+                         "state": "OK" if exists else "MISSING_SCRIPT"})
+
+    # W2 呼ばれる実体(ソース or 凍結)と、凍結の鮮度
+    # 凍結バイナリの中では __file__ が展開先を指すので、そこに repo が
+    # 無いのは当たり前 — 実体はバイナリ自身。ここを見落とすと**健全な
+    # 環境で誤警報**になる(この検査の停止条件そのもの。実測して直した)。
+    import sys as _sys
+
+    frozen = bool(getattr(_sys, "frozen", False))
+    src_ok = (root / "verantyx" / "cli.py").is_file()
+    if frozen:
+        rows.append({"what": "implementation", "where": _sys.executable,
+                     "state": "OK", "note": "凍結バイナリ自身が実体"})
+    else:
+        rows.append({"what": "source", "where": str(root),
+                     "state": "OK" if src_ok else "MISSING"})
+    vendor = Path.home() / "Projects/Verantyx/cli/VerantyxIDE/Vendor/vera-memory"
+    # 鮮度は**ソースがある機械でしか判定できない**(比べる相手が要る)。
+    # 無い機械で「古いかもしれない」と言うのは推測なので言わない。
+    if vendor.exists() and src_ok:
+        newest = max((f.stat().st_mtime for f in
+                      (root / "verantyx").glob("*.py")), default=0)
+        stale = vendor.stat().st_mtime < newest
+        rows.append({"what": "frozen_binary", "where": str(vendor),
+                     "state": "STALE" if stale else "OK",
+                     "note": ("凍結が repo より古い — 再凍結が要る"
+                              if stale else "")})
+
+    # W3 MCP 設定が実在する command と store を指しているか
+    for rel in (mcp_files if mcp_files is not None else _MCP_CONFIGS):
+        path = Path(rel).expanduser()
+        cfg = _read_json(path) if path.is_file() else None
+        servers = (cfg or {}).get("mcpServers") if isinstance(cfg, dict) else None
+        if not isinstance(servers, dict):
+            continue
+        for name, entry in servers.items():
+            if "vera" not in str(name).lower():
+                continue
+            configured += 1
+            cmd = str((entry or {}).get("command", ""))
+            args = [str(a) for a in ((entry or {}).get("args") or [])]
+            cmd_ok = bool(cmd) and (Path(cmd).expanduser().exists()
+                                    or cmd in ("python3", "python3.11",
+                                               "python"))
+            store = args[args.index("--store") + 1] \
+                if "--store" in args and len(args) > args.index("--store") + 1 \
+                else ""
+            store_ok = (not store
+                        or Path(store).expanduser().parent.is_dir())
+            state = ("OK" if cmd_ok and store_ok else
+                     "MISSING_COMMAND" if not cmd_ok else "MISSING_STORE_DIR")
+            rows.append({"what": "mcp_server", "where": str(path),
+                         "name": name, "state": state})
+
+    bad = [r for r in rows if r["state"] not in ("OK", "")]
+    if not configured:
+        verdict = "NOT_WIRED"
+    elif bad:
+        verdict = "PARTIAL"
+    else:
+        verdict = "WIRED"
+    return {"verdict": verdict, "rows": rows, "configured_places": configured,
+            "problems": [f"{r['what']}: {r['state']}" for r in bad],
+            "note": "未導入(NOT_WIRED)は故障ではない — 保証が壊れたときだけ "
+                    "BROKEN。ここは『黙って素通しになっていないか』だけを見る"}
+
+
 def full_doctor() -> Dict[str, Any]:
     """二つの顔を1回で。**片方が壊れていれば全体は BROKEN**。
 
@@ -143,11 +278,15 @@ def full_doctor() -> Dict[str, Any]:
 
     guard = self_check()
     standalone = store_self_check()
+    wiring = installation_check()
     failed = list(guard["failed"]) + list(standalone["failed"])
+    verdict = ("BROKEN" if failed else
+               "DEGRADED" if wiring["verdict"] == "PARTIAL" else "OK")
     return {
-        "verdict": "BROKEN" if failed else "OK",
+        "verdict": verdict,
         "guard": guard,
         "standalone": standalone,
+        "wiring": wiring,
         "failed": failed,
         "note": "guaranteed properties are re-run here and now; what is "
                 "NOT guaranteed is named in experiments/guard/"

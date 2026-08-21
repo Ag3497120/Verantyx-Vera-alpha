@@ -3563,6 +3563,79 @@ def build(store_path: str):
         _save_tool_call_quarantine()
         return json.dumps({"ok": ok}, ensure_ascii=False)
 
+    @mcp.tool()
+    def pending_decisions(limit: int = 20) -> str:
+        """人の判断を待っているものを、**1つの窓**にまとめて返す。
+
+        欠けを隠さずに見せるための読むだけの扉(2026-08-22、PREREG8)。
+        待ち行列は既に22本の扉として在る — ここは**新しい待ち行列を
+        作らない**。数えたものは全部、既存の扉から来る(別に持つと必ず
+        ずれる)。閉じ方(どの扉を叩けばよいか)も一緒に返す。
+
+        自動で埋めにいく経路も既に在る(`heartbeat(cognition_mode=
+        "sleep")` が欠けの取得を試み、`propose_web_evidence` が
+        ウェブ抜粋を逐語で隔離する)。**装置自身は決して取りに行かない** —
+        提案は隔離席に入り、採用は人の行為のまま。オフラインの決定論は
+        そのために守られる。
+        """
+        def _count(fn, *a):
+            try:
+                v = json.loads(fn(*a))
+            except Exception as e:              # noqa: BLE001
+                return None, repr(e)
+            if isinstance(v, list):
+                return len(v), v[:3]
+            if isinstance(v, dict):
+                for key in ("pending", "rows", "gaps", "list", "items",
+                            "candidates", "modules"):
+                    if isinstance(v.get(key), list):
+                        return len(v[key]), v[key][:3]
+                return (0, v) if not v else (len(v), v)
+            return 0, v
+
+        queues = [
+            ("ai_facts", list_pending_ai_facts,
+             ["accept_ai_fact", "reject_ai_fact"]),
+            ("tool_calls", list_pending_tool_calls,
+             ["accept_tool_call", "reject_tool_call"]),
+            ("domain_modules", list_pending_domain_modules,
+             ["accept_domain_module", "reject_domain_module"]),
+            ("capacity_limits", list_pending_capacity_limits,
+             ["accept_capacity_limit", "reject_capacity_limit"]),
+            ("pack_verdicts", list_pending_pack_verdicts,
+             ["accept_pack_verdict", "reject_pack_verdict"]),
+            ("covenant_candidates", review_candidates,
+             ["adopt_covenant", "retire_covenant"]),
+            ("gaps", list_gaps, ["what_would_close", "resolve_gap"]),
+        ]
+        rows = []
+        total = 0
+        for name, fn, closers in queues:
+            n, sample = _count(fn)
+            if n is None:
+                rows.append({"kind": name, "waiting": "UNKNOWN",
+                             "error": sample, "close_with": closers})
+                continue
+            total += n
+            rows.append({"kind": name, "waiting": n,
+                         "close_with": closers,
+                         "sample": sample if n else []})
+        rows.sort(key=lambda r: (r["kind"],))
+        return json.dumps({
+            "verdict": "ANSWER",
+            "waiting_total": total,
+            "queues": rows,
+            "acquire_modes": {
+                "manual": "what_would_close(query) が、足りない文書を名指す",
+                "assisted": "propose_web_evidence(text, source) — 外で拾った"
+                            "抜粋を逐語で隔離。採用は人",
+                "autonomous": 'heartbeat(cognition_mode="sleep") — 欠けの'
+                              "取得を試みる。結果はやはり隔離席へ",
+            },
+            "note": "read-only: this window holds no state of its own; "
+                    "every number here comes from the queue that owns it",
+        }, ensure_ascii=False)
+
     return mcp
 
 
