@@ -127,6 +127,20 @@ def cmd_ask(args) -> int:
     return 0
 
 
+def cmd_doctor(args) -> int:
+    """入れた直後に叩く自己検査 — 二つの顔を1回で確かめる。
+
+    番人(フック)の G1〜G4 と、単体の装置の S1〜S4 を**その場で実演**
+    する。利用者の店にも台帳にも触らない(治具は毎回その場で作る)。
+    片方が壊れていれば全体は BROKEN で、終了コードは1。
+    """
+    from .doctor import full_doctor
+
+    out = full_doctor()
+    _print(out)
+    return 1 if out.get("verdict") == "BROKEN" else 0
+
+
 def cmd_stats(args) -> int:
     st = _load(args.store)
     top = sorted(st.core_count.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
@@ -965,6 +979,12 @@ def main(argv: Optional[list] = None) -> int:
     p = sub.add_parser("ask", help="one-shot question (typed verdict)")
     p.add_argument("query")
     p.set_defaults(fn=cmd_ask)
+
+    p = sub.add_parser(
+        "doctor",
+        help="self-check both faces on THIS machine: the covenant guard "
+             "(G1-G4) and the standalone device (S1-S4). Exit 1 if broken")
+    p.set_defaults(fn=cmd_doctor)
 
     p = sub.add_parser("stats", help="store statistics")
     p.set_defaults(fn=cmd_stats)
