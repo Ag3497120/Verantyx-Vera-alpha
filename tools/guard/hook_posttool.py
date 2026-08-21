@@ -16,9 +16,15 @@ from _common import guard, read_hook_input, store_path
 
 def main():
     data = read_hook_input()
-    if data.get("tool_name") not in ("Write", "Edit"):
-        return
+    tool = data.get("tool_name") or ""
     ti = data.get("tool_input") or {}
+    # ④ 全 tool 実行を証人として記録(判定はしない — 置くだけ)。
+    # required 側は字面でなくこの記録で監査される(audit)。
+    detail = str(ti.get("command") or ti.get("file_path")
+                 or ti.get("description") or "")[:400]
+    guard("witness", {"tool": tool, "detail": detail}, store=store_path())
+    if tool not in ("Write", "Edit"):
+        return
     content = str(ti.get("content") or ti.get("new_string") or "")
     if not content:
         return

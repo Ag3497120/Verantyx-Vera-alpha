@@ -760,7 +760,8 @@ def cmd_guard(args) -> int:
     """
     import sys as _sys
 
-    from .covenant import Covenant, Register, extract_covenants
+    from .covenant import (Covenant, Register, bake_inferred,
+                           extract_covenants)
 
     store_path = Path(args.store or DEFAULT_STORE)
     cov_path = store_path.with_name(store_path.stem + ".covenants.json")
@@ -774,21 +775,69 @@ def cmd_guard(args) -> int:
                 payload = json.loads(raw)
             except Exception:
                 payload = {"text": raw}
-    if op == "extract":
-        out = {"candidates": extract_covenants(
-            str(payload.get("text", "")), turn=int(payload.get("turn", -1)))}
-    elif op == "set":
-        c = Covenant(
+    def _mk_covenant():
+        return Covenant(
             name=str(payload.get("name", ""))[:60] or "covenant",
             requires=list(payload.get("requires", [])),
             forbids=list(payload.get("forbids", [])),
             topic=list(payload.get("topic", [])),
             said_at_turn=int(payload.get("turn", -1)),
             quote=str(payload.get("quote", "")))
+
+    def _bake(c):
+        # ③ 書かれていない禁止 — 登録・採用の時だけ店を読む(check の
+        # 速い道を守る)。店が無ければ何も焼かない(推測しない)。
+        if not payload.get("infer"):
+            return None
+        if not store_path.is_file():
+            return {"verdict": "UNKNOWN_NO_STORE", "path": str(store_path)}
+        return bake_inferred(c, CrossStore.load(store_path),
+                             store_name=store_path.name)
+
+    if op == "extract":
+        out = {"candidates": extract_covenants(
+            str(payload.get("text", "")), turn=int(payload.get("turn", -1)))}
+    elif op == "set":
+        c = _mk_covenant()
         reg.add(c)
+        baked = _bake(c)
         reg.save(cov_path)
         out = {"verdict": "ANSWER", "covenant": c.as_dict(),
-               "in_force": len([x for x in reg.covenants if not x.retired])}
+               "in_force": len([x for x in reg.covenants
+                                if not x.retired and x.status == "adopted"])}
+        if baked:
+            out["inference"] = baked
+    elif op == "propose":
+        # ① 隔離席 — LLM の候補は shadow で照合されるだけで執行されない。
+        c = _mk_covenant()
+        if not (c.forbids or c.requires):
+            out = {"verdict": "UNKNOWN_EMPTY_CANDIDATE",
+                   "note": "禁止も要求も無い候補は約束にならない"}
+        else:
+            reg.propose(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "candidate": c.as_dict()}
+    elif op == "adopt":
+        d = reg.adopt(str(payload.get("name", "")))
+        if d is None:
+            out = {"verdict": "UNKNOWN_NO_SUCH_CANDIDATE"}
+        else:
+            c = next(x for x in reg.covenants if x.name == d["name"])
+            baked = _bake(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "adopted": c.as_dict()}
+            if baked:
+                out["inference"] = baked
+    elif op == "witness":
+        out = reg.witness(str(payload.get("tool", "")),
+                          detail=str(payload.get("detail", "")),
+                          turn=int(payload.get("turn", -1)))
+        reg.save(cov_path)
+    elif op == "boundary":
+        out = reg.boundary(turn=int(payload.get("turn", -1)))
+        reg.save(cov_path)
+    elif op == "audit":
+        out = reg.audit()
     elif op == "check":
         out = reg.check(str(payload.get("reply", "")),
                         asked=str(payload.get("asked", "")))
@@ -847,8 +896,8 @@ def main(argv: Optional[list] = None) -> int:
         help="covenant guard fast path: no federation load, covenants.json "
              "only — for Claude Code hooks (stdin: JSON payload)")
     p.add_argument("guard_op",
-                   choices=["extract", "set", "check", "fading", "retire",
-                            "list"])
+                   choices=["extract", "set", "check", "fading", "retire", "list",
+                            "propose", "adopt", "witness", "boundary", "audit"])
     p.set_defaults(fn=cmd_guard)
 
     p = sub.add_parser(

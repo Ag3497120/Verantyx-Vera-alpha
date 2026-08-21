@@ -996,6 +996,66 @@ def serve(store_path: str) -> int:
                           ensure_ascii=False)
 
     @mcp.tool()
+    def propose_covenant(name: str, requires: str = "", forbids: str = "",
+                         topic: str = "", quote: str = "",
+                         turn: int = -1) -> str:
+        """Put a covenant CANDIDATE in quarantine. Meant for the LLM-handoff
+        path: closed extraction rules cannot read paraphrase (「絵文字は
+        控えめに」), and extending regexes never closes that gap (measured:
+        645/661 negations fell outside a 39-word vocabulary). So the model
+        may PROPOSE what it read; Vera shadow-checks the candidate on every
+        reply — violations appear as shadow_violations, never in the
+        verdict, and never block. adopt_covenant is the gate into
+        enforcement. Selection is a gate, not a merge."""
+        c = _Covenant(
+            name=name,
+            requires=[x.strip() for x in requires.split(",") if x.strip()],
+            forbids=[x.strip() for x in forbids.split(",") if x.strip()],
+            topic=[x.strip() for x in topic.split(",") if x.strip()],
+            said_at_turn=turn, quote=quote or name)
+        if not (c.forbids or c.requires):
+            return json.dumps({"verdict": "UNKNOWN_EMPTY_CANDIDATE"},
+                              ensure_ascii=False)
+        _register.propose(c)
+        _register.save(_cov_path)
+        return json.dumps({"verdict": "ANSWER", "candidate": c.as_dict()},
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def adopt_covenant(name: str, infer: bool = False) -> str:
+        """Adopt a quarantined candidate into enforcement — the gate.
+        With infer=True the store is read ONCE, here, and the siblings of
+        each listed term are baked in as inferred_forbids (the prohibition
+        nobody wrote: TypeScriptを使う catches JavaScript because the same
+        cores hold both). check() then reports inferred hits under their
+        own weaker type, at literal-match speed."""
+        from .covenant import bake_inferred as _bake
+
+        d = _register.adopt(name)
+        if d is None:
+            return json.dumps({"verdict": "UNKNOWN_NO_SUCH_CANDIDATE",
+                               "name": name}, ensure_ascii=False)
+        out = {"verdict": "ANSWER", "adopted": d}
+        if infer:
+            c = next(x for x in _register.covenants if x.name == name)
+            out["inference"] = _bake(c, store, store_name=path.name)
+            out["adopted"] = c.as_dict()
+        _register.save(_cov_path)
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def audit_required(  # noqa: D401 — the ledger speaks
+    ) -> str:
+        """Required-side audit by WITNESS, not by wording. 「必ずテストを
+        実行して」 cannot be enforced by reading the reply — the field
+        deployment measured required_missing as mostly false positives.
+        The ground for 'it was done' is the tool-execution record
+        (same line as attest_claim's CLAIM_UNWITNESSED). Advisory only:
+        whether this turn NEEDED the execution is context this layer
+        cannot see, so it reports and never blocks."""
+        return json.dumps(_register.audit(), ensure_ascii=False)
+
+    @mcp.tool()
     def retire_covenant(name: str, quote: str = "", turn: int = -1) -> str:
         """Retire a covenant — not delete it. 「もう絵文字使っていいよ」
         releases the rule from check/fading, but what was promised, and

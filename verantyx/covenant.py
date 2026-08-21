@@ -86,6 +86,17 @@ class Covenant:
     retired: bool = False
     retired_quote: str = ""
     retired_at_turn: int = -1
+    #: 隔離席(2026-08-21)。閉じた抽出規則の外(婉曲・言い換え)は
+    #: 規則で追いかけない — 極性regexの実測(645/661が語彙の外)と同じ
+    #: 壁。代わりに LLM が候補を propose し、candidate は shadow で
+    #: 照合だけされ verdict に混ざらない。adopt して初めて執行に入る。
+    #: 淘汰は門。
+    status: str = "adopted"
+    #: 書かれていない禁止(2026-08-21)。登録・採用の時に店の siblings を
+    #: 焼き込む(check 時に店を読むと 0.04s が死ぬ)。推論由来のヒットは
+    #: 字面の forbids と型を分けて報じる — 弱い主張は弱い型で。
+    inferred_forbids: List[str] = field(default_factory=list)
+    inferred_from: str = ""
 
     def in_scope(self, text: str, asked: str = "") -> bool:
         """Scope is the EXCHANGE, not the reply's wording.
@@ -133,6 +144,10 @@ class Covenant:
                 class_hits.append({"class": f, "found": chars[:8]})
                 if f not in used:
                     used.append(f)
+        # 焼き込み済みの推論禁止(登録時 siblings)。字面の used とは
+        # 別の型で報じる — 登録は利用者の言葉、推論は店の示唆。
+        inferred_used = [f for f in self.inferred_forbids
+                         if loosely_in(f, text)]
         missing = [r for r in self.requires if not loosely_in(r, text)]
         inferred: List[Dict[str, Any]] = []
         if store is not None and missing:
@@ -141,7 +156,7 @@ class Covenant:
                     if loosely_in(w, text):
                         inferred.append({"instead_of": r, "used": w,
                                          "sibling_score": s})
-        if not used and not missing:
+        if not used and not missing and not inferred_used:
             return None
         out = {
             "covenant": self.name,
@@ -155,6 +170,9 @@ class Covenant:
         }
         if class_hits:
             out["class_hits"] = class_hits
+        if inferred_used:
+            out["inferred_forbidden_used"] = inferred_used
+            out["inferred_from"] = self.inferred_from
         return out
 
     def as_dict(self) -> Dict[str, Any]:
@@ -166,6 +184,11 @@ class Covenant:
             out["retired"] = True
             out["retired_quote"] = self.retired_quote
             out["retired_at_turn"] = self.retired_at_turn
+        if self.status != "adopted":
+            out["status"] = self.status
+        if self.inferred_forbids:
+            out["inferred_forbids"] = self.inferred_forbids
+            out["inferred_from"] = self.inferred_from
         return out
 
 
@@ -191,6 +214,12 @@ class Register:
     covenants: List[Covenant] = field(default_factory=list)
     #: covenant name -> the check results, oldest first, True = kept
     history: Dict[str, List[bool]] = field(default_factory=dict)
+    #: tool 実行の証人(2026-08-21)。「必ずテストして」は返答の字面では
+    #: 執行できない — やったの根拠は実行の記録(attest_claim の
+    #: CLAIM_UNWITNESSED と同じ線)。{"boundary": True} がターン境界で、
+    #: audit は最後の境界以降だけを数える(ターンを跨いだ「やった」は
+    #: 別のターンの証人)。
+    witnesses: List[Dict[str, Any]] = field(default_factory=list)
 
     def add(self, c: Covenant) -> Covenant:
         self.covenants.append(c)
@@ -209,6 +238,8 @@ class Register:
         for c in self.covenants:
             if c.retired:
                 continue          # 解かれた約束の風化を報せても雑音
+            if c.status != "adopted":
+                continue          # 隔離席の候補はまだ約束ではない
             h = self.history.get(c.name) or []
             if len(h) < min_history:
                 continue
@@ -242,26 +273,123 @@ class Register:
         ``store`` turns on sibling inference — see `Covenant.check`.
         """
         hits = []
+        advisories = []
+        shadow = []
         for c in self.covenants:
             if c.retired:
                 continue          # 退役済みは照合も履歴も汚さない
             h = c.check(text, asked, store=store)
+            # 禁止側の証拠(字面・文字クラス・焼き込み推論・置換の実使用)
+            # だけが violation。required_missing の字面欠落は advisory —
+            # 「必ず〜して」を字面で違反と呼ぶと誤検知だらけになる
+            # (実地実測)。行為の required は audit(証人)が見る。
+            positive = bool(h) and bool(
+                h.get("forbidden_used") or h.get("class_hits")
+                or h.get("inferred_forbidden_used") or h.get("substituted"))
             # Only in-scope checks are recorded. Counting a turn that was
             # never about the rule as a "keep" makes every rule look healthy.
+            # 履歴は advisory も破りに数える — 誤検知が問題なのは遮断で
+            # あって観測ではない。「TypeScriptと書かなくなってきた」は
+            # 風化として報せる価値がある(遮断はしない、が線)。
             if c.in_scope(text, asked):
                 self.history.setdefault(c.name, []).append(h is None)
             if h:
-                hits.append(h)
-        return {
+                if c.status != "adopted":
+                    # 候補は shadow に分離 — 遮断の材料にはならず、
+                    # adopt するかを決める実績になるだけ(淘汰は門)。
+                    shadow.append(h)
+                elif positive:
+                    hits.append(h)
+                else:
+                    advisories.append(h)
+        out = {
             # BROKEN is a finding about the REPLY, never about the user. The
             # user may have changed their mind one turn ago and this layer
             # cannot see intent, only text.
             "verdict": "BROKEN" if hits else "KEPT",
-            "in_force": len(self.covenants),
+            "in_force": len([c for c in self.covenants
+                             if not c.retired and c.status == "adopted"]),
             "violations": hits,
             "note": "a proposal to re-inject, not a judgment; the rule may "
                     "have been superseded and this cannot tell",
         }
+        if advisories:
+            out["advisories"] = advisories
+        if shadow:
+            out["shadow_violations"] = shadow
+        return out
+
+    def witness(self, tool: str, detail: str = "",
+                turn: int = -1) -> Dict[str, Any]:
+        """tool 実行を1件記録する。判定はしない — 置くだけ。"""
+        row = {"tool": str(tool)[:80], "detail": str(detail)[:400],
+               "turn": turn, "ts": time.time()}
+        self.witnesses.append(row)
+        return {"verdict": "ANSWER", "witnesses": len(self.witnesses)}
+
+    def boundary(self, turn: int = -1) -> Dict[str, Any]:
+        """ターン境界。audit はこれ以降の証人だけを数える。"""
+        self.witnesses.append({"boundary": True, "turn": turn,
+                               "ts": time.time()})
+        # 境界より前は監査に使わないので落とす(台帳の肥大を防ぐ。
+        # 履歴と違い、証人は「このターンにやったか」にしか使えない)。
+        for i in range(len(self.witnesses) - 1, -1, -1):
+            if self.witnesses[i].get("boundary") and i < len(self.witnesses) - 1:
+                self.witnesses = self.witnesses[i + 1:]
+                break
+        return {"verdict": "ANSWER", "witnesses": len(self.witnesses)}
+
+    def audit(self) -> Dict[str, Any]:
+        """required 側を証人で見る — 字面では見ない。
+
+        「必ずテストを実行して」を返答の字面で執行すると誤検知だらけに
+        なる(実地試験の実測)。やったの根拠は tool 実行の記録だけ。
+        照合は部分文字列(requires の語が tool 名か detail に現れる)で、
+        意味の一致は主張しない。**遮断はしない** — このターンにその
+        実行が要ったかは文脈で、この層には見えない。報せるだけ。
+        """
+        # 最後の境界以降の証人だけ
+        recent = []
+        for w in self.witnesses:
+            if w.get("boundary"):
+                recent = []
+            else:
+                recent.append(w)
+        rows = []
+        for c in self.covenants:
+            if c.retired or c.status != "adopted" or not c.requires:
+                continue
+            for r in c.requires:
+                lo = r.lower()
+                hit = next((w for w in recent
+                            if lo in (w.get("tool", "") + " "
+                                      + w.get("detail", "")).lower()), None)
+                rows.append({"covenant": c.name, "requires": r,
+                             "witnessed": hit is not None,
+                             "witness": hit, "inject": c.quote or c.name})
+        if not rows:
+            verdict = "NO_REQUIREMENTS"
+        elif all(r["witnessed"] for r in rows):
+            verdict = "REQUIRED_WITNESSED"
+        else:
+            verdict = "REQUIRED_UNWITNESSED"
+        return {"verdict": verdict, "rows": rows,
+                "witnesses_this_turn": len(recent),
+                "note": "advisory only: whether this turn NEEDED the "
+                        "execution is context this layer cannot see"}
+
+    def propose(self, c: Covenant) -> Covenant:
+        """隔離席に置く。shadow で照合はされるが執行はされない。"""
+        c.status = "candidate"
+        return self.add(c)
+
+    def adopt(self, name: str) -> Optional[Dict[str, Any]]:
+        """候補を採用して執行に入れる。門はここ。"""
+        for c in self.covenants:
+            if c.name == name and c.status == "candidate" and not c.retired:
+                c.status = "adopted"
+                return c.as_dict()
+        return None
 
     def retire(self, name: str, quote: str = "",
                turn: int = -1) -> Optional[Dict[str, Any]]:
@@ -287,7 +415,8 @@ class Register:
         # プロセスが毎回死ぬので、履歴が残らないと風化が測れない。
         Path(path).write_text(
             json.dumps({"covenants": [c.as_dict() for c in self.covenants],
-                        "history": self.history},
+                        "history": self.history,
+                        "witnesses": self.witnesses},
                        ensure_ascii=False), encoding="utf-8")
         return {"verdict": "ANSWER", "path": str(path),
                 "covenants": len(self.covenants)}
@@ -303,10 +432,32 @@ class Register:
             else:
                 rows = data.get("covenants", [])
                 hist = data.get("history", {})
+                r.witnesses = list(data.get("witnesses", []))
             for d in rows:
                 r.covenants.append(Covenant(**d))
             r.history = {k: list(v) for k, v in hist.items()}
         return r
+
+
+def bake_inferred(c: "Covenant", store: Any, *, limit: int = 6,
+                  store_name: str = "") -> Dict[str, Any]:
+    """登録・採用の時に一度だけ店を読み、書かれていない禁止を焼き込む。
+
+    check 時に店を読むと速い道(0.04s)が死ぬ。siblings は店の幾何から
+    「同じ席を占める語」を返す — TypeScript を使う、と登録された約束が
+    JavaScript を捕るのは、誰かが JavaScript を挙げたからではなく、
+    同じ核たちが両方を抱えているから。店に姉妹語が無ければ空のまま
+    (推測しない)。provenance に店の名を残す。
+    """
+    found: List[str] = []
+    for f in list(c.forbids) + list(c.requires):
+        for w, _score in siblings(store, f, limit=limit):
+            if w not in found and w not in c.forbids:
+                found.append(w)
+    c.inferred_forbids = found
+    c.inferred_from = store_name or "store"
+    return {"verdict": "ANSWER", "inferred_forbids": found,
+            "inferred_from": c.inferred_from}
 
 
 def siblings(store: Any, term: str, *, limit: int = 24,

@@ -2743,12 +2743,16 @@ def a_covenant_binds_the_exchange_not_the_wording_fork() -> Dict[str, Any]:
     forbidden = reg.check("実装言語はJavaScriptです。")
     off = reg.check("テストはJestで書きます。", asked="テストはどう書きますか。")
 
-    ok = (terse["verdict"] == "BROKEN"
+    # 2026-08-21 の再張り: required の字面欠落は advisory(遮断しない)。
+    # この fork の docstring 自身が言っていた通り「所見は提案であって
+    # 判定ではない」— 実地試験(誤検知だらけ)が法を先に直させた。
+    ok = (terse["verdict"] == "KEPT"
+          and len(terse.get("advisories", [])) == 1
           # without the question, the same reply is out of scope — which is
           # why `asked` exists and why the fork pins both readings
-          and blind["verdict"] == "KEPT"
-          and terse["violations"][0]["required_missing"] == ["TypeScript"]
-          and terse["violations"][0]["inject"] == quote
+          and blind["verdict"] == "KEPT" and not blind.get("advisories")
+          and terse["advisories"][0]["required_missing"] == ["TypeScript"]
+          and terse["advisories"][0]["inject"] == quote
           and kept["verdict"] == "KEPT"
           and forbidden["verdict"] == "BROKEN"
           and forbidden["violations"][0]["forbidden_used"] == ["JavaScript"]
@@ -2763,7 +2767,7 @@ def a_covenant_binds_the_exchange_not_the_wording_fork() -> Dict[str, Any]:
             "compliant": kept["verdict"],
             "forbidden_term": forbidden["verdict"],
             "out_of_scope": off["verdict"],
-            "inject_is_verbatim": terse["violations"][0]["inject"] == quote,
+            "inject_is_verbatim": terse["advisories"][0]["inject"] == quote,
         },
     }
 
@@ -2810,10 +2814,14 @@ def the_store_infers_the_prohibition_nobody_wrote_fork() -> Dict[str, Any]:
     inferred = reg.check("この刑は罰金である。", asked="刑について", store=store)
     subs = [s for v in inferred["violations"] for s in v.get("substituted", [])]
 
+    # 2026-08-21 の再張り: 手登録だけの台帳は欠落を advisory としか言えない
+    # (字面の required は遮断しない)。店が置換の実使用を示して初めて
+    # violation になる — 推論が証拠を持ち込む、がこの fork の芯のまま。
     ok = ("罰金" in sibs                      # the alternative is recovered
           and "規定" not in sibs               # the hub is not
-          and listed["verdict"] == "BROKEN"    # the register knows it is wrong
-          and not [s for v in listed["violations"] for s in v.get("substituted", [])]
+          and listed["verdict"] == "KEPT"
+          and len(listed.get("advisories", [])) == 1
+          and inferred["verdict"] == "BROKEN"  # substitution is evidence
           and any(s["used"] == "罰金" and s["instead_of"] == "拘禁刑" for s in subs))
     return {
         "experiment": "cross_geometry",
@@ -2822,8 +2830,8 @@ def the_store_infers_the_prohibition_nobody_wrote_fork() -> Dict[str, Any]:
         "result": {
             "siblings_of_拘禁刑": sibs,
             "hub_excluded": "規定" not in sibs,
-            "registered_only_names_substitution": bool(
-                [s for v in listed["violations"] for s in v.get("substituted", [])]),
+            "registered_only_advises": [listed["verdict"],
+                                        len(listed.get("advisories", []))],
             "inferred_substitutions": subs[:3],
         },
     }
@@ -4872,6 +4880,72 @@ def covenant_lifecycle_fork() -> Dict[str, Any]:
     }
 
 
+def a_promise_to_act_needs_a_witness_fork() -> Dict[str, Any]:
+    """行為の約束は証人で見る・候補は隔離席から採用される(fork 174本目)。
+
+    ①「必ずpytestを実行して」は返答の字面では執行できない(実地試験:
+    required_missing は誤検知だらけ)。やったの根拠は tool 実行の記録 —
+    attest_claim の CLAIM_UNWITNESSED と同じ線。境界より前の証人は
+    数えない(ターンを跨いだ「やった」は別のターンの証人)。判定は
+    三値で、requires の無い台帳は NO_REQUIREMENTS(証人ゼロを違反と
+    呼ばない)。②閉じた抽出規則の外は規則で追いかけず、候補は隔離席:
+    shadow で照合され verdict に混ざらず、adopt して初めて執行に入る
+    (淘汰は門)。③登録時に店の siblings を焼き込めば、書かれていない
+    禁止が字面の速さで捕まり、推論由来は弱い型(inferred)で報じられる。
+    """
+    from .covenant import Covenant, Register, bake_inferred
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+
+    # ① 証人
+    reg = Register()
+    reg.add(Covenant(name="t", quote="必ずpytestを実行して",
+                     requires=["pytest"]))
+    a0 = reg.audit()["verdict"]
+    reg.witness("Bash", detail="python3 -m pytest -q")
+    a1 = reg.audit()["verdict"]
+    reg.boundary()
+    a2 = reg.audit()["verdict"]
+    empty = Register().audit()["verdict"]
+
+    # ② 隔離席
+    q = Register()
+    q.propose(Covenant(name="c", quote="!は控えめに", forbids=["!"]))
+    sh = q.check("できた!")
+    q.adopt("c")
+    en = q.check("できた!")
+
+    # ③ 焼き込み
+    st = CrossStore()
+    ingest_documents(st, [Document(source="刑法", text=(
+        "甲条は拘禁刑を科する。甲条は規定である。"
+        "乙条は罰金を科する。乙条は規定である。"
+        "丙条は拘禁刑を科する。丙条は罰金を科する。"
+        "丁条は拘禁刑を科する。丁条は罰金を科する。"))])
+    c3 = Covenant(name="k", quote="拘禁刑の話はしないで", forbids=["拘禁刑"])
+    bake_inferred(c3, st, store_name="fixture")
+    r3 = Register()
+    r3.add(c3)
+    hit = r3.check("この刑は罰金である。")
+    inf = [u for v in hit["violations"]
+           for u in v.get("inferred_forbidden_used", [])]
+
+    ok = (a0 == "REQUIRED_UNWITNESSED" and a1 == "REQUIRED_WITNESSED"
+          and a2 == "REQUIRED_UNWITNESSED" and empty == "NO_REQUIREMENTS"
+          and sh["verdict"] == "KEPT"
+          and len(sh.get("shadow_violations", [])) == 1
+          and en["verdict"] == "BROKEN"
+          and "罰金" in c3.inferred_forbids and "罰金" in inf)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_PROMISE_TO_ACT_NEEDS_A_WITNESS",
+        "pass": bool(ok),
+        "result": {"audit": [a0, a1, a2, empty],
+                   "quarantine": [sh["verdict"], en["verdict"]],
+                   "baked": c3.inferred_forbids, "inferred_hit": inf},
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -4960,6 +5034,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         conversation_overflow_is_typed_fork(),
         conversation_speaker_attribution_fork(),
         covenant_lifecycle_fork(),
+        a_promise_to_act_needs_a_witness_fork(),
     ]
 
 

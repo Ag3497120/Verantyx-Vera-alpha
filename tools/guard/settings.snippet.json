@@ -4,7 +4,7 @@
       "command": "python3 <GUARD_DIR>/hook_prompt.py"}]}],
     "Stop": [{"hooks": [{"type": "command",
       "command": "python3 <GUARD_DIR>/hook_stop.py"}]}],
-    "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command",
+    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command",
       "command": "python3 <GUARD_DIR>/hook_posttool.py"}]}]
   }
 }

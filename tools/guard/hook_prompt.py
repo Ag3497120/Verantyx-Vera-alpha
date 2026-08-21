@@ -35,7 +35,20 @@ def main():
     for cand in ex.get("candidates", []):
         guard("set", cand, store=store)
 
-    # 3) 薄れた約束だけ再注入(毎ターン全部は情報を運ばない — Vera自身の注記)
+    # 3) 前のターンの required 監査(証人ベース・遮断しない)を報せてから
+    #    境界を切る。「このターンに要ったか」は文脈なので判定は運ばず、
+    #    無かったという事実だけを運ぶ。
+    audit_lines = []
+    audit = guard("audit", {}, store=store) or {}
+    if audit.get("verdict") == "REQUIRED_UNWITNESSED":
+        for r in audit.get("rows", []):
+            if not r.get("witnessed"):
+                audit_lines.append(
+                    f"・前のターン、「{r.get('inject')}」の実行記録"
+                    f"({r.get('requires')})が見当たらなかった")
+    guard("boundary", {}, store=store)
+
+    # 4) 薄れた約束だけ再注入(毎ターン全部は情報を運ばない — Vera自身の注記)
     fading = guard("fading", {}, store=store) or {}
     rows = fading.get("fading") if isinstance(fading, dict) else None
     lines = []
@@ -44,6 +57,7 @@ def main():
             lines.append(f"・「{r.get('covenant')}」"
                          f"(守れていた率 {r.get('kept_before')}"
                          f" → {r.get('kept_recently')})")
+    lines = audit_lines + lines
     if lines:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
