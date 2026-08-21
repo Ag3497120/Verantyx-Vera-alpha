@@ -761,7 +761,7 @@ def cmd_guard(args) -> int:
     import sys as _sys
 
     from .covenant import (Covenant, Register, bake_inferred,
-                           extract_covenants, extract_releases)
+                           extract_covenants, extract_releases, self_check)
 
     store_path = Path(args.store or DEFAULT_STORE)
     cov_path = store_path.with_name(store_path.stem + ".covenants.json")
@@ -860,6 +860,43 @@ def cmd_guard(args) -> int:
         out = reg.promotion_review(
             min_checks=int(payload.get("min_checks", 8)),
             max_fire_rate=float(payload.get("max_fire_rate", 0.5)))
+    elif op == "doctor":
+        # 導入直後に叩く自己検査(PREREG5)。**利用者の台帳には触らない** —
+        # 一時の台帳で保証を実演し、環境は stat と実時間だけを見る。
+        import os as _os
+        import time as _time
+
+        out = self_check()
+        t0 = _time.time()
+        _probe = Register()
+        _probe.add(Covenant(name="_speed", quote="q", forbids=["絵文字"]))
+        for _ in range(200):
+            _probe.check("できました。")
+        per_check_ms = round((_time.time() - t0) / 200 * 1000, 4)
+        frozen = bool(getattr(_sys, "frozen", False))
+        env = {
+            "path": "frozen-binary" if frozen else "source",
+            "per_check_ms": per_check_ms,
+            "covenants_ledger": str(cov_path),
+            "ledger_exists": cov_path.is_file(),
+            "ledger_writable": _os.access(
+                cov_path if cov_path.is_file() else cov_path.parent,
+                _os.W_OK),
+            "covenants_in_force": len([c for c in reg.covenants
+                                       if not c.retired
+                                       and c.status == "adopted"]),
+            "candidates_in_quarantine": len([c for c in reg.covenants
+                                             if c.status == "candidate"]),
+        }
+        notes = []
+        if not env["ledger_writable"]:
+            notes.append("台帳に書けない — 約束を登録できない(DEGRADED)")
+        if frozen and per_check_ms > 50:
+            notes.append("1照合が遅い — onedir 凍結かソース直呼びを勧める")
+        out["environment"] = env
+        if out["verdict"] == "OK" and notes:
+            out["verdict"] = "DEGRADED"
+        out["notes"] = notes
     elif op == "stale":
         out = reg.stale(store_path)      # stat のみ — 店は読まない
     elif op == "rebake":
@@ -896,6 +933,9 @@ def cmd_guard(args) -> int:
     else:
         out = {"verdict": "UNKNOWN_OP", "op": op}
     _print(out)
+    # doctor だけは終了コードで答える — 導入の自動確認に使えるように。
+    if op == "doctor" and out.get("verdict") == "BROKEN":
+        return 1
     return 0
 
 
@@ -936,7 +976,8 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("guard_op",
                    choices=["extract", "set", "check", "fading", "retire", "list",
                             "propose", "adopt", "witness", "boundary", "audit",
-                            "promote", "stale", "rebake"])
+                            "promote", "stale", "rebake",
+                            "doctor"])
     p.set_defaults(fn=cmd_guard)
 
     p = sub.add_parser(

@@ -697,6 +697,102 @@ class Register:
         return r
 
 
+def self_check(register_cls: Any = None,
+               covenant_cls: Any = None) -> Dict[str, Any]:
+    """保証4つ(G1〜G4)を、その場で実演して確かめる自己検査。
+
+    PREREG5。他人のマシンに入れた直後に叩くもの。**通るだけの自己検査は
+    自己申告と同じ**なので、検査は毎回その場で台帳を作って実際に走らせる
+    (「実装されている」ではなく「今このマシンで動いた」を見る)。
+    利用者の台帳には一切触らない — 一時の台帳だけを使う。
+
+    ``register_cls`` を差し替えられるのは、**壊れた台帳で BROKEN を
+    返すことを測るため**。嘘をつく自己検査は無いより悪い。
+    """
+    R = register_cls or Register
+    C = covenant_cls or Covenant
+    probes: List[Dict[str, Any]] = []
+
+    def probe(name, ok, detail):
+        probes.append({"probe": name, "pass": bool(ok), "detail": detail})
+
+    # G1 人が明示登録した約束は捕まえる(字面と文字クラスの両方)
+    try:
+        reg = R()
+        reg.add(C(name="g1a", quote="絵文字を使わないで", forbids=["絵文字"]))
+        reg.add(C(name="g1b", quote="TODOを書かないで", forbids=["TODO"]))
+        glyph = reg.check("できました🎉")
+        lit = reg.check("TODO: あとで直す")
+        clean = reg.check("できました。")
+        probe("G1_registered_covenant_blocks",
+              glyph["verdict"] == "BROKEN" and lit["verdict"] == "BROKEN"
+              and clean["verdict"] == "KEPT"
+              and any(v.get("class_hits") for v in glyph["violations"]),
+              {"emoji_glyph": glyph["verdict"], "literal": lit["verdict"],
+               "clean": clean["verdict"]})
+    except Exception as e:                     # noqa: BLE001
+        probe("G1_registered_covenant_blocks", False, {"error": repr(e)})
+
+    # G2 規則が読んだ約束は遮断できない(が、見えなくもならない)
+    try:
+        reg = R()
+        cand = C(name="g2", quote="No new dependencies", forbids=["new"],
+                 origin="regex")
+        reg.propose(cand)
+        out = reg.check("I added a new helper function.")
+        probe("G2_regex_read_never_blocks",
+              out["verdict"] == "KEPT" and not out["violations"]
+              and len(out.get("shadow_violations", [])) == 1,
+              {"verdict": out["verdict"],
+               "blocked": len(out["violations"]),
+               "visible_in_shadow": len(out.get("shadow_violations", []))})
+    except Exception as e:                     # noqa: BLE001
+        probe("G2_regex_read_never_blocks", False, {"error": repr(e)})
+
+    # G3 決定的 — 登録順に依らない
+    try:
+        import itertools
+
+        seen = set()
+        for perm in itertools.permutations(
+                [("a", ["絵文字"]), ("b", ["TODO"]), ("c", ["print文"])]):
+            reg = R()
+            for n, f in perm:
+                reg.add(C(name=n, quote=f"{f[0]}を使わないで", forbids=f))
+            o = reg.check("TODO と print文 と 🎉")
+            seen.add((o["verdict"],
+                      tuple(sorted(v["covenant"] for v in o["violations"]))))
+        probe("G3_deterministic_order_invariant", len(seen) == 1,
+              {"distinct_outcomes": len(seen), "permutations": 6})
+    except Exception as e:                     # noqa: BLE001
+        probe("G3_deterministic_order_invariant", False, {"error": repr(e)})
+
+    # G4 記録は消えない — 退役は追記であって削除ではない
+    try:
+        reg = R()
+        reg.add(C(name="g4", quote="絵文字を使わないで", forbids=["絵文字"]))
+        before = reg.check("できました🎉")["verdict"]
+        reg.retire("g4", quote="もういいよ", turn=9)
+        after = reg.check("できました🎉")["verdict"]
+        listed = [c for c in reg.covenants if c.name == "g4"]
+        probe("G4_retire_is_an_entry_not_a_deletion",
+              before == "BROKEN" and after == "KEPT" and len(listed) == 1
+              and listed[0].retired
+              and bool(reg.history.get("g4")),
+              {"before": before, "after": after,
+               "still_listed": len(listed) == 1,
+               "history_kept": bool(reg.history.get("g4"))})
+    except Exception as e:                     # noqa: BLE001
+        probe("G4_retire_is_an_entry_not_a_deletion", False, {"error": repr(e)})
+
+    failed = [p["probe"] for p in probes if not p["pass"]]
+    return {"verdict": "BROKEN" if failed else "OK",
+            "guarantees": probes, "failed": failed,
+            "note": "G1-G4 are re-run here, on this machine, right now; "
+                    "what is NOT guaranteed is listed in "
+                    "experiments/guard/PREREG5_FREEZE.md (N1-N7)"}
+
+
 def _store_fingerprint(store_path: Any) -> Dict[str, Any]:
     """店ファイルの指紋 — stat のみ(読まない)。"""
     try:
