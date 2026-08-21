@@ -996,6 +996,38 @@ def serve(store_path: str) -> int:
                           ensure_ascii=False)
 
     @mcp.tool()
+    def retire_covenant(name: str, quote: str = "", turn: int = -1) -> str:
+        """Retire a covenant — not delete it. 「もう絵文字使っていいよ」
+        releases the rule from check/fading, but what was promised, and
+        when and with what words it was released, stays in the ledger:
+        erasing it would make the audit lie. Found as a named limitation
+        of the first field deployment (2026-08-21): covenants survived
+        restarts but could never be taken back."""
+        r = _register.retire(name, quote=quote, turn=turn)
+        if r is None:
+            return json.dumps({"verdict": "UNKNOWN_NO_SUCH_COVENANT",
+                               "name": name}, ensure_ascii=False)
+        _register.save(_cov_path)
+        return json.dumps({"verdict": "ANSWER", "retired": r},
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def extract_covenants(text: str, turn: int = -1) -> str:
+        """Instruction text → covenant CANDIDATES, by closed surface rules
+        (ja: 〜を使わないで / 必ず〜して; en: never use X / always run X).
+        Registration stays a separate act (set_covenant) so a caller can
+        show candidates to a human first. A sentence the rules cannot read
+        yields nothing — no guessing, because putting an LLM here would
+        hand the drifting device the job of writing its own leash. The
+        forbidden target is the noun run immediately before を/は —
+        capturing the whole sentence's content words caused false blocks
+        in the field (measured, fixed)."""
+        from .covenant import extract_covenants as _extract
+
+        return json.dumps({"candidates": _extract(text, turn=turn)},
+                          ensure_ascii=False)
+
+    @mcp.tool()
     def check_reply(reply: str, asked: str = "") -> str:
         """Does this reply still honour what the user settled?
 

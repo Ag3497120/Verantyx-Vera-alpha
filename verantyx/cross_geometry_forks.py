@@ -4808,6 +4808,70 @@ def explanation_never_on_answer_path_fork() -> Dict[str, Any]:
     }
 
 
+def covenant_lifecycle_fork() -> Dict[str, Any]:
+    """約束は生まれ、執行され、退役する — 削除はされない(fork 173本目)。
+
+    実地試験(Claude Code フック7個、別マシン)が名指しした限界への答えを
+    性質として釘打つ。①誕生: 指示文からの抽出は閉じた規則(ja+en)だけで、
+    読めない指示からは何も作らない — 推測は約束を捏造する。②執行:
+    「絵文字を使わないで」は語「絵文字」ではなく 🎉 そのもの(文字クラス)を
+    捕まえる — 字面照合の限界2の修理。ただしクラス表は閉じた1項目
+    (絵文字/emoji)のみ: 「日本語を使わないで」を文字クラスにすると
+    日本語の返答すべてが違反になる。③退役: 「もういい」で check と
+    fading から外れるが、席は残る — 削除すると「かつて約束があった」
+    履歴ごと消え、風化の測定が嘘になる(閉鎖は追記、GAP台帳と同じ線)。
+    """
+    from .covenant import Covenant, Register, extract_covenants
+
+    # ① 誕生 — 読める指示だけが約束になる
+    born = extract_covenants(
+        "絵文字を使わないで。Never use TODO comments.", turn=1)
+    vague = extract_covenants("なんかいい感じでよろしく。", turn=1)
+
+    reg = Register()
+    for c in born:
+        reg.add(Covenant(name=c["name"], quote=c["quote"],
+                         forbids=list(c.get("forbids", [])),
+                         requires=list(c.get("requires", [])),
+                         said_at_turn=1))
+
+    # ② 執行 — 語ではなく文字を捕まえ、素の文は素通し
+    hit = reg.check("できました🎉")
+    glyph = any(v.get("class_hits") for v in hit["violations"])
+    clean = reg.check("できました。")
+
+    # ③ 退役 — check からは消え、席と履歴は残る
+    n_before = len(reg.covenants)
+    emoji_name = next(c.name for c in reg.covenants if "絵文字" in c.forbids)
+    reg.retire(emoji_name, quote="もう絵文字使っていいよ", turn=5)
+    after = reg.check("できました🎉")
+    emoji_still = any("絵文字" == v.get("covenant") or v.get("class_hits")
+                      for v in after["violations"])
+    seat_kept = (len(reg.covenants) == n_before
+                 and any(c.name == emoji_name and c.retired
+                         for c in reg.covenants))
+    history_kept = emoji_name in reg.history and len(reg.history[emoji_name]) > 0
+    faded = reg.fading(window=1, min_history=1)
+    retired_out_of_fading = emoji_name not in [
+        r["covenant"] for r in faded.get("fading", []) + faded.get("stable", [])]
+
+    ok = (len(born) == 2 and vague == []
+          and hit["verdict"] == "BROKEN" and glyph
+          and clean["verdict"] == "KEPT"
+          and after["verdict"] == "KEPT" and not emoji_still
+          and seat_kept and history_kept and retired_out_of_fading)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "COVENANT_LIFECYCLE",
+        "pass": bool(ok),
+        "result": {"born": len(born), "vague": len(vague),
+                   "glyph_caught": glyph,
+                   "after_retire": after["verdict"],
+                   "seat_kept": seat_kept, "history_kept": history_kept,
+                   "retired_out_of_fading": retired_out_of_fading},
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -4895,6 +4959,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
         conversation_speaker_attribution_fork(),
+        covenant_lifecycle_fork(),
     ]
 
 

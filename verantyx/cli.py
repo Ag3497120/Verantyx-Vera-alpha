@@ -751,6 +751,67 @@ def cmd_push_store(args) -> int:
     return 0
 
 
+def cmd_guard(args) -> int:
+    """番人の高速経路 — 連邦を読まず covenants.json だけを読む。
+
+    実地試験の限界5: 橋(常駐)の起動 15〜45秒の間 fail-open だった。
+    この経路は Register だけを読むので、凍結バイナリでも秒台で返り、
+    フックは橋なしで直接呼べる(fail-open の窓が消える)。
+    """
+    import sys as _sys
+
+    from .covenant import Covenant, Register, extract_covenants
+
+    store_path = Path(args.store or DEFAULT_STORE)
+    cov_path = store_path.with_name(store_path.stem + ".covenants.json")
+    reg = Register.load(cov_path)
+    op = args.guard_op
+    payload = {}
+    if not _sys.stdin.isatty():
+        raw = _sys.stdin.read().strip()
+        if raw:
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                payload = {"text": raw}
+    if op == "extract":
+        out = {"candidates": extract_covenants(
+            str(payload.get("text", "")), turn=int(payload.get("turn", -1)))}
+    elif op == "set":
+        c = Covenant(
+            name=str(payload.get("name", ""))[:60] or "covenant",
+            requires=list(payload.get("requires", [])),
+            forbids=list(payload.get("forbids", [])),
+            topic=list(payload.get("topic", [])),
+            said_at_turn=int(payload.get("turn", -1)),
+            quote=str(payload.get("quote", "")))
+        reg.add(c)
+        reg.save(cov_path)
+        out = {"verdict": "ANSWER", "covenant": c.as_dict(),
+               "in_force": len([x for x in reg.covenants if not x.retired])}
+    elif op == "check":
+        out = reg.check(str(payload.get("reply", "")),
+                        asked=str(payload.get("asked", "")))
+        reg.save(cov_path)          # 履歴(風化の材料)を残す
+    elif op == "fading":
+        out = reg.fading(window=int(payload.get("window", 5)))
+    elif op == "retire":
+        r = reg.retire(str(payload.get("name", "")),
+                       quote=str(payload.get("quote", "")),
+                       turn=int(payload.get("turn", -1)))
+        if r is None:
+            out = {"verdict": "UNKNOWN_NO_SUCH_COVENANT"}
+        else:
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "retired": r}
+    elif op == "list":
+        out = {"covenants": [c.as_dict() for c in reg.covenants]}
+    else:
+        out = {"verdict": "UNKNOWN_OP", "op": op}
+    _print(out)
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="vera", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -780,6 +841,15 @@ def main(argv: Optional[list] = None) -> int:
 
     p = sub.add_parser("stats", help="store statistics")
     p.set_defaults(fn=cmd_stats)
+
+    p = sub.add_parser(
+        "guard",
+        help="covenant guard fast path: no federation load, covenants.json "
+             "only — for Claude Code hooks (stdin: JSON payload)")
+    p.add_argument("guard_op",
+                   choices=["extract", "set", "check", "fading", "retire",
+                            "list"])
+    p.set_defaults(fn=cmd_guard)
 
     p = sub.add_parser(
         "heartbeat",

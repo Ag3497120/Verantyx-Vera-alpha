@@ -80,6 +80,12 @@ class Covenant:
     said_at_turn: int = -1
     said_by: str = "user"
     quote: str = ""
+    #: 退役(2026-08-21)。削除ではない — 「もう使っていいよ」と言われた
+    #: 約束は check/fading から外れるが、履歴として残る。何を約束して
+    #: いたか・いつ解かれたかは台帳の一部で、消すと監査が嘘になる。
+    retired: bool = False
+    retired_quote: str = ""
+    retired_at_turn: int = -1
 
     def in_scope(self, text: str, asked: str = "") -> bool:
         """Scope is the EXCHANGE, not the reply's wording.
@@ -109,9 +115,24 @@ class Covenant:
         what the corpus suggests they meant, and a reader deciding whether
         to re-inject needs to know which is which.
         """
+        if self.retired:
+            return None
         if not self.in_scope(text, asked):
             return None
         used = [f for f in self.forbids if loosely_in(f, text)]
+        # 文字クラスの照合(2026-08-21、閉じた表・1クラスのみ)。
+        # 実地試験の限界2:「絵文字を使わないで」を捕まえたのは返答中の
+        # **語**「絵文字」であって 🎉 そのものではなかった。禁止語が
+        # クラス名のとき、そのクラスの文字自体を検査し、見つけた文字を
+        # 名指す。「日本語」クラスは入れない — 識別子の構文解析が要り、
+        # 日本語の返答全部に誤発火する(過検出の番人は切られる)。
+        class_hits = []
+        for f in self.forbids:
+            chars = _class_members_in(f, text)
+            if chars:
+                class_hits.append({"class": f, "found": chars[:8]})
+                if f not in used:
+                    used.append(f)
         missing = [r for r in self.requires if not loosely_in(r, text)]
         inferred: List[Dict[str, Any]] = []
         if store is not None and missing:
@@ -122,7 +143,7 @@ class Covenant:
                                          "sibling_score": s})
         if not used and not missing:
             return None
-        return {
+        out = {
             "covenant": self.name,
             "forbidden_used": used,
             "required_missing": missing,
@@ -132,12 +153,20 @@ class Covenant:
             # What to paste back, verbatim, rather than a paraphrase of it.
             "inject": self.quote or self.name,
         }
+        if class_hits:
+            out["class_hits"] = class_hits
+        return out
 
     def as_dict(self) -> Dict[str, Any]:
-        return {"name": self.name, "requires": self.requires,
-                "forbids": self.forbids, "topic": self.topic,
-                "said_at_turn": self.said_at_turn, "said_by": self.said_by,
-                "quote": self.quote}
+        out = {"name": self.name, "requires": self.requires,
+               "forbids": self.forbids, "topic": self.topic,
+               "said_at_turn": self.said_at_turn, "said_by": self.said_by,
+               "quote": self.quote}
+        if self.retired:
+            out["retired"] = True
+            out["retired_quote"] = self.retired_quote
+            out["retired_at_turn"] = self.retired_at_turn
+        return out
 
 
 @dataclass
@@ -178,6 +207,8 @@ class Register:
         """
         rows: List[Dict[str, Any]] = []
         for c in self.covenants:
+            if c.retired:
+                continue          # 解かれた約束の風化を報せても雑音
             h = self.history.get(c.name) or []
             if len(h) < min_history:
                 continue
@@ -212,6 +243,8 @@ class Register:
         """
         hits = []
         for c in self.covenants:
+            if c.retired:
+                continue          # 退役済みは照合も履歴も汚さない
             h = c.check(text, asked, store=store)
             # Only in-scope checks are recorded. Counting a turn that was
             # never about the rule as a "keep" makes every rule look healthy.
@@ -230,10 +263,31 @@ class Register:
                     "have been superseded and this cannot tell",
         }
 
+    def retire(self, name: str, quote: str = "",
+               turn: int = -1) -> Optional[Dict[str, Any]]:
+        """約束を退役させる — 削除ではない。
+
+        実地試験の限界1: 「もう絵文字使っていいよ」と言っても番人が
+        止め続けた。破棄経路が要る。ただし削除すると「かつて約束が
+        あった」履歴ごと消える — 風化の測定も provenance も嘘になる。
+        だから席は残し、check/fading から外れるだけにする(閉鎖は追記、
+        は GAP 台帳と同じ線)。同名は最初の未退役だけを退役させる。
+        """
+        for c in self.covenants:
+            if c.name == name and not c.retired:
+                c.retired = True
+                c.retired_quote = quote
+                c.retired_at_turn = turn
+                return c.as_dict()
+        return None
+
     def save(self, path: Path) -> Dict[str, Any]:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        # 履歴も一緒に置く — 凍結バイナリの1回呼び(guard CLI)では
+        # プロセスが毎回死ぬので、履歴が残らないと風化が測れない。
         Path(path).write_text(
-            json.dumps([c.as_dict() for c in self.covenants],
+            json.dumps({"covenants": [c.as_dict() for c in self.covenants],
+                        "history": self.history},
                        ensure_ascii=False), encoding="utf-8")
         return {"verdict": "ANSWER", "path": str(path),
                 "covenants": len(self.covenants)}
@@ -243,8 +297,15 @@ class Register:
         r = cls()
         p = Path(path)
         if p.is_file():
-            for d in json.loads(p.read_text(encoding="utf-8")):
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, list):        # 旧形式(素のリスト)も読む
+                rows, hist = data, {}
+            else:
+                rows = data.get("covenants", [])
+                hist = data.get("history", {})
+            for d in rows:
                 r.covenants.append(Covenant(**d))
+            r.history = {k: list(v) for k, v in hist.items()}
         return r
 
 
@@ -340,6 +401,31 @@ def infer_forbidden(store: Any, required: Sequence[str], *,
                     limit: int = 8) -> Dict[str, List[str]]:
     """For each required term, the siblings that would substitute for it."""
     return {r: [w for w, _s in siblings(store, r)[:limit]] for r in required}
+
+
+#: 文字クラスの閉じた表(2026-08-21)。1クラスのみ — 絵文字は
+#: コードポイントで曖昧さなく判定できる唯一のクラス。表を増やすときは
+#: 「そのクラスの検出が返答の言語に依存しないか」を先に測ること。
+_CLASS_TERMS = {"絵文字", "emoji", "emojis"}
+_EMOJI = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"   # Misc symbols/pictographs .. symbols ext
+    "\U00002600-\U000027BF"   # Misc symbols / dingbats
+    "\U0001F1E6-\U0001F1FF"   # regional indicators
+    "\U00002B00-\U00002BFF"   # arrows/stars incl ⭐
+    "\uFE0F"                    # variation selector (emoji presentation)
+    "]")
+
+
+def _class_members_in(term: str, text: str) -> List[str]:
+    """禁止語がクラス名なら、クラスの文字そのものを探して名指す。"""
+    if str(term).strip().lower() not in _CLASS_TERMS:
+        return []
+    seen: List[str] = []
+    for ch in _EMOJI.findall(text or ""):
+        if ch not in seen:
+            seen.append(ch)
+    return seen
 
 
 def loosely_in(term: str, text: str) -> bool:
@@ -454,3 +540,52 @@ def collapse(
                 "settled and does not use what was settled; re-injecting is "
                 "a suggestion, not a correction",
     }
+
+
+# ---------------------------------------------------------------------------
+# 指示文 → 約束の抽出(2026-08-21、実地試験の限界3・4を受けて器官化)
+# ---------------------------------------------------------------------------
+# フック側に散在していた字面規則を一元化する。閉じた規則のみ:
+# ここに LLM を挟むと、逸れる側の装置に約束の抽出を任せることになる
+# (実装者の言葉のまま)。読めない文からは立てない — 推測しない。
+#: 日本語: 「Xを使わないで」型。禁止の対象は印の直前の「を/は」句の名詞
+#: (文の内容語を丸ごと拾うと誤遮断する — 実地試験で実測済みの修理)。
+# 捕獲は**名詞連のみ**(ひらがなを許すと直前の助詞 では/に を巻き込む —
+# 「では絵文字」を禁止語にした実測がある)。
+_JA_FORBID = re.compile(
+    r"([一-龥ァ-ヺa-zA-Z0-9ー]+)(?:を|は)"
+    r"(?:使わないで|入れないで|書かないで|やめて|禁止|使用しない)")
+_JA_REQUIRE = re.compile(
+    r"必ず([一-龥ァ-ヺa-zA-Zぁ-ん0-9ー]+?)(?:を)?"
+    r"(?:して|すること|実行して|実行すること)")
+#: 英語(実地試験: "Never use emojis" からは約束が立たない、の修理)。
+_EN_FORBID = re.compile(
+    r"\b(?:never use|don't use|do not use|no)\s+([A-Za-z][A-Za-z0-9_-]*)",
+    re.I)
+_EN_REQUIRE = re.compile(
+    r"\b(?:always|make sure to|be sure to)\s+"
+    r"(?:run|use|execute)\s+([A-Za-z][A-Za-z0-9_.-]*)", re.I)
+
+
+def extract_covenants(text: str, turn: int = -1) -> List[Dict[str, Any]]:
+    """指示文から約束の候補を立てる。読めない文からは立てない。
+
+    返すのは**候補**であり、登録は呼び出し側(set_covenant)の仕事 —
+    抽出と登録を分けておくと、フックが候補を人に見せてから登録する
+    運用も選べる。quote には元の文をそのまま入れる(言い換えない)。
+    """
+    out: List[Dict[str, Any]] = []
+    for sent in re.split(r"[。\n.!?]", text or ""):
+        sent = sent.strip()
+        if not sent:
+            continue
+        forbids = [m.group(1) for m in _JA_FORBID.finditer(sent)]
+        forbids += [m.group(1) for m in _EN_FORBID.finditer(sent)]
+        requires = [m.group(1) for m in _JA_REQUIRE.finditer(sent)]
+        requires += [m.group(1) for m in _EN_REQUIRE.finditer(sent)]
+        if not forbids and not requires:
+            continue
+        out.append({"name": sent[:40], "requires": requires,
+                    "forbids": forbids, "quote": sent,
+                    "said_at_turn": turn})
+    return out
