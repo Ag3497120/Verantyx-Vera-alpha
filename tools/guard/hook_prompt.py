@@ -24,8 +24,13 @@ def main():
                 if not c.get("retired") and term in c.get("forbids", []):
                     guard("retire", {"name": c["name"],
                                      "quote": prompt[:80]}, store=store)
+    # 規則が読んだ約束は**隔離席へ**(2026-08-21、誤遮断の実測)。
+    # set(執行に入る)ではなく propose。人が実際に書く指示20本で測ると
+    # 4本が間違った語を捕まえ、`No new dependencies` → forbids=["new"] は
+    # 返答「I added a new helper function.」を遮断した。候補は shadow で
+    # 照合されるだけで、採用は人の行為(門)のまま。
     for cand in ex.get("candidates", []):
-        guard("set", cand, store=store)
+        guard("propose", cand, store=store)
 
     # 3) 前のターンの required 監査(証人ベース・遮断しない)を報せてから
     #    境界を切る。「このターンに要ったか」は文脈なので判定は運ばず、
@@ -48,6 +53,21 @@ def main():
         audit_lines.append(
             f"・店が更新されている — 推論の焼き込みが古い({', '.join(names)})。"
             f"`vera-memory guard rebake` で焼き直せる")
+
+    # 3.5) 隔離席で実績を積んだ候補を**見せるだけ**(2026-08-21)。
+    # 自動採用は絶対にしない — 「過検出の番人は切られる」の罠そのもの。
+    # 毎ターン出ないのは promotion_review の帯(圏内照合8回以上)が
+    # 効くから: 提案されたばかりの候補は UNKNOWN_TOO_FEW_CHECKS で黙る。
+    promo = guard("promote", {}, store=store) or {}
+    for r in promo.get("rows", []):
+        if r.get("verdict") != "PROMOTABLE":
+            continue
+        src = "規則が読んだ候補" if r.get("origin") == "regex" else "候補"
+        audit_lines.append(
+            f"・{src}「{r.get('covenant')}」が実績を積んだ"
+            f"({r.get('checks')}回中{r.get('hits')}回発火)。"
+            f"中身を見て良ければ `vera-memory guard adopt` で執行に入る"
+            f"(こちらでは採用しない)")
 
     # 4) 薄れた約束だけ再注入(毎ターン全部は情報を運ばない — Vera自身の注記)
     fading = guard("fading", {}, store=store) or {}

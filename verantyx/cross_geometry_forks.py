@@ -5051,6 +5051,81 @@ def a_witness_must_have_been_invoked_fork() -> Dict[str, Any]:
     }
 
 
+def a_rule_a_regex_read_is_a_candidate_fork() -> Dict[str, Any]:
+    """規則が読んだ約束は候補であって執行ではない(fork 176本目)。
+
+    **なぜこの性質が要るか。** 抽出は閉じた正規表現で、読めない文からは
+    何も立てない。それは推測しないための線で、正しい。だが「読めた」と
+    「正しく読めた」は別で、そこを測ったのが 2026-08-21: 人が実際に書く
+    指示20本のうち正しく読めたのは実質3本、13本は何も立たず、**4本は
+    間違った語を捕まえた**。`No new dependencies` は forbids=["new"] に
+    なり、返答「I added a new helper function.」を **BROKEN(誤遮断)**に
+    した(実測)。誤遮断された利用者は番人を切る — そうなれば正しく
+    読めた3本も一緒に死ぬ。
+
+    直し方が**規則を足すこと**でないのは既に測ってある(否定 645/661 が
+    語彙の外)。直すのは執行の側で、この fork が釘打つのは三点:
+    ①規則が読んだ約束は隔離席に入り遮断しない、②ただし **shadow に出て
+    見えなくなっていない**(誤遮断を「見えなくする」ことで消すのは番人を
+    壊すのと同じ)、③人が明示した約束は執行のまま — 利用者自身の行為を
+    番人が勝手に弱めてよい理由はない。採用は門(adopt)で、出所は採用後も
+    台帳に残る(誰が何を根拠に執行を許したかを消すと監査が嘘になる)。
+    """
+    from .covenant import Covenant, Register, extract_covenants
+
+    reply = "I added a new helper function."
+
+    # ① 規則が読んだ約束 — 出所は候補自身が持つ(配管に依らない)
+    cands = extract_covenants("No new dependencies", turn=1)
+    read_the_wrong_word = cands and cands[0]["forbids"] == ["new"]
+    tagged = all(c.get("origin") == "regex" for c in cands)
+
+    quarantined = Register()
+    for c in cands:
+        quarantined.propose(Covenant(
+            name=c["name"], quote=c["quote"], forbids=list(c["forbids"]),
+            requires=list(c["requires"]), origin=c["origin"]))
+    q = quarantined.check(reply)
+
+    # ② 黙って捨てない — shadow に出て、何が発火したか名指されている
+    shadow_named = ([v.get("forbidden_used") for v in
+                     q.get("shadow_violations", [])] == [["new"]])
+
+    # ③ 人が明示した約束は執行のまま(origin は空)
+    explicit = Register()
+    explicit.add(Covenant(name="no-new-deps", quote="No new dependencies",
+                          forbids=["new"]))
+    e = explicit.check(reply)
+
+    # ④ 採用は門 — 通って初めて遮断に入る。出所は残る
+    before = quarantined.check(reply)["in_force"]
+    quarantined.adopt(cands[0]["name"])
+    after = quarantined.check(reply)
+    origin_kept = all(c.origin == "regex" for c in quarantined.covenants)
+
+    ok = (bool(read_the_wrong_word) and tagged
+          and q["verdict"] == "KEPT" and q["violations"] == []
+          and len(q.get("shadow_violations", [])) == 1 and shadow_named
+          and e["verdict"] == "BROKEN" and len(e["violations"]) == 1
+          and before == 0 and after["verdict"] == "BROKEN"
+          and after["in_force"] == 1
+          and not after.get("shadow_violations")
+          and origin_kept)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_RULE_A_REGEX_READ_IS_A_CANDIDATE",
+        "pass": bool(ok),
+        "result": {"misread": cands[0]["forbids"] if cands else [],
+                   "origin_tagged": tagged,
+                   "quarantined": [q["verdict"],
+                                   len(q.get("shadow_violations", []))],
+                   "shadow_named": shadow_named,
+                   "explicit_still_enforces": e["verdict"],
+                   "gate": [before, after["verdict"], after["in_force"]],
+                   "origin_kept_after_adopt": origin_kept},
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -5141,6 +5216,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         covenant_lifecycle_fork(),
         a_promise_to_act_needs_a_witness_fork(),
         a_witness_must_have_been_invoked_fork(),
+        a_rule_a_regex_read_is_a_candidate_fork(),
     ]
 
 

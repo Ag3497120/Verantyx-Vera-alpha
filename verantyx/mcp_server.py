@@ -1111,13 +1111,19 @@ def serve(store_path: str) -> int:
     def extract_covenants(text: str, turn: int = -1) -> str:
         """Instruction text → covenant CANDIDATES, by closed surface rules
         (ja: 〜を使わないで / 必ず〜して; en: never use X / always run X).
-        Registration stays a separate act (set_covenant) so a caller can
-        show candidates to a human first. A sentence the rules cannot read
-        yields nothing — no guessing, because putting an LLM here would
-        hand the drifting device the job of writing its own leash. The
-        forbidden target is the noun run immediately before を/は —
-        capturing the whole sentence's content words caused false blocks
-        in the field (measured, fixed)."""
+        A sentence the rules cannot read yields nothing — no guessing,
+        because putting an LLM here would hand the drifting device the job
+        of writing its own leash.
+
+        These candidates carry origin="regex" and belong in
+        propose_covenant, NOT set_covenant. Measured 2026-08-21 over 20
+        instructions people actually write: 3 read correctly, 13 yielded
+        nothing, and 4 caught the wrong word — `No new dependencies` became
+        forbids=["new"] and blocked the reply "I added a new helper
+        function." Adding regexes does not close that gap (645/661
+        negations fall outside the vocabulary), so what changed is
+        enforcement: a rule a regex read is shadow-checked only, and
+        adopt_covenant remains the gate."""
         from .covenant import extract_covenants as _extract
 
         return json.dumps({"candidates": _extract(text, turn=turn)},

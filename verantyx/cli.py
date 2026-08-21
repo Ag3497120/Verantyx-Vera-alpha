@@ -782,7 +782,8 @@ def cmd_guard(args) -> int:
             forbids=list(payload.get("forbids", [])),
             topic=list(payload.get("topic", [])),
             said_at_turn=int(payload.get("turn", -1)),
-            quote=str(payload.get("quote", "")))
+            quote=str(payload.get("quote", "")),
+            origin=str(payload.get("origin", "")))
 
     def _bake(c):
         # ③ 書かれていない禁止 — 登録・採用の時だけ店を読む(check の
@@ -802,14 +803,30 @@ def cmd_guard(args) -> int:
             "releases": extract_releases(_text)}
     elif op == "set":
         c = _mk_covenant()
-        reg.add(c)
-        baked = _bake(c)
-        reg.save(cov_path)
-        out = {"verdict": "ANSWER", "covenant": c.as_dict(),
-               "in_force": len([x for x in reg.covenants
-                                if not x.retired and x.status == "adopted"])}
-        if baked:
-            out["inference"] = baked
+        if c.origin == "regex":
+            # 戻り止め(2026-08-21、誤遮断の実測)。閉じた抽出規則が読んだ
+            # 約束は、どの入口から入っても執行には入れない — `No new
+            # dependencies` → forbids=["new"] が返答を遮断した実測があり、
+            # 規則を足して被覆を上げる道は閉じないと分かっている。
+            # フックは propose を呼ぶが、別の配管が set を呼んでも法が
+            # 破れないよう、ここでも隔離席へ落とす。**黙って落とさない**:
+            # 隔離席に入れたことを返り値で名指す。
+            reg.propose(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "candidate": c.as_dict(),
+                   "routed_to_quarantine": True,
+                   "note": "規則が読んだ約束は執行に入れない — shadow で"
+                           "照合されるだけ。採用は adopt(門)"}
+        else:
+            reg.add(c)
+            baked = _bake(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "covenant": c.as_dict(),
+                   "in_force": len([x for x in reg.covenants
+                                    if not x.retired
+                                    and x.status == "adopted"])}
+            if baked:
+                out["inference"] = baked
     elif op == "propose":
         # ① 隔離席 — LLM の候補は shadow で照合されるだけで執行されない。
         c = _mk_covenant()

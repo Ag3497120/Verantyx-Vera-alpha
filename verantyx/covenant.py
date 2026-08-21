@@ -165,6 +165,13 @@ class Covenant:
     #: 照合だけされ verdict に混ざらない。adopt して初めて執行に入る。
     #: 淘汰は門。
     status: str = "adopted"
+    #: 出所(2026-08-21)。空 = 利用者が明示した約束(執行に入る)。
+    #: "regex" = 閉じた抽出規則が指示文から読んだもの。**なぜ配線では
+    #: なく約束自身に持たせるか**: フックを一つ書き換えるだけだと、別の
+    #: 配管が set を呼んだ瞬間に法が破れる。出所が約束に付いていれば、
+    #: どの入口から入っても隔離席へ落ちる。採用後も残す — 誰が何を根拠に
+    #: 執行を許したかは台帳の一部で、消すと監査が嘘になる(retire と同じ線)。
+    origin: str = ""
     #: 書かれていない禁止(2026-08-21)。登録・採用の時に店の siblings を
     #: 焼き込む(check 時に店を読むと 0.04s が死ぬ)。推論由来のヒットは
     #: 字面の forbids と型を分けて報じる — 弱い主張は弱い型で。
@@ -262,6 +269,8 @@ class Covenant:
             out["retired_at_turn"] = self.retired_at_turn
         if self.status != "adopted":
             out["status"] = self.status
+        if self.origin:
+            out["origin"] = self.origin
         if self.inferred_forbids:
             out["inferred_forbids"] = self.inferred_forbids
             out["inferred_from"] = self.inferred_from
@@ -534,8 +543,12 @@ class Register:
             h = self.history.get(c.name) or []
             checks = len(h)
             hits = sum(1 for kept in h if not kept)
+            # 出所を行に載せる — 門に立つ人が「これは正規表現が読んだ語だ、
+            # 中身を見てから採用しろ」と判断できるようにする。推薦の理由が
+            # 発火率だけだと、`No new dependencies` → forbids=["new"] のような
+            # 誤読が「よく当たる約束」として通ってしまう。
             row = {"covenant": c.name, "checks": checks, "hits": hits,
-                   "quote": c.quote}
+                   "quote": c.quote, "origin": c.origin}
             if checks < min_checks:
                 row["verdict"] = "UNKNOWN_TOO_FEW_CHECKS"
             elif hits == 0:
@@ -1003,9 +1016,24 @@ def extract_releases(text: str) -> List[str]:
 def extract_covenants(text: str, turn: int = -1) -> List[Dict[str, Any]]:
     """指示文から約束の候補を立てる。読めない文からは立てない。
 
-    返すのは**候補**であり、登録は呼び出し側(set_covenant)の仕事 —
-    抽出と登録を分けておくと、フックが候補を人に見せてから登録する
-    運用も選べる。quote には元の文をそのまま入れる(言い換えない)。
+    返すのは**候補**であり、登録は呼び出し側の仕事 — 抽出と登録を分けて
+    おくと、フックが候補を人に見せてから登録する運用も選べる。
+    quote には元の文をそのまま入れる(言い換えない)。
+
+    ## なぜ `origin="regex"` を付けるか(2026-08-21、誤遮断の実測)
+
+    人が実際に書く指示20本で測ったところ、この規則が正しく読めたのは
+    実質3本、13本は何も立たず、**4本は間違った語を捕まえた**:
+    `No new dependencies` → forbids=["new"] は返答「I added a new helper
+    function.」を BROKEN にし(実測)、`Always run the tests before
+    committing` → requires=["the"] は冠詞を要求語にした。
+
+    直し方は**規則を足すことではない** — 極性 regex の実測(否定
+    645/661 が語彙の外)で、被覆を上げる道が閉じないことは分かっている。
+    直すのは執行の側で、規則が読んだ約束は隔離席(status="candidate")に
+    入り、shadow で照合されるだけで遮断しない。採用は人の行為(門)。
+    出所を候補自身に持たせるのは、配管の一つを直し忘れても法が破れない
+    ようにするため。
     """
     out: List[Dict[str, Any]] = []
     for sent in re.split(r"[。\n.!?]", text or ""):
@@ -1020,5 +1048,5 @@ def extract_covenants(text: str, turn: int = -1) -> List[Dict[str, Any]]:
             continue
         out.append({"name": sent[:40], "requires": requires,
                     "forbids": forbids, "quote": sent,
-                    "said_at_turn": turn})
+                    "said_at_turn": turn, "origin": "regex"})
     return out

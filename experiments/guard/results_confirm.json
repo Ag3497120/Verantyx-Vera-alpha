@@ -58,10 +58,10 @@
    "pass": true,
    "detail": {
     "frozen": {
-     "set_s": 4.184,
+     "set_s": 3.886,
      "check_s": [
-      3.998,
-      4.001
+      4.075,
+      4.004
      ],
      "verdicts": [
       "BROKEN",
@@ -71,7 +71,7 @@
     },
     "source_cli": {
      "check_s": [
-      0.051,
+      0.052,
       0.046
      ],
      "verdicts": [
