@@ -528,6 +528,10 @@ def ask(query: str, vera: Any, *, last_core: str = "",
     _ck: Dict[str, Any] = {}
     if circulation:
         _ck["circulation"] = circulation
+        # 軸のロックは循環に載って**次の問い**で効く(2026-08-21)。
+        # seed_state は既に locks の席を持っていたが、誰も埋めていな
+        # かった — 構想(これまで.pdf)の中核が席だけあった状態。
+        # 埋めるのは「配置不変を生き延び、facet が同点でない」腕だけ。
     if observe:
         _ck["placement_invariant"] = True
 

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .consensus import (
     ConsensusConfig,
+    settled_axes,
     matryoshka_consensus,
     query_content,
     run_consensus,
@@ -331,6 +332,19 @@ def consensus_over_store(
     if placement_invariant:
         _apply_placement_invariance(store, out, query, k=k, cfg=cfg,
                                     circulation=circulation)
+        # 軸のロック(2026-08-21、これまで.pdf の中核・未到達だった機構)。
+        # 配置不変を生き延びた答えの腕のうち、facet の counts が割れている
+        # ものだけを settled とする — 同点崩しで勝った腕はロックできない。
+        # ここでは**報告するだけ**で、効かせるのは次の問い(循環)と上層。
+        if out.get("verdict") == "ANSWER" and out.get("placement_invariant"):
+            out["locks"] = settled_axes(shell, store, out.get("core_key"))
+            # 循環が渡されていれば、この核の配置に locks を書き戻す —
+            # 次の問いが同じ核に触れたとき initial_locks として効く。
+            if circulation is not None and out.get("core_key"):
+                slot = circulation.setdefault(out["core_key"], {})
+                if isinstance(slot, dict) and out["locks"]:
+                    slot["locks"] = sorted(set(slot.get("locks", []))
+                                           | set(out["locks"]))
     if direction_invariant:
         _qset, _h = query_content(query)
         _apply_direction_invariance(store, out, _qset)
@@ -740,6 +754,12 @@ def ja_consensus_ask(
     _apply_ja_coverage_gate(store, out, runs)
     if placement_invariant:
         _apply_placement_invariance(store, out, query, k=k, cfg=cfg, ja=True)
+        if out.get("verdict") == "ANSWER" and out.get("placement_invariant"):
+            # ja 経路は core_key を持たず、鍵は core に入る(EN 経路と
+            # フィールドが違う)。core_key だけを読んで locks が常に空に
+            # なる書き方を一度した — 店の性質ではなく配線の誤りだった。
+            out["locks"] = settled_axes(shell, store,
+                                        out.get("core_key") or out.get("core"))
         # 向きの不変性も同じ observe 傘の下(単一ソブリン: 同じ門を全扉で)。
         # 被覆は枠剥がし後の主題で数える — 枠語(〜に関係する)混入は
         # 逆方向の誤答を 0→23.7% に跳ねさせた実測がある。

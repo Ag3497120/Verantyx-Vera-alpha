@@ -702,6 +702,60 @@ def transfer_reading_fork() -> Dict[str, Any]:
                        "counted": counted["verdict"]}}
 
 
+def axis_lock_fork() -> Dict[str, Any]:
+    """ロックできるのは、同点崩しで勝っていない腕だけ(fork 172本目)。
+
+    構想(これまで.pdf)は「軸のロック」で時間の短縮と精度を得ると言うが、
+    何を根拠にロックするかは書いていない。配置は情報を増やせないのだから、
+    **同点崩しで勝った腕はロックできない** — そこから導出した2条件
+    (配置不変を生き延びた ∧ facet の counts が割れている)を固定する。
+
+    3点: (a) 全 facet が同点の店ではロックが**空** (b) counts が割れる店では
+    その腕がロックされる (c) ロックの有無で **verdict は変わらない**
+    (ロックは探索の近道であって、答えを変える権限を持たない)。
+    """
+    from .consensus_store import consensus_over_store
+
+    tied = CrossStore()
+    for a in ("aspa", "aspb", "aspc", "aspd"):
+        tied.ingest_sentence(f"gadget has {a}")
+    r_tied = consensus_over_store(tied, "what is gadget aspa",
+                                  placement_invariant=True)
+
+    ranked = CrossStore()
+    for _ in range(5):
+        ranked.ingest_sentence("gadget is heavy")
+    for _ in range(4):
+        ranked.ingest_sentence("gadget is fast")
+    for _ in range(3):
+        ranked.ingest_sentence("gadget is small")
+    for _ in range(2):
+        ranked.ingest_sentence("gadget is quiet")
+    r_rank = consensus_over_store(ranked, "what is gadget heavy",
+                                  placement_invariant=True)
+
+    # (c) ロックを継承した2回目でも判定が変わらない
+    circ = {}
+    consensus_over_store(ranked, "what is gadget heavy",
+                         placement_invariant=True, circulation=circ)
+    r_again = consensus_over_store(ranked, "what is gadget fast",
+                                   placement_invariant=True, circulation=circ)
+    r_plain = consensus_over_store(ranked, "what is gadget fast",
+                                   placement_invariant=True)
+
+    ok = (r_tied.get("locks") == []
+          and r_rank.get("locks")
+          and circ.get("gadget", {}).get("locks")
+          and r_again.get("verdict") == r_plain.get("verdict")
+          and r_again.get("core") == r_plain.get("core"))
+    return {"fork": "AXIS_LOCK", "pass": bool(ok),
+            "result": {"tied_locks": r_tied.get("locks"),
+                       "ranked_locks": r_rank.get("locks"),
+                       "carried": circ.get("gadget", {}).get("locks"),
+                       "verdict_with_lock": r_again.get("verdict"),
+                       "verdict_without": r_plain.get("verdict")}}
+
+
 def norm_vs_record_fork() -> Dict[str, Any]:
     """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
 
@@ -4771,6 +4825,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         prover_three_outcomes_fork(),
         attest_polarity_fork(),
         transfer_reading_fork(),
+        axis_lock_fork(),
         norm_vs_record_fork(),
         quote_is_substring_fork(),
         read_at_shows_both_sides_fork(),

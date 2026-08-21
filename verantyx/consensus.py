@@ -283,6 +283,35 @@ def global_hypotheses(
     return out
 
 
+def settled_axes(shell: ShellCross, store: Any, core: Optional[str]) -> List[str]:
+    """ロックしてよい軸 — 恣意的な同点崩しで勝っていない軸だけ。
+
+    構想(これまで.pdf)は「軸のロック」で時間の短縮と精度を得ると言うが、
+    **何を根拠にロックするか**は書いていない。この製品の線から導出する:
+    配置は情報を増やせないのだから、**同点崩しで勝った腕はロックできない**。
+
+    条件は二つ、どちらも既に計算されている値で決まる(新しい判断を足さない):
+      ① その腕の core が配置不変(呼び出し側が確認済みであること)
+      ② その腕の facet の counts が割れている(= ranked、同点ではない)
+    満たさない腕はロックしない — **未ロックは一級の状態**。
+    """
+    if not core:
+        return []
+    axis = find_core_axis(shell, core)
+    if axis is None:
+        return []
+    cross = {}
+    try:
+        cross = store.crosses.get(str(core).casefold().strip()) or {}
+    except Exception:
+        return []
+    facets = [f for f in facts_on_axis(shell, axis) if f in cross]
+    if len(facets) < 2:
+        return []
+    counts = {cross[f] for f in facets}
+    return [axis] if len(counts) > 1 else []
+
+
 def compose_answer(shell: ShellCross, core: str) -> Tuple[str, List[str]]:
     axis = find_core_axis(shell, core)
     if axis is None:
