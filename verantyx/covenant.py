@@ -711,11 +711,35 @@ _JA_REQUIRE = re.compile(
     r"(?:して|すること|実行して|実行すること)")
 #: 英語(実地試験: "Never use emojis" からは約束が立たない、の修理)。
 _EN_FORBID = re.compile(
-    r"\b(?:never use|don't use|do not use|no)\s+([A-Za-z][A-Za-z0-9_-]*)",
-    re.I)
+    r"\b(?:never use|don't use|do not use|stop using|avoid using|no)\s+"
+    r"([A-Za-z][A-Za-z0-9_-]*)", re.I)
 _EN_REQUIRE = re.compile(
     r"\b(?:always|make sure to|be sure to)\s+"
     r"(?:run|use|execute)\s+([A-Za-z][A-Za-z0-9_.-]*)", re.I)
+#: 解除(2026-08-21)。実地試験の限界1は「取り下げられない」だった —
+#: 破棄経路(retire)は器官にあるが、**何が解除の言葉か**もフックに
+#: 散らさず器官の閉じた表に置く。ja+en 対称。読めない解除は解除しない。
+_JA_RELEASE = re.compile(
+    r"もう([一-龥ァ-ヺa-zA-Z0-9ー]+)(?:を)?使っていい"
+    r"|([一-龥ァ-ヺa-zA-Z0-9ー]+)の禁止(?:を)?解除"
+    r"|([一-龥ァ-ヺa-zA-Z0-9ー]+)(?:を)?解禁")
+_EN_RELEASE = re.compile(
+    r"\byou can use\s+([A-Za-z][A-Za-z0-9_-]*)\s+again"
+    r"|\b([A-Za-z][A-Za-z0-9_-]*)\s+is\s+(?:fine|okay|ok|allowed)\s+"
+    r"(?:now|again)"
+    r"|\bgo ahead and use\s+([A-Za-z][A-Za-z0-9_-]*)"
+    r"|\blift(?:ed)?\s+the\s+ban\s+on\s+([A-Za-z][A-Za-z0-9_-]*)", re.I)
+
+
+def extract_releases(text: str) -> List[str]:
+    """解除の言葉から解かれる対象語を拾う。読めなければ空(推測しない)。"""
+    out: List[str] = []
+    for pat in (_JA_RELEASE, _EN_RELEASE):
+        for m in pat.finditer(text or ""):
+            term = next((g for g in m.groups() if g), None)
+            if term and term not in out:
+                out.append(term)
+    return out
 
 
 def extract_covenants(text: str, turn: int = -1) -> List[Dict[str, Any]]:

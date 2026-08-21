@@ -761,7 +761,7 @@ def cmd_guard(args) -> int:
     import sys as _sys
 
     from .covenant import (Covenant, Register, bake_inferred,
-                           extract_covenants)
+                           extract_covenants, extract_releases)
 
     store_path = Path(args.store or DEFAULT_STORE)
     cov_path = store_path.with_name(store_path.stem + ".covenants.json")
@@ -795,8 +795,10 @@ def cmd_guard(args) -> int:
                              store_name=store_path.name)
 
     if op == "extract":
+        _text = str(payload.get("text", ""))
         out = {"candidates": extract_covenants(
-            str(payload.get("text", "")), turn=int(payload.get("turn", -1)))}
+            _text, turn=int(payload.get("turn", -1))),
+            "releases": extract_releases(_text)}
     elif op == "set":
         c = _mk_covenant()
         reg.add(c)

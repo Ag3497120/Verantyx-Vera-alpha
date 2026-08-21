@@ -4,34 +4,26 @@
 「もう〜していいよ」の退役。抽出は器官(extract_covenants)に一元化。"""
 import json
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import guard, read_hook_input, store_path
-
-#: 解除の定型(閉じた表)。「もう絵文字使っていいよ」→ 対象語の約束を退役。
-_RELEASE = re.compile(
-    r"もう([一-龥ァ-ヺa-zA-Z0-9ー]+)(?:を)?使っていい|"
-    r"([一-龥ァ-ヺa-zA-Z0-9ー]+)の禁止(?:を)?解除")
-
 
 def main():
     data = read_hook_input()
     prompt = str(data.get("prompt", ""))
     store = store_path()
 
-    # 1) 解除の検出 → 該当語を forbids に持つ約束を退役
-    for m in _RELEASE.finditer(prompt):
-        term = m.group(1) or m.group(2)
-        listed = guard("list", {}, store=store) or {}
-        for c in listed.get("covenants", []):
-            if not c.get("retired") and term in c.get("forbids", []):
-                guard("retire", {"name": c["name"], "quote": prompt[:80]},
-                      store=store)
-
-    # 2) 指示 → 約束の抽出と登録(器官に一元化 — フックは配管だけ)
+    # 1)+2) 抽出も解除も器官に一元化(閉じた表は covenant.py が持つ —
+    # フックは配管だけ)。ja+en 対称。
     ex = guard("extract", {"text": prompt}, store=store) or {}
+    if ex.get("releases"):
+        listed = guard("list", {}, store=store) or {}
+        for term in ex["releases"]:
+            for c in listed.get("covenants", []):
+                if not c.get("retired") and term in c.get("forbids", []):
+                    guard("retire", {"name": c["name"],
+                                     "quote": prompt[:80]}, store=store)
     for cand in ex.get("candidates", []):
         guard("set", cand, store=store)
 

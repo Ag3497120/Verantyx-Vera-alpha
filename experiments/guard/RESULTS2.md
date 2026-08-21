@@ -82,3 +82,21 @@ check の判定・違反集合が全て一致。
   置換の**実使用**を示して初めて violation(推論が証拠を持ち込む、は不変)
 
 再測定: forks 87/87、V1〜V5 7/7、V6〜V10 5/5(全て法の変更後に再実行)。
+
+## 追記2: 言語対称(ja+en)の実測 — run_confirm_lang.py 3/3
+
+- V11 抽出: 同じ意味の指示3組が ja/en 両方で候補1本ずつ
+  (Stop using / avoid using を EN 禁止形に追加)。読めない文は両言語で0
+- V12 解除: 解除の言葉も器官の閉じた表に一元化(extract_releases、
+  フックの独自regexを廃止)。ja「もう絵文字使っていいよ」/
+  en "you can use emojis again" / "TODO is fine now" /
+  "go ahead and use print" が対象語を返し退役まで通る。
+  読めない解除は解除しない(両言語で空)
+- V13 執行の言語中立: en 約束の emoji クラスが 🎉 を捕まえ、en の
+  requires が en の証人(npx eslint)で WITNESSED、en 候補の隔離席→
+  採用→BROKEN も通る
+- 凍結バイナリ端到端: 混在文から candidates 1 + releases [絵文字, TODO]
+
+言語を選ぶのは閉じた表(抽出・解除・クラス)だけで、執行・証人・
+隔離席・焼き込み・風化は字面照合なので言語中立 — その主張も en の
+実データで確認した上で書いている。
