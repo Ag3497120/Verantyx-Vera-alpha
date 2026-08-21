@@ -50,12 +50,19 @@ from .module_ingest import DomainModuleQuarantine
 from .module_verify import verify_module
 
 
-def serve(store_path: str) -> int:
+def build(store_path: str):
+    """扉を全部registerした FastMCP を**走らせずに**返す。
+
+    2026-08-22: `serve` の中身をそのまま切り出しただけ(振る舞いは不変)。
+    切り出した理由は、CLI から同じ126扉に届かせるため — 扉ごとに CLI の
+    コマンドを書き写すと、二つの表面が必ずずれる。**扉は一つ、入口は
+    二つ**にする。SDK が無い環境では None を返す。
+    """
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
         print('MCP SDK not installed. Run:  pip install "mcp[cli]"')
-        return 2
+        return None
 
     path = Path(store_path)
     store = CrossStore.load(path) if path.is_file() else CrossStore()
@@ -3556,5 +3563,12 @@ def serve(store_path: str) -> int:
         _save_tool_call_quarantine()
         return json.dumps({"ok": ok}, ensure_ascii=False)
 
+    return mcp
+
+
+def serve(store_path: str) -> int:
+    mcp = build(store_path)
+    if mcp is None:
+        return 2
     mcp.run()
     return 0

@@ -127,6 +127,204 @@ def cmd_ask(args) -> int:
     return 0
 
 
+def _doors(store_path: str) -> Dict[str, Any]:
+    """126扉を**走らせずに**取り出す。CLI と MCP は同じ扉を使う。
+
+    扉ごとに CLI のコマンドを書き写すと二つの表面が必ずずれるので、
+    入口だけを増やして実体は一つに保つ(2026-08-22)。
+    """
+    from .mcp_server import build
+
+    mcp = build(store_path)
+    if mcp is None:
+        return {}
+    return {t.name: t for t in mcp._tool_manager.list_tools()}
+
+
+def _coerce(fn, kwargs: Dict[str, str]) -> Dict[str, Any]:
+    """`k=v` を扉の型注釈に合わせる(閉じた4型のみ。推測しない)。"""
+    import inspect
+
+    sig = inspect.signature(fn)
+    out: Dict[str, Any] = {}
+    for k, v in kwargs.items():
+        ann = sig.parameters[k].annotation if k in sig.parameters else str
+        if ann is bool:
+            out[k] = str(v).strip().lower() in ("1", "true", "yes", "on")
+        elif ann is int:
+            out[k] = int(v)
+        elif ann is float:
+            out[k] = float(v)
+        else:
+            out[k] = v
+    return out
+
+
+def _call_door(store_path: str, name: str, payload: Dict[str, Any]) -> int:
+    doors = _doors(store_path)
+    if not doors:
+        _print({"verdict": "UNKNOWN_NO_MCP_SDK"})
+        return 2
+    if name not in doors:
+        near = [n for n in doors if name in n][:8]
+        _print({"verdict": "UNKNOWN_NO_SUCH_DOOR", "door": name,
+                "did_you_mean": near, "doors": len(doors)})
+        return 1
+    out = doors[name].fn(**payload)
+    try:
+        _print(json.loads(out) if isinstance(out, str) else out)
+    except Exception:              # 扉が素の文字列を返す場合はそのまま
+        print(out)
+    return 0
+
+
+def cmd_tool(args) -> int:
+    """MCP の扉を CLI から。IDE を経由せずに全機能へ届かせるための橋。"""
+    doors = _doors(args.store)
+    if not doors:
+        _print({"verdict": "UNKNOWN_NO_MCP_SDK"})
+        return 2
+    if args.tool_op == "list":
+        pat = (args.name or "").lower()
+        rows = [{"door": n,
+                 "about": " ".join((t.description or "").split())[:90]}
+                for n, t in sorted(doors.items())
+                if not pat or pat in n.lower()]
+        _print({"doors": len(rows), "list": rows})
+        return 0
+    if not args.name:
+        _print({"verdict": "UNKNOWN_NO_DOOR_NAMED"})
+        return 1
+    if args.tool_op == "show":
+        t = doors.get(args.name)
+        if t is None:
+            return _call_door(args.store, args.name, {})
+        import inspect
+
+        print(f"{args.name}{inspect.signature(t.fn)}\n")
+        print(inspect.getdoc(t.fn) or "(no docstring)")
+        return 0
+    # call
+    payload: Dict[str, Any] = {}
+    if args.json:
+        payload.update(json.loads(args.json))
+    pairs = {}
+    for kv in (args.arg or []):
+        if "=" not in kv:
+            _print({"verdict": "UNKNOWN_BAD_ARG", "arg": kv})
+            return 1
+        k, v = kv.split("=", 1)
+        pairs[k] = v
+    t = doors.get(args.name)
+    if t is not None and pairs:
+        payload.update(_coerce(t.fn, pairs))
+    return _call_door(args.store, args.name, payload)
+
+
+def cmd_documents(args) -> int:
+    """文書を CLI から入れる(PDF/Word/HTML/CSV/JSON/テキスト、フォルダ可)。
+
+    実体は扉 `load_documents` — IDE と同じ経路を通す(別経路を書くと
+    「IDE では入るが CLI では入らない」が生まれる)。
+    """
+    return _call_door(args.store, "load_documents",
+                      {"paths": ",".join(args.paths),
+                       "ingest": not args.no_ingest})
+
+
+def cmd_domain(args) -> int:
+    """分野(語彙)の登録と確認。実体は既存の扉。"""
+    op = args.domain_op
+    if op == "list":
+        return _call_door(args.store, "vera_domains", {})
+    if op == "add":
+        if not (args.name and args.path):
+            _print({"verdict": "UNKNOWN_NEEDS_NAME_AND_PATH"})
+            return 1
+        return _call_door(args.store, "vera_domain",
+                          {"name": args.name, "path": args.path})
+    if op == "pending":
+        return _call_door(args.store, "list_pending_domain_modules", {})
+    if op in ("accept", "reject"):
+        if args.index is None:
+            _print({"verdict": "UNKNOWN_NEEDS_INDEX"})
+            return 1
+        return _call_door(args.store, f"{op}_domain_module",
+                          {"index": args.index})
+    _print({"verdict": "UNKNOWN_OP", "op": op})
+    return 1
+
+
+#: 貼り先(閉じた表)。IDE の MCP 画面が発行していたスニペットを CLI へ
+#: 移す(2026-08-22)。**書き込みは --install を打った人の行為**で、
+#: 既定は表示だけ — 設定ファイルを黙って書き換えない。
+_MCP_CLIENTS = {
+    "claude-code": ".mcp.json",
+    "claude-desktop": "~/Library/Application Support/Claude/"
+                      "claude_desktop_config.json",
+    "cursor": "~/.cursor/mcp.json",
+}
+
+
+def _vera_binary() -> List[str]:
+    """この機械で MCP を起動する実際のコマンド(推測しない)。"""
+    import shutil
+    import sys as _s
+
+    vendor = Path.home() / ("Projects/Verantyx/cli/VerantyxIDE/Vendor/"
+                            "vera-memory")
+    if getattr(_s, "frozen", False):
+        return [_s.executable]
+    if vendor.exists():
+        return [str(vendor)]
+    found = shutil.which("vera-memory")
+    if found:
+        return [found]
+    return [_s.executable, "-m", "verantyx.cli"]
+
+
+def cmd_mcp_config(args) -> int:
+    """MCP の設定スニペットを出す(必要なら貼る)。
+
+    IDE の MCP 画面がやっていた仕事のうち、CLI に無かったのはこれ。
+    他サーバの接続管理は Claude Code 自身の機能なので写さない
+    (同じ仕事を二つ持つと必ずずれる)。
+    """
+    store = str(Path(args.store or DEFAULT_STORE).resolve())
+    cmd = _vera_binary()
+    entry = {"command": cmd[0],
+             "args": cmd[1:] + ["--store", store, "mcp"]}
+    snippet = {"mcpServers": {"vera-memory": entry}}
+    targets = ([(k, v) for k, v in _MCP_CLIENTS.items()]
+               if args.client == "all"
+               else [(args.client, _MCP_CLIENTS[args.client])])
+    out = {"verdict": "ANSWER", "snippet": snippet,
+           "targets": {k: str(Path(v).expanduser()) for k, v in targets},
+           "note": "既定は表示のみ。--install で貼る(貼るのは打った人の行為)"}
+    if args.install:
+        wrote = {}
+        for name, rel in targets:
+            path = (Path(rel).expanduser() if rel.startswith("~")
+                    else Path.cwd() / rel)
+            try:
+                cur = json.loads(path.read_text(encoding="utf-8")) \
+                    if path.is_file() else {}
+            except Exception:
+                out["verdict"] = "UNKNOWN_UNREADABLE_CONFIG"
+                wrote[name] = "読めない設定があるので触らない"
+                continue
+            servers = dict(cur.get("mcpServers") or {})
+            servers["vera-memory"] = entry     # 同名だけ差し替える
+            cur["mcpServers"] = servers
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(cur, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+            wrote[name] = str(path)
+        out["installed"] = wrote
+    _print(out)
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """入れた直後に叩く自己検査 — 二つの顔を1回で確かめる。
 
@@ -979,6 +1177,44 @@ def main(argv: Optional[list] = None) -> int:
     p = sub.add_parser("ask", help="one-shot question (typed verdict)")
     p.add_argument("query")
     p.set_defaults(fn=cmd_ask)
+
+    p = sub.add_parser(
+        "mcp-config",
+        help="print (or install) the MCP snippet pointing a client at this "
+             "binary and this store")
+    p.add_argument("--client", default="claude-code",
+                   choices=list(_MCP_CLIENTS) + ["all"])
+    p.add_argument("--install", action="store_true",
+                   help="write it into the client config (merges, replacing "
+                        "only the vera-memory entry)")
+    p.set_defaults(fn=cmd_mcp_config)
+
+    p = sub.add_parser(
+        "tool", help="call any of the MCP doors from the CLI (same doors, "
+                     "second entrance — nothing is rewritten per command)")
+    p.add_argument("tool_op", choices=["list", "show", "call"])
+    p.add_argument("name", nargs="?", default="")
+    p.add_argument("--json", default="", help="arguments as a JSON object")
+    p.add_argument("--arg", action="append",
+                   help="key=value (repeatable), typed from the door")
+    p.set_defaults(fn=cmd_tool)
+
+    p = sub.add_parser(
+        "documents",
+        help="load documents into the store from the CLI — PDF, Word, "
+             "HTML, CSV, JSON, text; a directory is walked")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--no-ingest", action="store_true",
+                   help="read and register the documents without ingesting")
+    p.set_defaults(fn=cmd_documents)
+
+    p = sub.add_parser("domain", help="register/inspect domain vocabularies")
+    p.add_argument("domain_op",
+                   choices=["list", "add", "pending", "accept", "reject"])
+    p.add_argument("name", nargs="?", default="")
+    p.add_argument("path", nargs="?", default="")
+    p.add_argument("--index", type=int, default=None)
+    p.set_defaults(fn=cmd_domain)
 
     p = sub.add_parser(
         "doctor",
