@@ -48,9 +48,9 @@
     "plain": "KEPT",
     "unknown_term_baked": [],
     "check_s_200": {
-     "literal": 0.0005,
+     "literal": 0.0006,
      "baked": 0.0006,
-     "ratio": 1.12
+     "ratio": 1.01
     }
    }
   }

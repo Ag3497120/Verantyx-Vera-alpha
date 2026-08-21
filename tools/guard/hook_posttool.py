@@ -14,6 +14,30 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import guard, read_hook_input, store_path
 
 
+#: 終了状態を読む閉じた表。分からなければ None のまま — 不在と否定を
+#: 混ぜない(黙って合格にしない)。フックの入力形はバージョンで揺れる
+#: ので、**明示の印だけ**を見る。推測しない。
+def _exit_status(data):
+    resp = data.get("tool_response")
+    if isinstance(resp, dict):
+        for k in ("exit_code", "exitCode", "returncode", "returnCode"):
+            if isinstance(resp.get(k), int):
+                return resp[k] == 0
+        for k in ("is_error", "isError", "error"):
+            if resp.get(k) is True:
+                return False
+        if resp.get("interrupted") is True:
+            return False
+        if isinstance(resp.get("success"), bool):
+            return resp["success"]
+        # 明示の印が無ければ分からない。stderr の有無は成否ではない
+        # (警告を出して成功するコマンドは普通にある)。
+        return None
+    if data.get("is_error") is True:
+        return False              # 明示の失敗
+    return None
+
+
 def main():
     data = read_hook_input()
     tool = data.get("tool_name") or ""
@@ -22,7 +46,11 @@ def main():
     # required 側は字面でなくこの記録で監査される(audit)。
     detail = str(ti.get("command") or ti.get("file_path")
                  or ti.get("description") or "")[:400]
-    guard("witness", {"tool": tool, "detail": detail}, store=store_path())
+    payload = {"tool": tool, "detail": detail}
+    ok = _exit_status(data)
+    if ok is not None:
+        payload["ok"] = ok
+    guard("witness", payload, store=store_path())
     if tool not in ("Write", "Edit"):
         return
     content = str(ti.get("content") or ti.get("new_string") or "")

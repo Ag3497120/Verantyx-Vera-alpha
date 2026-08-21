@@ -40,6 +40,15 @@ def main():
                     f"({r.get('requires')})が見当たらなかった")
     guard("boundary", {}, store=store)
 
+    # 店が育っていれば「焼き直せる」とだけ報せる(stat のみ・店は読まない)。
+    # 焼き直しは執行を変える行為なので、フックは決してやらない。
+    st = guard("stale", {}, store=store) or {}
+    if st.get("verdict") == "STALE":
+        names = [r.get("covenant") for r in st.get("rows", [])][:3]
+        audit_lines.append(
+            f"・店が更新されている — 推論の焼き込みが古い({', '.join(names)})。"
+            f"`vera-memory guard rebake` で焼き直せる")
+
     # 4) 薄れた約束だけ再注入(毎ターン全部は情報を運ばない — Vera自身の注記)
     fading = guard("fading", {}, store=store) or {}
     rows = fading.get("fading") if isinstance(fading, dict) else None

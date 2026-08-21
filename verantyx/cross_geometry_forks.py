@@ -4902,8 +4902,12 @@ def a_promise_to_act_needs_a_witness_fork() -> Dict[str, Any]:
     reg.add(Covenant(name="t", quote="必ずpytestを実行して",
                      requires=["pytest"]))
     a0 = reg.audit()["verdict"]
+    # 2026-08-21 の再張り(PREREG3): 終了状態を伴わない実行は
+    # WITNESSED ではなく UNVERIFIED — 黙って合格に格上げしない。
     reg.witness("Bash", detail="python3 -m pytest -q")
     a1 = reg.audit()["verdict"]
+    reg.witness("Bash", detail="python3 -m pytest -q", ok=True)
+    a1b = reg.audit()["verdict"]
     reg.boundary()
     a2 = reg.audit()["verdict"]
     empty = Register().audit()["verdict"]
@@ -4930,7 +4934,9 @@ def a_promise_to_act_needs_a_witness_fork() -> Dict[str, Any]:
     inf = [u for v in hit["violations"]
            for u in v.get("inferred_forbidden_used", [])]
 
-    ok = (a0 == "REQUIRED_UNWITNESSED" and a1 == "REQUIRED_WITNESSED"
+    ok = (a0 == "REQUIRED_UNWITNESSED"
+          and a1 == "REQUIRED_WITNESSED_UNVERIFIED"
+          and a1b == "REQUIRED_WITNESSED"
           and a2 == "REQUIRED_UNWITNESSED" and empty == "NO_REQUIREMENTS"
           and sh["verdict"] == "KEPT"
           and len(sh.get("shadow_violations", [])) == 1
@@ -4940,9 +4946,108 @@ def a_promise_to_act_needs_a_witness_fork() -> Dict[str, Any]:
         "experiment": "cross_geometry",
         "fork": "A_PROMISE_TO_ACT_NEEDS_A_WITNESS",
         "pass": bool(ok),
-        "result": {"audit": [a0, a1, a2, empty],
+        "result": {"audit": [a0, a1, a1b, a2, empty],
                    "quarantine": [sh["verdict"], en["verdict"]],
                    "baked": c3.inferred_forbids, "inferred_hit": inf},
+    }
+
+
+def a_witness_must_have_been_invoked_fork() -> Dict[str, Any]:
+    """呼ばれた道具だけが証人・推薦は採用ではない・推論は焼き直せる
+    (fork 175本目)。
+
+    ①部分文字列だけで見ると `echo pytest` が pytest の証人になる。
+    区画の先頭語(と閉じた包み表・`-m`)だけを INVOKED と認め、字の中に
+    あるだけの語は MENTIONED として別に報じる — 黙って捨てず、黙って
+    数えもしない。②終了状態は三値: 落ちた実行は「やっていない」とは
+    別の知らせ(REQUIRED_FAILED)、分からない実行はどちらでもない
+    (UNVERIFIED)。不在と否定を混ぜない。同ターンに通った回と落ちた回が
+    あれば落ちた回を報せる(記録順に依らず、証拠を隠さない)。
+    ③隔離席の候補は**推薦されるだけ**で status は candidate のまま —
+    自動採用は「過検出の番人は切られる」の罠そのもの。④焼き込みは
+    stat だけで陳腐化が分かり(check の速い道で店を読まないため)、
+    焼き直しのときだけ店を1回読む。店がもう示さない語は落とす。
+    """
+    from .covenant import (Covenant, Register, bake_inferred,
+                           invoked_programs)
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+
+    # ① ふりと実走
+    fake = Register()
+    fake.add(Covenant(name="t", quote="必ずpytestを実行して",
+                      requires=["pytest"]))
+    fake.witness("Bash", detail="echo pytest")
+    f = fake.audit()
+
+    real = Register()
+    real.add(Covenant(name="t", quote="必ずpytestを実行して",
+                      requires=["pytest"]))
+    real.witness("Bash", detail="python3 -m pytest -q", ok=True)
+    r_ok = real.audit()
+
+    # ② 三値
+    unk = Register()
+    unk.add(Covenant(name="t", quote="q", requires=["pytest"]))
+    unk.witness("Bash", detail="pytest -q")
+    bad = Register()
+    bad.add(Covenant(name="t", quote="q", requires=["pytest"]))
+    bad.witness("Bash", detail="pytest -q", ok=False)
+
+    # ③ 推薦は採用ではない
+    q = Register()
+    q.propose(Covenant(name="c", quote="!控えめに", forbids=["!"]))
+    for t in ["対応します", "できました", "終わりました", "確認します",
+              "直しました!", "了解です", "進めます", "完了です"]:
+        q.check(t)
+    rev = q.promotion_review()
+    still_candidate = all(c.status == "candidate" for c in q.covenants)
+
+    # ④ 焼き直し
+    import tempfile
+
+    tmp = Path(tempfile.gettempdir()) / "fork175_store.json"
+    st = CrossStore()
+    ingest_documents(st, [Document(source="刑法", text=(
+        "甲条は拘禁刑を科する。甲条は規定である。"
+        "乙条は罰金を科する。乙条は規定である。"
+        "丙条は拘禁刑を科する。丙条は罰金を科する。"
+        "丁条は拘禁刑を科する。丁条は罰金を科する。"))])
+    st.save(tmp)
+    reg = Register()
+    c = Covenant(name="k", quote="拘禁刑の話はしないで", forbids=["拘禁刑"])
+    reg.add(c)
+    bake_inferred(c, st, store_name=tmp.name, store_path=tmp)
+    first = list(c.inferred_forbids)
+    fresh = reg.stale(tmp)["verdict"]
+    ingest_documents(st, [Document(source="刑法2", text=(
+        "戊条は拘禁刑を科する。戊条は科料を科する。"
+        "己条は拘禁刑を科する。己条は科料を科する。"
+        "庚条は拘禁刑を科する。庚条は科料を科する。"))])
+    st.save(tmp)
+    stale = reg.stale(tmp)["verdict"]
+    reg.rebake(st, store_path=tmp)
+    after = list(c.inferred_forbids)
+
+    ok = (f["verdict"] == "REQUIRED_UNWITNESSED"
+          and f["rows"][0]["match"] == "MENTIONED"
+          and r_ok["verdict"] == "REQUIRED_WITNESSED"
+          and unk.audit()["verdict"] == "REQUIRED_WITNESSED_UNVERIFIED"
+          and bad.audit()["verdict"] == "REQUIRED_FAILED"
+          and invoked_programs("echo pytest") == ["echo"]
+          and rev["promotable"] == ["c"] and still_candidate
+          and fresh == "FRESH" and stale == "STALE"
+          and "科料" in after and "罰金" in after)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_WITNESS_MUST_HAVE_BEEN_INVOKED",
+        "pass": bool(ok),
+        "result": {"pretend": [f["verdict"], f["rows"][0]["match"]],
+                   "real": r_ok["verdict"],
+                   "three_valued": [unk.audit()["verdict"],
+                                    bad.audit()["verdict"]],
+                   "promotion": [rev["promotable"], still_candidate],
+                   "rebake": [first, after, fresh, stale]},
     }
 
 
@@ -5035,6 +5140,7 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         conversation_speaker_attribution_fork(),
         covenant_lifecycle_fork(),
         a_promise_to_act_needs_a_witness_fork(),
+        a_witness_must_have_been_invoked_fork(),
     ]
 
 

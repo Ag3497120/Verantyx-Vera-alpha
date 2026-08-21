@@ -65,6 +65,79 @@ def terms_of(text: str) -> List[str]:
     return out
 
 
+#: 実行のふりと実走を分ける閉じた表(2026-08-21)。部分文字列だけで
+#: 見ると `echo pytest` が pytest の証人になってしまう。区画の先頭語を
+#: 「呼ばれた道具」とし、包み(npx/uv/…)と `-m <module>` だけ一段めくる。
+#: これ以上の賢さは入れない — シェルの完全な解釈は開いた問題で、
+#: 外した時に黙って実走を見逃す側に倒れる。
+_WRAPPERS = {
+    "npx", "uv", "poetry", "pipenv", "pdm", "hatch", "rye", "bunx",
+    "pnpm", "yarn", "npm", "cargo", "go", "dotnet", "bundle", "rake",
+    "sudo", "env", "time", "nice", "xargs", "nohup", "command",
+}
+_RUN_WORDS = {"run", "exec", "x", "tool"}
+_SEGMENT = re.compile(r"\|\||&&|[|;\n]")
+_VERSION_TAIL = re.compile(r"[0-9.]+$")
+
+
+def _norm_prog(token: str) -> str:
+    """道具名の閉じた正規化 — 経路を落とし、版番号の尾を落とす。"""
+    base = str(token).rsplit("/", 1)[-1].strip().lower()
+    return _VERSION_TAIL.sub("", base) or base
+
+
+def invoked_programs(command: str) -> List[str]:
+    """コマンド文字列から「実際に呼ばれた道具」を拾う。
+
+    返すのは事実の候補であって意味ではない。拾えなかった形
+    (複雑なシェル、eval、シェル関数)は空に倒れ、audit 側では
+    MENTIONED 止まり = 証人にならない — 見逃す側ではなく、
+    「まだ確かめられていない」側に倒す。
+    """
+    out: List[str] = []
+    for seg in _SEGMENT.split(str(command or "")):
+        seg = seg.strip()
+        if not seg:
+            continue
+        try:
+            import shlex
+            tokens = shlex.split(seg)
+        except Exception:
+            tokens = seg.split()
+        # 先頭の環境変数代入(FOO=bar cmd)は道具ではない
+        while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+            tokens = tokens[1:]
+        idx = 0
+        while idx < len(tokens):
+            prog = _norm_prog(tokens[idx])
+            raw = str(tokens[idx]).rsplit("/", 1)[-1].lower()
+            for name in (raw, prog):
+                if name and name not in out:
+                    out.append(name)
+            if prog in _WRAPPERS:
+                idx += 1
+                while idx < len(tokens) and (
+                        tokens[idx].startswith("-")
+                        or _norm_prog(tokens[idx]) in _RUN_WORDS):
+                    idx += 1
+                continue
+            # `python -m pytest` の一段だけめくる(閉じた1規則)
+            for j in range(idx + 1, len(tokens) - 1):
+                if tokens[j] == "-m":
+                    mod = str(tokens[j + 1]).lower()
+                    for name in (mod, mod.split(".")[0]):
+                        if name and name not in out:
+                            out.append(name)
+                    break
+            break
+    return out
+
+
+def _matches_program(term: str, programs: Sequence[str]) -> bool:
+    t = str(term).strip().lower()
+    return bool(t) and (t in programs or _norm_prog(t) in programs)
+
+
 @dataclass
 class Covenant:
     """One thing the user settled, in the form a machine can check."""
@@ -97,6 +170,9 @@ class Covenant:
     #: 字面の forbids と型を分けて報じる — 弱い主張は弱い型で。
     inferred_forbids: List[str] = field(default_factory=list)
     inferred_from: str = ""
+    #: 焼き込んだ時の店の指紋(mtime/size)。陳腐化は stat だけで分かる —
+    #: check の速い道で店を読まないための持ち物(2026-08-21)。
+    inferred_at: Dict[str, Any] = field(default_factory=dict)
 
     def in_scope(self, text: str, asked: str = "") -> bool:
         """Scope is the EXCHANGE, not the reply's wording.
@@ -189,6 +265,8 @@ class Covenant:
         if self.inferred_forbids:
             out["inferred_forbids"] = self.inferred_forbids
             out["inferred_from"] = self.inferred_from
+        if self.inferred_at:
+            out["inferred_at"] = self.inferred_at
         return out
 
 
@@ -319,11 +397,20 @@ class Register:
             out["shadow_violations"] = shadow
         return out
 
-    def witness(self, tool: str, detail: str = "",
-                turn: int = -1) -> Dict[str, Any]:
-        """tool 実行を1件記録する。判定はしない — 置くだけ。"""
-        row = {"tool": str(tool)[:80], "detail": str(detail)[:400],
-               "turn": turn, "ts": time.time()}
+    def witness(self, tool: str, detail: str = "", turn: int = -1,
+                ok: Optional[bool] = None) -> Dict[str, Any]:
+        """tool 実行を1件記録する。判定はしない — 置くだけ。
+
+        ``ok`` は終了状態が**分かるときだけ**入れる(True/False)。
+        分からなければ None のまま — 不在と否定を混ぜない。呼ばれた
+        道具は記録時に一度だけ抽出して持つ(audit を速いままにする)。
+        """
+        row: Dict[str, Any] = {
+            "tool": str(tool)[:80], "detail": str(detail)[:400],
+            "turn": turn, "ts": time.time(),
+            "programs": invoked_programs(detail)}
+        if ok is not None:
+            row["ok"] = bool(ok)
         self.witnesses.append(row)
         return {"verdict": "ANSWER", "witnesses": len(self.witnesses)}
 
@@ -344,39 +431,197 @@ class Register:
 
         「必ずテストを実行して」を返答の字面で執行すると誤検知だらけに
         なる(実地試験の実測)。やったの根拠は tool 実行の記録だけ。
-        照合は部分文字列(requires の語が tool 名か detail に現れる)で、
-        意味の一致は主張しない。**遮断はしない** — このターンにその
-        実行が要ったかは文脈で、この層には見えない。報せるだけ。
+        **遮断はしない** — このターンにその実行が要ったかは文脈で、
+        この層には見えない。報せるだけ。
+
+        ## 二つの区別(2026-08-21、PREREG3)
+
+        ①**呼ばれた道具か、字の中の語か**。`echo pytest` は pytest の
+        証人ではない。区画の先頭語(と包み・`-m`)だけを「呼ばれた」と
+        認め(INVOKED)、字の中に見えるだけのものは MENTIONED として
+        別に報じる — 黙って捨てず、黙って数えもしない。
+        ②**終了状態**。落ちた実行は「やっていない」とは別の知らせで、
+        分からない実行はどちらでもない。同じターンに同じ道具が複数回
+        走ったときは**落ちた回を優先して報せる**(合格だけ見せるのは
+        証拠を隠すこと)。記録順に依らない。
         """
         # 最後の境界以降の証人だけ
-        recent = []
+        recent: List[Dict[str, Any]] = []
         for w in self.witnesses:
             if w.get("boundary"):
                 recent = []
             else:
                 recent.append(w)
+
+        def _rank(w: Dict[str, Any]) -> tuple:
+            # 落ちた(0) < 確かめた成功(1) < 不明(2)。同点は内容で決める
+            # (記録順に依らないため)。
+            # **不明は否定ではない** — 確かめられた成功を薄めてはいけない。
+            # 最初は 不明 < 成功 と並べたが、fork 174 が捕まえた:
+            # 「1回は不明、1回は成功」を UNVERIFIED と呼ぶのは、
+            # 情報の不在を否定として数えることだった。落ちた回だけが
+            # 上書きする — それは実際の否定の証拠だから。
+            o = w.get("ok")
+            r = 0 if o is False else (1 if o is True else 2)
+            return (r, str(w.get("tool", "")), str(w.get("detail", "")))
+
         rows = []
         for c in self.covenants:
             if c.retired or c.status != "adopted" or not c.requires:
                 continue
             for r in c.requires:
-                lo = r.lower()
-                hit = next((w for w in recent
-                            if lo in (w.get("tool", "") + " "
-                                      + w.get("detail", "")).lower()), None)
-                rows.append({"covenant": c.name, "requires": r,
-                             "witnessed": hit is not None,
-                             "witness": hit, "inject": c.quote or c.name})
+                lo = str(r).lower()
+                invoked = [w for w in recent
+                           if _matches_program(r, w.get("programs") or [])]
+                mentioned = [w for w in recent
+                             if w not in invoked and lo in (
+                                 str(w.get("tool", "")) + " "
+                                 + str(w.get("detail", ""))).lower()]
+                if invoked:
+                    hit = min(invoked, key=_rank)
+                    ok = hit.get("ok")
+                    state = ("FAILED" if ok is False else
+                             "WITNESSED" if ok is True else "UNVERIFIED")
+                else:
+                    hit = None
+                    state = "UNWITNESSED"
+                rows.append({
+                    "covenant": c.name, "requires": r, "state": state,
+                    "witnessed": state in ("WITNESSED", "UNVERIFIED"),
+                    "match": ("INVOKED" if invoked else
+                              "MENTIONED" if mentioned else None),
+                    "invoked_matches": len(invoked),
+                    "mentioned_only": [
+                        {"tool": w.get("tool"), "detail": w.get("detail")}
+                        for w in mentioned[:2]] if not invoked else [],
+                    "witness": hit, "inject": c.quote or c.name})
+        rows.sort(key=lambda r: (r["covenant"], r["requires"]))
+        states = {r["state"] for r in rows}
         if not rows:
             verdict = "NO_REQUIREMENTS"
-        elif all(r["witnessed"] for r in rows):
-            verdict = "REQUIRED_WITNESSED"
-        else:
+        elif "FAILED" in states:
+            verdict = "REQUIRED_FAILED"
+        elif "UNWITNESSED" in states:
             verdict = "REQUIRED_UNWITNESSED"
+        elif "UNVERIFIED" in states:
+            verdict = "REQUIRED_WITNESSED_UNVERIFIED"
+        else:
+            verdict = "REQUIRED_WITNESSED"
         return {"verdict": verdict, "rows": rows,
                 "witnesses_this_turn": len(recent),
                 "note": "advisory only: whether this turn NEEDED the "
                         "execution is context this layer cannot see"}
+
+    def promotion_review(self, min_checks: int = 8,
+                         max_fire_rate: float = 0.5) -> Dict[str, Any]:
+        """隔離席の候補を**推薦する**だけ。採用(門)は別の行為のまま。
+
+        自動採用はしない — 過検出の番人は切られる、が実地の教訓で、
+        候補を勝手に執行へ入れるのはその罠そのもの。基準は測る前に
+        事前登録(PREREG3)で固定した:
+
+        - 圏内照合が min_checks 未満 → UNKNOWN_TOO_FEW_CHECKS(率は
+          出さない。標本が薄いときに数字を出すのは、無いものを在ると
+          言うこと)
+        - 一度も発火していない → REFUSED_NEVER_FIRED(必要の証拠がない)
+        - 発火率が max_fire_rate 超 → REFUSED_OVERFIRING(過検出の疑い)
+        - 帯の中 → PROMOTABLE(推薦。status は candidate のまま)
+        """
+        rows = []
+        for c in self.covenants:
+            if c.retired or c.status != "candidate":
+                continue
+            h = self.history.get(c.name) or []
+            checks = len(h)
+            hits = sum(1 for kept in h if not kept)
+            row = {"covenant": c.name, "checks": checks, "hits": hits,
+                   "quote": c.quote}
+            if checks < min_checks:
+                row["verdict"] = "UNKNOWN_TOO_FEW_CHECKS"
+            elif hits == 0:
+                row["verdict"] = "REFUSED_NEVER_FIRED"
+            elif hits / checks > max_fire_rate:
+                row["verdict"] = "REFUSED_OVERFIRING"
+                row["fire_rate"] = round(hits / checks, 3)
+            else:
+                row["verdict"] = "PROMOTABLE"
+                row["fire_rate"] = round(hits / checks, 3)
+            rows.append(row)
+        rows.sort(key=lambda r: r["covenant"])
+        return {"verdict": "ANSWER", "rows": rows,
+                "criteria": {"min_checks": min_checks,
+                             "max_fire_rate": max_fire_rate},
+                "promotable": [r["covenant"] for r in rows
+                               if r["verdict"] == "PROMOTABLE"],
+                "note": "a recommendation, never an adoption — adopt is a "
+                        "separate act and the gate stays with the caller"}
+
+    def stale(self, store_path: Any) -> Dict[str, Any]:
+        """焼き込みが古いかを **stat だけ**で答える(店を読まない)。
+
+        check の速い道(0.04s)で店を読まないための設計。ファイルが
+        変わったのは事実であって、姉妹語が変わったという推測ではない —
+        だから答えるのは「焼き直せる」までで、「焼き直すべき」とは
+        言わない。
+        """
+        fp = _store_fingerprint(store_path)
+        if not fp:
+            return {"verdict": "UNKNOWN_NO_STORE", "path": str(store_path)}
+        rows = []
+        for c in self.covenants:
+            if c.retired or not c.inferred_at:
+                continue
+            was = {k: c.inferred_at.get(k) for k in ("mtime", "size")}
+            now = {k: fp.get(k) for k in ("mtime", "size")}
+            if was != now:
+                rows.append({"covenant": c.name, "baked_at": c.inferred_at,
+                             "store_now": fp,
+                             "inferred_forbids": c.inferred_forbids})
+        if not any(c.inferred_at for c in self.covenants if not c.retired):
+            return {"verdict": "NO_INFERENCE", "store_now": fp}
+        return {"verdict": "STALE" if rows else "FRESH", "rows": rows,
+                "store_now": fp,
+                "note": "the file changed; whether the siblings changed is "
+                        "what rebake reads the store to find out"}
+
+    def rebake(self, store: Any, store_path: Any = None,
+               dry_run: bool = False, limit: int = 6) -> Dict[str, Any]:
+        """焼き込みを店の今で更新し、**差分を報せる**。
+
+        一度も焼いていない約束は焼かない(利用者が推論を選ばなかった
+        ものを、こちらの都合で足さない)。落ちた語は落とす — 推論は
+        利用者の言葉ではなく店の示唆で、店がもう示さない語を持ち続けるの
+        は本文が許す以上を主張すること。
+        """
+        fp = _store_fingerprint(store_path) if store_path else {}
+        rows = []
+        for c in self.covenants:
+            if c.retired or not c.inferred_at:
+                continue
+            before = list(c.inferred_forbids)
+            found: List[str] = []
+            for f in list(c.forbids) + list(c.requires):
+                for w, _sc in siblings(store, f, limit=limit):
+                    if w not in found and w not in c.forbids:
+                        found.append(w)
+            added = [w for w in found if w not in before]
+            removed = [w for w in before if w not in found]
+            if not dry_run:
+                c.inferred_forbids = found
+                if fp:
+                    c.inferred_at = dict(c.inferred_at)
+                    c.inferred_at.update(fp)
+                    c.inferred_at["rebakes"] = int(
+                        c.inferred_at.get("rebakes", 0)) + 1
+            rows.append({"covenant": c.name, "before": before,
+                         "after": found, "added": added, "removed": removed})
+        rows.sort(key=lambda r: r["covenant"])
+        if not rows:
+            return {"verdict": "NO_INFERENCE", "dry_run": bool(dry_run)}
+        changed = [r for r in rows if r["added"] or r["removed"]]
+        return {"verdict": "ANSWER", "dry_run": bool(dry_run), "rows": rows,
+                "changed": [r["covenant"] for r in changed],
+                "store_now": fp}
 
     def propose(self, c: Covenant) -> Covenant:
         """隔離席に置く。shadow で照合はされるが執行はされない。"""
@@ -439,8 +684,19 @@ class Register:
         return r
 
 
+def _store_fingerprint(store_path: Any) -> Dict[str, Any]:
+    """店ファイルの指紋 — stat のみ(読まない)。"""
+    try:
+        st = Path(store_path).stat()
+    except Exception:
+        return {}
+    return {"store": Path(store_path).name,
+            "mtime": round(st.st_mtime, 3), "size": st.st_size}
+
+
 def bake_inferred(c: "Covenant", store: Any, *, limit: int = 6,
-                  store_name: str = "") -> Dict[str, Any]:
+                  store_name: str = "",
+                  store_path: Any = None) -> Dict[str, Any]:
     """登録・採用の時に一度だけ店を読み、書かれていない禁止を焼き込む。
 
     check 時に店を読むと速い道(0.04s)が死ぬ。siblings は店の幾何から
@@ -456,8 +712,10 @@ def bake_inferred(c: "Covenant", store: Any, *, limit: int = 6,
                 found.append(w)
     c.inferred_forbids = found
     c.inferred_from = store_name or "store"
+    c.inferred_at = _store_fingerprint(store_path) if store_path else {
+        "store": c.inferred_from}
     return {"verdict": "ANSWER", "inferred_forbids": found,
-            "inferred_from": c.inferred_from}
+            "inferred_from": c.inferred_from, "inferred_at": c.inferred_at}
 
 
 def siblings(store: Any, term: str, *, limit: int = 24,

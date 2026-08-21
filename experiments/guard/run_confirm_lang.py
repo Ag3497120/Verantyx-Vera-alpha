@@ -95,7 +95,7 @@ def v13():
     reg2.add(Covenant(name="must-lint", quote="Always run eslint",
                       requires=["eslint"]))
     a0 = reg2.audit()["verdict"]
-    reg2.witness("Bash", detail="npx eslint src/ --fix")
+    reg2.witness("Bash", detail="npx eslint src/ --fix", ok=True)
     a1 = reg2.audit()["verdict"]
 
     reg3 = Register()

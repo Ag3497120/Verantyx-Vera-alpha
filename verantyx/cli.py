@@ -792,7 +792,8 @@ def cmd_guard(args) -> int:
         if not store_path.is_file():
             return {"verdict": "UNKNOWN_NO_STORE", "path": str(store_path)}
         return bake_inferred(c, CrossStore.load(store_path),
-                             store_name=store_path.name)
+                             store_name=store_path.name,
+                             store_path=store_path)
 
     if op == "extract":
         _text = str(payload.get("text", ""))
@@ -831,10 +832,28 @@ def cmd_guard(args) -> int:
             if baked:
                 out["inference"] = baked
     elif op == "witness":
+        _ok = payload.get("ok", None)
         out = reg.witness(str(payload.get("tool", "")),
                           detail=str(payload.get("detail", "")),
-                          turn=int(payload.get("turn", -1)))
+                          turn=int(payload.get("turn", -1)),
+                          ok=None if _ok is None else bool(_ok))
         reg.save(cov_path)
+    elif op == "promote":
+        # 推薦だけ — 採用は adopt(門)のまま。保存も要らない。
+        out = reg.promotion_review(
+            min_checks=int(payload.get("min_checks", 8)),
+            max_fire_rate=float(payload.get("max_fire_rate", 0.5)))
+    elif op == "stale":
+        out = reg.stale(store_path)      # stat のみ — 店は読まない
+    elif op == "rebake":
+        dry = bool(payload.get("dry_run", False))
+        if not store_path.is_file():
+            out = {"verdict": "UNKNOWN_NO_STORE", "path": str(store_path)}
+        else:
+            out = reg.rebake(CrossStore.load(store_path),
+                             store_path=store_path, dry_run=dry)
+            if not dry and out.get("verdict") == "ANSWER":
+                reg.save(cov_path)
     elif op == "boundary":
         out = reg.boundary(turn=int(payload.get("turn", -1)))
         reg.save(cov_path)
@@ -899,7 +918,8 @@ def main(argv: Optional[list] = None) -> int:
              "only — for Claude Code hooks (stdin: JSON payload)")
     p.add_argument("guard_op",
                    choices=["extract", "set", "check", "fading", "retire", "list",
-                            "propose", "adopt", "witness", "boundary", "audit"])
+                            "propose", "adopt", "witness", "boundary", "audit",
+                            "promote", "stale", "rebake"])
     p.set_defaults(fn=cmd_guard)
 
     p = sub.add_parser(

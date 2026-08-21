@@ -39,12 +39,14 @@ def v6():
     reg.add(_cov("must-test", quote="必ずpytestを実行して",
                  requires=["pytest"]))
     a0 = reg.audit()["verdict"]
-    reg.witness("Bash", detail="python3 -m pytest tests/ -q")
+    # PREREG3 の再張り: 終了状態つきで初めて WITNESSED(無ければ
+    # UNVERIFIED — 不在と否定を混ぜない)。
+    reg.witness("Bash", detail="python3 -m pytest tests/ -q", ok=True)
     a1 = reg.audit()["verdict"]
     reg.boundary()
     a2 = reg.audit()["verdict"]
     # 境界後に別の tool だけ動いた場合も UNWITNESSED のまま
-    reg.witness("Bash", detail="git status")
+    reg.witness("Bash", detail="git status", ok=True)
     a3 = reg.audit()["verdict"]
     ok = (a0 == "REQUIRED_UNWITNESSED" and a1 == "REQUIRED_WITNESSED"
           and a2 == "REQUIRED_UNWITNESSED" and a3 == "REQUIRED_UNWITNESSED")

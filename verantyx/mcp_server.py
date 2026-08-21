@@ -1044,6 +1044,37 @@ def serve(store_path: str) -> int:
         return json.dumps(out, ensure_ascii=False)
 
     @mcp.tool()
+    def review_candidates(min_checks: int = 8,
+                          max_fire_rate: float = 0.5) -> str:
+        """Which quarantined candidates have earned adoption — a
+        RECOMMENDATION, never an adoption. Auto-adopting is the trap the
+        field named (an over-firing guard gets switched off), so the gate
+        stays with the caller. Criteria are pre-registered (PREREG3): under
+        min_checks in-scope checks abstains with UNKNOWN_TOO_FEW_CHECKS and
+        reports no rate; never fired is REFUSED_NEVER_FIRED (no evidence it
+        is needed); above max_fire_rate is REFUSED_OVERFIRING."""
+        return json.dumps(_register.promotion_review(
+            min_checks=min_checks, max_fire_rate=max_fire_rate),
+            ensure_ascii=False)
+
+    @mcp.tool()
+    def rebake_inference(dry_run: bool = False) -> str:
+        """Re-read the store ONCE and refresh baked inferred_forbids,
+        reporting what was added and what dropped. Inference is the
+        corpus's suggestion, not the user's words, so a term the store no
+        longer supports is dropped rather than kept. Covenants that were
+        never baked stay unbaked — the caller chose that. Staleness itself
+        is answered by stat alone (see the guard CLI's `stale`), because
+        check must never read the store: that is the 0.04s fast path the
+        hooks depend on."""
+        from .covenant import _store_fingerprint  # noqa: F401
+
+        out = _register.rebake(store, store_path=path, dry_run=dry_run)
+        if not dry_run and out.get("verdict") == "ANSWER":
+            _register.save(_cov_path)
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
     def audit_required(  # noqa: D401 — the ledger speaks
     ) -> str:
         """Required-side audit by WITNESS, not by wording. 「必ずテストを
@@ -1052,7 +1083,12 @@ def serve(store_path: str) -> int:
         The ground for 'it was done' is the tool-execution record
         (same line as attest_claim's CLAIM_UNWITNESSED). Advisory only:
         whether this turn NEEDED the execution is context this layer
-        cannot see, so it reports and never blocks."""
+        cannot see, so it reports and never blocks. Two distinctions the
+        substring era lacked: `echo pytest` is MENTIONED, not INVOKED, and
+        only INVOKED counts; and a run that exited non-zero is
+        REQUIRED_FAILED, which is different news from never having run.
+        An execution with no exit status recorded is
+        REQUIRED_WITNESSED_UNVERIFIED — absence is not denial."""
         return json.dumps(_register.audit(), ensure_ascii=False)
 
     @mcp.tool()
