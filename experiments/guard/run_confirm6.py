@@ -105,7 +105,12 @@ def v30():
                        timeout=600)
     cli = json.loads(r.stdout)
 
-    ok = (healthy["verdict"] == "OK"
+    # 2026-08-22 の再張り: 配線検査(PREREG8)が入ったので、健全な
+    # エンジンでも凍結が古い機械では DEGRADED になる。**保証が生きて
+    # いるか**は failed が空かどうかで見る — verdict の OK/DEGRADED は
+    # 環境の話であって、この測定が主張していることではない。
+    ok = (healthy["verdict"] in ("OK", "DEGRADED")
+          and not healthy["failed"]
           and half["verdict"] == "BROKEN"
           and half["standalone"]["verdict"] == "OK"   # 片方は緑のまま
           and "G1_registered_covenant_blocks" in half["failed"]

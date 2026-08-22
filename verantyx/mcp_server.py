@@ -3573,6 +3573,32 @@ def build(store_path: str):
                     "math", "stats", "placement", "audit"}
 
     @mcp.tool()
+    def capability_index(query: str = "", limit: int = 12) -> str:
+        """**Ask this before building anything.** Does the capability
+        already exist here?
+
+        One search across every door, CLI command, module, fork, prereg and
+        result — derived from the source at call time, so it cannot go
+        stale the way a hand-written list does. With no query it returns
+        the counts.
+
+        It exists because this repository is 67,145 lines, 129 doors, 89
+        forks and 74 preregs: more than any context window holds, which is
+        why capabilities kept getting rebuilt. Ranking is term overlap
+        only, deterministic, no embeddings; a query that matches nothing
+        returns UNKNOWN_NOT_FOUND rather than the nearest name, because
+        telling someone a thing exists when it does not costs more than
+        rebuilding it.
+        """
+        from .index import build, search
+
+        if not query.strip():
+            idx = build()
+            return json.dumps({"verdict": "ANSWER", "counts": idx["counts"],
+                               "total": idx["total"]}, ensure_ascii=False)
+        return json.dumps(search(query, limit=limit), ensure_ascii=False)
+
+    @mcp.tool()
     def vera_doctor() -> str:
         """この機械で今、保証が成り立つかを実演して答える。
 

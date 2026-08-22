@@ -325,6 +325,32 @@ def cmd_mcp_config(args) -> int:
     return 0
 
 
+def cmd_index(args) -> int:
+    """「それは既に在るか」に答える索引 — 実装の前に必ずここを引く。
+
+    67,145行・129扉・89 fork は誰の作業記憶にも文脈窓にも入らない。
+    索引が無いと、人もモデルも既にあるものを作り直す(実際に起きた)。
+    索引はコードと文書から**その場で導出**するので、古くならない。
+    """
+    from .index import build, markdown, search
+
+    if args.index_op == "build":
+        idx = build()
+        _print({"verdict": "ANSWER", "counts": idx["counts"],
+                "total": idx["total"], "root": idx["root"]})
+    elif args.index_op == "markdown":
+        text = markdown()
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8")
+            _print({"verdict": "ANSWER", "wrote": args.out,
+                    "bytes": len(text.encode("utf-8"))})
+        else:
+            print(text)
+    else:
+        _print(search(" ".join(args.query), limit=args.limit))
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """入れた直後に叩く自己検査 — 二つの顔を1回で確かめる。
 
@@ -1183,6 +1209,16 @@ def main(argv: Optional[list] = None) -> int:
     p = sub.add_parser("ask", help="one-shot question (typed verdict)")
     p.add_argument("query")
     p.set_defaults(fn=cmd_ask)
+
+    p = sub.add_parser(
+        "index",
+        help="does this already exist? one search over doors, commands, "
+             "modules, forks and every prereg/result — derived, never listed")
+    p.add_argument("index_op", choices=["search", "build", "markdown"])
+    p.add_argument("query", nargs="*", default=[])
+    p.add_argument("--limit", type=int, default=12)
+    p.add_argument("--out", default="")
+    p.set_defaults(fn=cmd_index)
 
     p = sub.add_parser(
         "mcp-config",
