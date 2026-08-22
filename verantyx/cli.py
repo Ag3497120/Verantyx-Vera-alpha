@@ -127,6 +127,244 @@ def cmd_ask(args) -> int:
     return 0
 
 
+def _doors(store_path: str) -> Dict[str, Any]:
+    """126扉を**走らせずに**取り出す。CLI と MCP は同じ扉を使う。
+
+    扉ごとに CLI のコマンドを書き写すと二つの表面が必ずずれるので、
+    入口だけを増やして実体は一つに保つ(2026-08-22)。
+    """
+    from .mcp_server import build
+
+    mcp = build(store_path)
+    if mcp is None:
+        return {}
+    return {t.name: t for t in mcp._tool_manager.list_tools()}
+
+
+def _coerce(fn, kwargs: Dict[str, str]) -> Dict[str, Any]:
+    """`k=v` を扉の型注釈に合わせる(閉じた4型のみ。推測しない)。"""
+    import inspect
+
+    sig = inspect.signature(fn)
+    out: Dict[str, Any] = {}
+    for k, v in kwargs.items():
+        ann = sig.parameters[k].annotation if k in sig.parameters else str
+        if ann is bool:
+            out[k] = str(v).strip().lower() in ("1", "true", "yes", "on")
+        elif ann is int:
+            out[k] = int(v)
+        elif ann is float:
+            out[k] = float(v)
+        else:
+            out[k] = v
+    return out
+
+
+def _call_door(store_path: str, name: str, payload: Dict[str, Any]) -> int:
+    doors = _doors(store_path)
+    if not doors:
+        _print({"verdict": "UNKNOWN_NO_MCP_SDK"})
+        return 2
+    if name not in doors:
+        near = [n for n in doors if name in n][:8]
+        _print({"verdict": "UNKNOWN_NO_SUCH_DOOR", "door": name,
+                "did_you_mean": near, "doors": len(doors)})
+        return 1
+    out = doors[name].fn(**payload)
+    try:
+        _print(json.loads(out) if isinstance(out, str) else out)
+    except Exception:              # 扉が素の文字列を返す場合はそのまま
+        print(out)
+    return 0
+
+
+def cmd_tool(args) -> int:
+    """MCP の扉を CLI から。IDE を経由せずに全機能へ届かせるための橋。"""
+    doors = _doors(args.store)
+    if not doors:
+        _print({"verdict": "UNKNOWN_NO_MCP_SDK"})
+        return 2
+    if args.tool_op == "list":
+        pat = (args.name or "").lower()
+        rows = [{"door": n,
+                 "about": " ".join((t.description or "").split())[:90]}
+                for n, t in sorted(doors.items())
+                if not pat or pat in n.lower()]
+        _print({"doors": len(rows), "list": rows})
+        return 0
+    if not args.name:
+        _print({"verdict": "UNKNOWN_NO_DOOR_NAMED"})
+        return 1
+    if args.tool_op == "show":
+        t = doors.get(args.name)
+        if t is None:
+            return _call_door(args.store, args.name, {})
+        import inspect
+
+        print(f"{args.name}{inspect.signature(t.fn)}\n")
+        print(inspect.getdoc(t.fn) or "(no docstring)")
+        return 0
+    # call
+    payload: Dict[str, Any] = {}
+    if args.json:
+        payload.update(json.loads(args.json))
+    pairs = {}
+    for kv in (args.arg or []):
+        if "=" not in kv:
+            _print({"verdict": "UNKNOWN_BAD_ARG", "arg": kv})
+            return 1
+        k, v = kv.split("=", 1)
+        pairs[k] = v
+    t = doors.get(args.name)
+    if t is not None and pairs:
+        payload.update(_coerce(t.fn, pairs))
+    return _call_door(args.store, args.name, payload)
+
+
+def cmd_documents(args) -> int:
+    """文書を CLI から入れる(PDF/Word/HTML/CSV/JSON/テキスト、フォルダ可)。
+
+    実体は扉 `load_documents` — IDE と同じ経路を通す(別経路を書くと
+    「IDE では入るが CLI では入らない」が生まれる)。
+    """
+    return _call_door(args.store, "load_documents",
+                      {"paths": ",".join(args.paths),
+                       "ingest": not args.no_ingest})
+
+
+def cmd_domain(args) -> int:
+    """分野(語彙)の登録と確認。実体は既存の扉。"""
+    op = args.domain_op
+    if op == "list":
+        return _call_door(args.store, "vera_domains", {})
+    if op == "add":
+        if not (args.name and args.path):
+            _print({"verdict": "UNKNOWN_NEEDS_NAME_AND_PATH"})
+            return 1
+        return _call_door(args.store, "vera_domain",
+                          {"name": args.name, "path": args.path})
+    if op == "pending":
+        return _call_door(args.store, "list_pending_domain_modules", {})
+    if op in ("accept", "reject"):
+        if args.index is None:
+            _print({"verdict": "UNKNOWN_NEEDS_INDEX"})
+            return 1
+        return _call_door(args.store, f"{op}_domain_module",
+                          {"index": args.index})
+    _print({"verdict": "UNKNOWN_OP", "op": op})
+    return 1
+
+
+#: 貼り先(閉じた表)。IDE の MCP 画面が発行していたスニペットを CLI へ
+#: 移す(2026-08-22)。**書き込みは --install を打った人の行為**で、
+#: 既定は表示だけ — 設定ファイルを黙って書き換えない。
+_MCP_CLIENTS = {
+    "claude-code": ".mcp.json",
+    "claude-desktop": "~/Library/Application Support/Claude/"
+                      "claude_desktop_config.json",
+    "cursor": "~/.cursor/mcp.json",
+}
+
+
+def _vera_binary() -> List[str]:
+    """この機械で MCP を起動する実際のコマンド(推測しない)。"""
+    import shutil
+    import sys as _s
+
+    vendor = Path.home() / ("Projects/Verantyx/cli/VerantyxIDE/Vendor/"
+                            "vera-memory")
+    if getattr(_s, "frozen", False):
+        return [_s.executable]
+    if vendor.exists():
+        return [str(vendor)]
+    found = shutil.which("vera-memory")
+    if found:
+        return [found]
+    return [_s.executable, "-m", "verantyx.cli"]
+
+
+def cmd_mcp_config(args) -> int:
+    """MCP の設定スニペットを出す(必要なら貼る)。
+
+    IDE の MCP 画面がやっていた仕事のうち、CLI に無かったのはこれ。
+    他サーバの接続管理は Claude Code 自身の機能なので写さない
+    (同じ仕事を二つ持つと必ずずれる)。
+    """
+    store = str(Path(args.store or DEFAULT_STORE).resolve())
+    cmd = _vera_binary()
+    entry = {"command": cmd[0],
+             "args": cmd[1:] + ["--store", store, "mcp"]}
+    snippet = {"mcpServers": {"vera-memory": entry}}
+    targets = ([(k, v) for k, v in _MCP_CLIENTS.items()]
+               if args.client == "all"
+               else [(args.client, _MCP_CLIENTS[args.client])])
+    out = {"verdict": "ANSWER", "snippet": snippet,
+           "targets": {k: str(Path(v).expanduser()) for k, v in targets},
+           "note": "既定は表示のみ。--install で貼る(貼るのは打った人の行為)"}
+    if args.install:
+        wrote = {}
+        for name, rel in targets:
+            path = (Path(rel).expanduser() if rel.startswith("~")
+                    else Path.cwd() / rel)
+            try:
+                cur = json.loads(path.read_text(encoding="utf-8")) \
+                    if path.is_file() else {}
+            except Exception:
+                out["verdict"] = "UNKNOWN_UNREADABLE_CONFIG"
+                wrote[name] = "読めない設定があるので触らない"
+                continue
+            servers = dict(cur.get("mcpServers") or {})
+            servers["vera-memory"] = entry     # 同名だけ差し替える
+            cur["mcpServers"] = servers
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(cur, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+            wrote[name] = str(path)
+        out["installed"] = wrote
+    _print(out)
+    return 0
+
+
+def cmd_index(args) -> int:
+    """「それは既に在るか」に答える索引 — 実装の前に必ずここを引く。
+
+    67,145行・129扉・89 fork は誰の作業記憶にも文脈窓にも入らない。
+    索引が無いと、人もモデルも既にあるものを作り直す(実際に起きた)。
+    索引はコードと文書から**その場で導出**するので、古くならない。
+    """
+    from .index import build, markdown, search
+
+    if args.index_op == "build":
+        idx = build()
+        _print({"verdict": "ANSWER", "counts": idx["counts"],
+                "total": idx["total"], "root": idx["root"]})
+    elif args.index_op == "markdown":
+        text = markdown()
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8")
+            _print({"verdict": "ANSWER", "wrote": args.out,
+                    "bytes": len(text.encode("utf-8"))})
+        else:
+            print(text)
+    else:
+        _print(search(" ".join(args.query), limit=args.limit))
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    """入れた直後に叩く自己検査 — 二つの顔を1回で確かめる。
+
+    番人(フック)の G1〜G4 と、単体の装置の S1〜S4 を**その場で実演**
+    する。利用者の店にも台帳にも触らない(治具は毎回その場で作る)。
+    片方が壊れていれば全体は BROKEN で、終了コードは1。
+    """
+    from .doctor import full_doctor
+
+    out = full_doctor()
+    _print(out)
+    return 1 if out.get("verdict") == "BROKEN" else 0
+
+
 def cmd_stats(args) -> int:
     st = _load(args.store)
     top = sorted(st.core_count.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
@@ -751,6 +989,200 @@ def cmd_push_store(args) -> int:
     return 0
 
 
+def cmd_guard(args) -> int:
+    """番人の高速経路 — 連邦を読まず covenants.json だけを読む。
+
+    実地試験の限界5: 橋(常駐)の起動 15〜45秒の間 fail-open だった。
+    この経路は Register だけを読むので、凍結バイナリでも秒台で返り、
+    フックは橋なしで直接呼べる(fail-open の窓が消える)。
+    """
+    import sys as _sys
+
+    from .covenant import (Covenant, Register, bake_inferred,
+                           extract_covenants, extract_releases, self_check)
+
+    store_path = Path(args.store or DEFAULT_STORE)
+    cov_path = store_path.with_name(store_path.stem + ".covenants.json")
+    reg = Register.load(cov_path)
+    op = args.guard_op
+    payload = {}
+    if not _sys.stdin.isatty():
+        raw = _sys.stdin.read().strip()
+        if raw:
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                payload = {"text": raw}
+    def _mk_covenant():
+        return Covenant(
+            name=str(payload.get("name", ""))[:60] or "covenant",
+            requires=list(payload.get("requires", [])),
+            forbids=list(payload.get("forbids", [])),
+            topic=list(payload.get("topic", [])),
+            said_at_turn=int(payload.get("turn", -1)),
+            quote=str(payload.get("quote", "")),
+            origin=str(payload.get("origin", "")))
+
+    def _bake(c):
+        # ③ 書かれていない禁止 — 登録・採用の時だけ店を読む(check の
+        # 速い道を守る)。店が無ければ何も焼かない(推測しない)。
+        if not payload.get("infer"):
+            return None
+        if not store_path.is_file():
+            return {"verdict": "UNKNOWN_NO_STORE", "path": str(store_path)}
+        return bake_inferred(c, CrossStore.load(store_path),
+                             store_name=store_path.name,
+                             store_path=store_path)
+
+    if op == "extract":
+        _text = str(payload.get("text", ""))
+        out = {"candidates": extract_covenants(
+            _text, turn=int(payload.get("turn", -1))),
+            "releases": extract_releases(_text)}
+    elif op == "set":
+        c = _mk_covenant()
+        if c.origin == "regex":
+            # 戻り止め(2026-08-21、誤遮断の実測)。閉じた抽出規則が読んだ
+            # 約束は、どの入口から入っても執行には入れない — `No new
+            # dependencies` → forbids=["new"] が返答を遮断した実測があり、
+            # 規則を足して被覆を上げる道は閉じないと分かっている。
+            # フックは propose を呼ぶが、別の配管が set を呼んでも法が
+            # 破れないよう、ここでも隔離席へ落とす。**黙って落とさない**:
+            # 隔離席に入れたことを返り値で名指す。
+            reg.propose(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "candidate": c.as_dict(),
+                   "routed_to_quarantine": True,
+                   "note": "規則が読んだ約束は執行に入れない — shadow で"
+                           "照合されるだけ。採用は adopt(門)"}
+        else:
+            reg.add(c)
+            baked = _bake(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "covenant": c.as_dict(),
+                   "in_force": len([x for x in reg.covenants
+                                    if not x.retired
+                                    and x.status == "adopted"])}
+            if baked:
+                out["inference"] = baked
+    elif op == "propose":
+        # ① 隔離席 — LLM の候補は shadow で照合されるだけで執行されない。
+        c = _mk_covenant()
+        if not (c.forbids or c.requires):
+            out = {"verdict": "UNKNOWN_EMPTY_CANDIDATE",
+                   "note": "禁止も要求も無い候補は約束にならない"}
+        else:
+            reg.propose(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "candidate": c.as_dict()}
+    elif op == "adopt":
+        d = reg.adopt(str(payload.get("name", "")))
+        if d is None:
+            out = {"verdict": "UNKNOWN_NO_SUCH_CANDIDATE"}
+        else:
+            c = next(x for x in reg.covenants if x.name == d["name"])
+            baked = _bake(c)
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "adopted": c.as_dict()}
+            if baked:
+                out["inference"] = baked
+    elif op == "witness":
+        _ok = payload.get("ok", None)
+        out = reg.witness(str(payload.get("tool", "")),
+                          detail=str(payload.get("detail", "")),
+                          turn=int(payload.get("turn", -1)),
+                          ok=None if _ok is None else bool(_ok))
+        reg.save(cov_path)
+    elif op == "prune":
+        # 台帳を有界に。**消さず書庫へ移す**(PREREG9)。
+        out = reg.prune(path=cov_path,
+                        max_history=int(payload.get("max_history", 200)),
+                        max_live=int(payload.get("max_live", 300)))
+        reg.save(cov_path)
+    elif op == "promote":
+        # 推薦だけ — 採用は adopt(門)のまま。保存も要らない。
+        out = reg.promotion_review(
+            min_checks=int(payload.get("min_checks", 8)),
+            max_fire_rate=float(payload.get("max_fire_rate", 0.5)))
+    elif op == "doctor":
+        # 導入直後に叩く自己検査(PREREG5)。**利用者の台帳には触らない** —
+        # 一時の台帳で保証を実演し、環境は stat と実時間だけを見る。
+        import os as _os
+        import time as _time
+
+        out = self_check()
+        t0 = _time.time()
+        _probe = Register()
+        _probe.add(Covenant(name="_speed", quote="q", forbids=["絵文字"]))
+        for _ in range(200):
+            _probe.check("できました。")
+        per_check_ms = round((_time.time() - t0) / 200 * 1000, 4)
+        frozen = bool(getattr(_sys, "frozen", False))
+        env = {
+            "path": "frozen-binary" if frozen else "source",
+            "per_check_ms": per_check_ms,
+            "covenants_ledger": str(cov_path),
+            "ledger_exists": cov_path.is_file(),
+            "ledger_writable": _os.access(
+                cov_path if cov_path.is_file() else cov_path.parent,
+                _os.W_OK),
+            "covenants_in_force": len([c for c in reg.covenants
+                                       if not c.retired
+                                       and c.status == "adopted"]),
+            "candidates_in_quarantine": len([c for c in reg.covenants
+                                             if c.status == "candidate"]),
+        }
+        notes = []
+        if not env["ledger_writable"]:
+            notes.append("台帳に書けない — 約束を登録できない(DEGRADED)")
+        if frozen and per_check_ms > 50:
+            notes.append("1照合が遅い — onedir 凍結かソース直呼びを勧める")
+        out["environment"] = env
+        if out["verdict"] == "OK" and notes:
+            out["verdict"] = "DEGRADED"
+        out["notes"] = notes
+    elif op == "stale":
+        out = reg.stale(store_path)      # stat のみ — 店は読まない
+    elif op == "rebake":
+        dry = bool(payload.get("dry_run", False))
+        if not store_path.is_file():
+            out = {"verdict": "UNKNOWN_NO_STORE", "path": str(store_path)}
+        else:
+            out = reg.rebake(CrossStore.load(store_path),
+                             store_path=store_path, dry_run=dry)
+            if not dry and out.get("verdict") == "ANSWER":
+                reg.save(cov_path)
+    elif op == "boundary":
+        out = reg.boundary(turn=int(payload.get("turn", -1)))
+        reg.save(cov_path)
+    elif op == "audit":
+        out = reg.audit()
+    elif op == "check":
+        out = reg.check(str(payload.get("reply", "")),
+                        asked=str(payload.get("asked", "")))
+        reg.save(cov_path)          # 履歴(風化の材料)を残す
+    elif op == "fading":
+        out = reg.fading(window=int(payload.get("window", 5)))
+    elif op == "retire":
+        r = reg.retire(str(payload.get("name", "")),
+                       quote=str(payload.get("quote", "")),
+                       turn=int(payload.get("turn", -1)))
+        if r is None:
+            out = {"verdict": "UNKNOWN_NO_SUCH_COVENANT"}
+        else:
+            reg.save(cov_path)
+            out = {"verdict": "ANSWER", "retired": r}
+    elif op == "list":
+        out = {"covenants": [c.as_dict() for c in reg.covenants]}
+    else:
+        out = {"verdict": "UNKNOWN_OP", "op": op}
+    _print(out)
+    # doctor だけは終了コードで答える — 導入の自動確認に使えるように。
+    if op == "doctor" and out.get("verdict") == "BROKEN":
+        return 1
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="vera", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -778,8 +1210,73 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("query")
     p.set_defaults(fn=cmd_ask)
 
+    p = sub.add_parser(
+        "index",
+        help="does this already exist? one search over doors, commands, "
+             "modules, forks and every prereg/result — derived, never listed")
+    p.add_argument("index_op", choices=["search", "build", "markdown"])
+    p.add_argument("query", nargs="*", default=[])
+    p.add_argument("--limit", type=int, default=12)
+    p.add_argument("--out", default="")
+    p.set_defaults(fn=cmd_index)
+
+    p = sub.add_parser(
+        "mcp-config",
+        help="print (or install) the MCP snippet pointing a client at this "
+             "binary and this store")
+    p.add_argument("--client", default="claude-code",
+                   choices=list(_MCP_CLIENTS) + ["all"])
+    p.add_argument("--install", action="store_true",
+                   help="write it into the client config (merges, replacing "
+                        "only the vera-memory entry)")
+    p.set_defaults(fn=cmd_mcp_config)
+
+    p = sub.add_parser(
+        "tool", help="call any of the MCP doors from the CLI (same doors, "
+                     "second entrance — nothing is rewritten per command)")
+    p.add_argument("tool_op", choices=["list", "show", "call"])
+    p.add_argument("name", nargs="?", default="")
+    p.add_argument("--json", default="", help="arguments as a JSON object")
+    p.add_argument("--arg", action="append",
+                   help="key=value (repeatable), typed from the door")
+    p.set_defaults(fn=cmd_tool)
+
+    p = sub.add_parser(
+        "documents",
+        help="load documents into the store from the CLI — PDF, Word, "
+             "HTML, CSV, JSON, text; a directory is walked")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--no-ingest", action="store_true",
+                   help="read and register the documents without ingesting")
+    p.set_defaults(fn=cmd_documents)
+
+    p = sub.add_parser("domain", help="register/inspect domain vocabularies")
+    p.add_argument("domain_op",
+                   choices=["list", "add", "pending", "accept", "reject"])
+    p.add_argument("name", nargs="?", default="")
+    p.add_argument("path", nargs="?", default="")
+    p.add_argument("--index", type=int, default=None)
+    p.set_defaults(fn=cmd_domain)
+
+    p = sub.add_parser(
+        "doctor",
+        help="self-check both faces on THIS machine: the covenant guard "
+             "(G1-G4) and the standalone device (S1-S4). Exit 1 if broken")
+    p.set_defaults(fn=cmd_doctor)
+
     p = sub.add_parser("stats", help="store statistics")
     p.set_defaults(fn=cmd_stats)
+
+    p = sub.add_parser(
+        "guard",
+        help="covenant guard fast path: no federation load, covenants.json "
+             "only — for Claude Code hooks (stdin: JSON payload)")
+    p.add_argument("guard_op",
+                   choices=["extract", "set", "check", "fading", "retire", "list",
+                            "propose", "adopt", "witness", "boundary", "audit",
+                            "promote", "stale", "rebake",
+                            "doctor", "prune"])
+    p.set_defaults(fn=cmd_guard)
 
     p = sub.add_parser(
         "heartbeat",

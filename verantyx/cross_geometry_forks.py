@@ -574,6 +574,188 @@ def reverse_specific_fork() -> Dict[str, Any]:
                        "unique_kept": bool(unique_kept)}}
 
 
+def prover_three_outcomes_fork() -> Dict[str, Any]:
+    """証明器の扉は、証明・反駁・拒否の三つを混ぜない(fork 169本目)。
+
+    「不在と否定を混ぜない」の証明版。届かなかったこと(REFUSED)を偽
+    (REFUTED)として返す扉は、この製品が拒否のために作られた門を自分で
+    くぐることになる。4点固定:
+      (a) 真の等式は PROVED、主張は Lean が検分している
+      (b) 偽の等式は REFUTED で、**反例を名指す**(再計算できる)
+      (c) 届かない等式は REFUSED で needs を運ぶ — 反例は無い
+      (d) 署名の外の記号は UNKNOWN_ILL_TYPED(推測で受けない)
+    """
+    from .prover import prove_equation, signature
+
+    proved = prove_equation("rev(rev(x))", "x")
+    refuted = prove_equation("app(x, y)", "app(y, x)")
+    refused = prove_equation("min(a, b)", "min(b, a)")
+    illtyped = prove_equation("quux(a)", "a")
+
+    ok_proved = (proved.get("verdict") == "PROVED"
+                 and str(proved.get("lean", {}).get("verdict"))
+                 in ("VERIFIED", "UNKNOWN_TOOLCHAIN_MISSING"))
+    ok_refuted = (refuted.get("verdict") == "REFUTED"
+                  and bool(refuted.get("counterexample")))
+    ok_refused = (refused.get("verdict") == "REFUSED"
+                  and bool(refused.get("needs"))
+                  and "counterexample" not in refused)
+    ok_typed = (illtyped.get("verdict") == "UNKNOWN_ILL_TYPED"
+                and "le" in signature()["functions"])
+    ok = bool(ok_proved and ok_refuted and ok_refused and ok_typed)
+    return {"fork": "PROVER_THREE_OUTCOMES", "pass": ok,
+            "result": {"proved": proved.get("verdict"),
+                       "lean": proved.get("lean", {}).get("verdict"),
+                       "refuted": refuted.get("verdict"),
+                       "counterexample": refuted.get("counterexample"),
+                       "refused": refused.get("verdict"),
+                       "needs": refused.get("needs"),
+                       "ill_typed": illtyped.get("verdict")}}
+
+
+def attest_polarity_fork() -> Dict[str, Any]:
+    """主張の採点は、肯定と否定を同じ点にしてはならない(fork 170本目)。
+
+    2026-08-20 実測(隔離環境・第三者のブラインド評価と二者独立):
+        「実費を支給する」   -> ANSWER support=1.0
+        「実費を支給しない」 -> ANSWER support=1.0   ← 完全同点
+    機序は構成上のもの — 採点器は漢字・カタカナの連しか見ず、否定は
+    ひらがなに居た。極性の器官は在るのに呼ばれていなかった(実装済み
+    未到達)。3点固定:
+      (a) 店が反対の極を**証拠として**持てば CONTRADICTED_BY_CORPUS で、
+          その facet を名指す
+      (b) 店が語だけ持ち極性を記録していなければ
+          UNKNOWN_POLARITY_UNJUDGED — 黙って同点にしない
+      (c) 極性の争点が無い主張は従来どおり ANSWER
+    """
+    from .attest_llm import check_all
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+    from .polarity import ingest_polar_ja
+
+    doc = CrossStore(track_provenance=True)
+    ingest_documents(doc, [Document(
+        source="規程.txt",
+        text="会社は、従業員に対し、通勤に要する実費を支給する。"
+             "自家用車通勤の場合は1キロメートルあたり15円を支給する。"
+             "月額30000円を上限とする。")])
+    pos = check_all(doc, "会社", "従業員に対し通勤に要する実費を支給する")
+    neg = check_all(doc, "会社", "従業員に対し通勤に要する実費を支給しない")
+
+    # 主題は MIN_FACETS(3)以上を持たせる — 2文では TOO_THIN で
+    # 極性まで届かない(この治具を薄く作って一度落とした)。
+    pol = CrossStore(track_provenance=True)
+    for s in ("避難所は開設している。", "水道は復旧していない。",
+              "避難所は受付中である。", "水道は断水している。"):
+        ingest_polar_ja(pol, s)
+        pol.ingest_sentence(s)
+    contra = check_all(pol, "水道", "水道は復旧している")
+    agree = check_all(pol, "避難所", "避難所は開設している")
+
+    ok_split = (pos.get("verdict") == "ANSWER"
+                and neg.get("verdict") == "UNKNOWN_POLARITY_UNJUDGED")
+    ok_contra = (contra.get("verdict") == "CONTRADICTED_BY_CORPUS"
+                 and bool(contra.get("contradictions"))
+                 and contra["contradictions"][0].get("facet"))
+    ok_agree = agree.get("verdict") == "ANSWER"
+    ok = bool(ok_split and ok_contra and ok_agree)
+    return {"fork": "ATTEST_POLARITY", "pass": ok,
+            "result": {"positive": pos.get("verdict"),
+                       "negated": neg.get("verdict"),
+                       "contradicted": contra.get("verdict"),
+                       "facet": (contra.get("contradictions") or [{}])[0]
+                       .get("facet"),
+                       "agreement": agree.get("verdict")}}
+
+
+def transfer_reading_fork() -> Dict[str, Any]:
+    """転移は数える。なぜ転移したかは主張しない(fork 171本目)。
+
+    `transfer_outcomes` が「実データが溜まるまで」と保留した較正段。
+    4点固定: (a) 全文脈で一致した事実は TRANSFERRED (b) 割れた事実は
+    CONTEXT_BOUND (c) 1文脈しか無い事実は UNKNOWN_SINGLE_CONTEXT —
+    予測しない (d) 観測が閾値未満の次元は数字を出さず
+    UNKNOWN_TOO_FEW_CONTEXTS。
+    """
+    from .transfer_reading import calibrate, judge_transfer
+
+    agree = judge_transfer({"fact": "h(a)", "raw_names": ["h(a)"],
+                            "contexts": {"m1": "harm", "m2": "harm",
+                                         "m3": "harm"},
+                            "labels": {}, "source": "fixture"})
+    split = judge_transfer({"fact": "h(b)", "raw_names": ["h(b)"],
+                            "contexts": {"m1": "adopt", "m2": "abstain"},
+                            "labels": {}, "source": "fixture"})
+    lone = judge_transfer({"fact": "h(c)", "raw_names": ["h(c)"],
+                           "contexts": {"m1": "adopt"},
+                           "labels": {}, "source": "fixture"})
+    thin = calibrate([lone], {"h(c)": "薄い次元"})["薄い次元"]
+    counted = calibrate([agree, split], {"h(a)": "d", "h(b)": "d"})["d"]
+    ok = (agree["verdict"] == "TRANSFERRED"
+          and split["verdict"] == "CONTEXT_BOUND"
+          and lone["verdict"] == "UNKNOWN_SINGLE_CONTEXT"
+          and thin["verdict"] == "UNKNOWN_TOO_FEW_CONTEXTS"
+          and counted["verdict"] == "COUNTED")
+    return {"fork": "TRANSFER_READING", "pass": bool(ok),
+            "result": {"agree": agree["verdict"], "split": split["verdict"],
+                       "single": lone["verdict"], "thin": thin["verdict"],
+                       "counted": counted["verdict"]}}
+
+
+def axis_lock_fork() -> Dict[str, Any]:
+    """ロックできるのは、同点崩しで勝っていない腕だけ(fork 172本目)。
+
+    構想(これまで.pdf)は「軸のロック」で時間の短縮と精度を得ると言うが、
+    何を根拠にロックするかは書いていない。配置は情報を増やせないのだから、
+    **同点崩しで勝った腕はロックできない** — そこから導出した2条件
+    (配置不変を生き延びた ∧ facet の counts が割れている)を固定する。
+
+    3点: (a) 全 facet が同点の店ではロックが**空** (b) counts が割れる店では
+    その腕がロックされる (c) ロックの有無で **verdict は変わらない**
+    (ロックは探索の近道であって、答えを変える権限を持たない)。
+    """
+    from .consensus_store import consensus_over_store
+
+    tied = CrossStore()
+    for a in ("aspa", "aspb", "aspc", "aspd"):
+        tied.ingest_sentence(f"gadget has {a}")
+    r_tied = consensus_over_store(tied, "what is gadget aspa",
+                                  placement_invariant=True)
+
+    ranked = CrossStore()
+    for _ in range(5):
+        ranked.ingest_sentence("gadget is heavy")
+    for _ in range(4):
+        ranked.ingest_sentence("gadget is fast")
+    for _ in range(3):
+        ranked.ingest_sentence("gadget is small")
+    for _ in range(2):
+        ranked.ingest_sentence("gadget is quiet")
+    r_rank = consensus_over_store(ranked, "what is gadget heavy",
+                                  placement_invariant=True)
+
+    # (c) ロックを継承した2回目でも判定が変わらない
+    circ = {}
+    consensus_over_store(ranked, "what is gadget heavy",
+                         placement_invariant=True, circulation=circ)
+    r_again = consensus_over_store(ranked, "what is gadget fast",
+                                   placement_invariant=True, circulation=circ)
+    r_plain = consensus_over_store(ranked, "what is gadget fast",
+                                   placement_invariant=True)
+
+    ok = (r_tied.get("locks") == []
+          and r_rank.get("locks")
+          and circ.get("gadget", {}).get("locks")
+          and r_again.get("verdict") == r_plain.get("verdict")
+          and r_again.get("core") == r_plain.get("core"))
+    return {"fork": "AXIS_LOCK", "pass": bool(ok),
+            "result": {"tied_locks": r_tied.get("locks"),
+                       "ranked_locks": r_rank.get("locks"),
+                       "carried": circ.get("gadget", {}).get("locks"),
+                       "verdict_with_lock": r_again.get("verdict"),
+                       "verdict_without": r_plain.get("verdict")}}
+
+
 def norm_vs_record_fork() -> Dict[str, Any]:
     """規範と記録は、極性が逆でも矛盾ではない — その枝が実際に動くこと。
 
@@ -2561,12 +2743,16 @@ def a_covenant_binds_the_exchange_not_the_wording_fork() -> Dict[str, Any]:
     forbidden = reg.check("実装言語はJavaScriptです。")
     off = reg.check("テストはJestで書きます。", asked="テストはどう書きますか。")
 
-    ok = (terse["verdict"] == "BROKEN"
+    # 2026-08-21 の再張り: required の字面欠落は advisory(遮断しない)。
+    # この fork の docstring 自身が言っていた通り「所見は提案であって
+    # 判定ではない」— 実地試験(誤検知だらけ)が法を先に直させた。
+    ok = (terse["verdict"] == "KEPT"
+          and len(terse.get("advisories", [])) == 1
           # without the question, the same reply is out of scope — which is
           # why `asked` exists and why the fork pins both readings
-          and blind["verdict"] == "KEPT"
-          and terse["violations"][0]["required_missing"] == ["TypeScript"]
-          and terse["violations"][0]["inject"] == quote
+          and blind["verdict"] == "KEPT" and not blind.get("advisories")
+          and terse["advisories"][0]["required_missing"] == ["TypeScript"]
+          and terse["advisories"][0]["inject"] == quote
           and kept["verdict"] == "KEPT"
           and forbidden["verdict"] == "BROKEN"
           and forbidden["violations"][0]["forbidden_used"] == ["JavaScript"]
@@ -2581,7 +2767,7 @@ def a_covenant_binds_the_exchange_not_the_wording_fork() -> Dict[str, Any]:
             "compliant": kept["verdict"],
             "forbidden_term": forbidden["verdict"],
             "out_of_scope": off["verdict"],
-            "inject_is_verbatim": terse["violations"][0]["inject"] == quote,
+            "inject_is_verbatim": terse["advisories"][0]["inject"] == quote,
         },
     }
 
@@ -2628,10 +2814,14 @@ def the_store_infers_the_prohibition_nobody_wrote_fork() -> Dict[str, Any]:
     inferred = reg.check("この刑は罰金である。", asked="刑について", store=store)
     subs = [s for v in inferred["violations"] for s in v.get("substituted", [])]
 
+    # 2026-08-21 の再張り: 手登録だけの台帳は欠落を advisory としか言えない
+    # (字面の required は遮断しない)。店が置換の実使用を示して初めて
+    # violation になる — 推論が証拠を持ち込む、がこの fork の芯のまま。
     ok = ("罰金" in sibs                      # the alternative is recovered
           and "規定" not in sibs               # the hub is not
-          and listed["verdict"] == "BROKEN"    # the register knows it is wrong
-          and not [s for v in listed["violations"] for s in v.get("substituted", [])]
+          and listed["verdict"] == "KEPT"
+          and len(listed.get("advisories", [])) == 1
+          and inferred["verdict"] == "BROKEN"  # substitution is evidence
           and any(s["used"] == "罰金" and s["instead_of"] == "拘禁刑" for s in subs))
     return {
         "experiment": "cross_geometry",
@@ -2640,8 +2830,8 @@ def the_store_infers_the_prohibition_nobody_wrote_fork() -> Dict[str, Any]:
         "result": {
             "siblings_of_拘禁刑": sibs,
             "hub_excluded": "規定" not in sibs,
-            "registered_only_names_substitution": bool(
-                [s for v in listed["violations"] for s in v.get("substituted", [])]),
+            "registered_only_advises": [listed["verdict"],
+                                        len(listed.get("advisories", []))],
             "inferred_substitutions": subs[:3],
         },
     }
@@ -4626,6 +4816,316 @@ def explanation_never_on_answer_path_fork() -> Dict[str, Any]:
     }
 
 
+def covenant_lifecycle_fork() -> Dict[str, Any]:
+    """約束は生まれ、執行され、退役する — 削除はされない(fork 173本目)。
+
+    実地試験(Claude Code フック7個、別マシン)が名指しした限界への答えを
+    性質として釘打つ。①誕生: 指示文からの抽出は閉じた規則(ja+en)だけで、
+    読めない指示からは何も作らない — 推測は約束を捏造する。②執行:
+    「絵文字を使わないで」は語「絵文字」ではなく 🎉 そのもの(文字クラス)を
+    捕まえる — 字面照合の限界2の修理。ただしクラス表は閉じた1項目
+    (絵文字/emoji)のみ: 「日本語を使わないで」を文字クラスにすると
+    日本語の返答すべてが違反になる。③退役: 「もういい」で check と
+    fading から外れるが、席は残る — 削除すると「かつて約束があった」
+    履歴ごと消え、風化の測定が嘘になる(閉鎖は追記、GAP台帳と同じ線)。
+    """
+    from .covenant import Covenant, Register, extract_covenants
+
+    # ① 誕生 — 読める指示だけが約束になる
+    born = extract_covenants(
+        "絵文字を使わないで。Never use TODO comments.", turn=1)
+    vague = extract_covenants("なんかいい感じでよろしく。", turn=1)
+
+    reg = Register()
+    for c in born:
+        reg.add(Covenant(name=c["name"], quote=c["quote"],
+                         forbids=list(c.get("forbids", [])),
+                         requires=list(c.get("requires", [])),
+                         said_at_turn=1))
+
+    # ② 執行 — 語ではなく文字を捕まえ、素の文は素通し
+    hit = reg.check("できました🎉")
+    glyph = any(v.get("class_hits") for v in hit["violations"])
+    clean = reg.check("できました。")
+
+    # ③ 退役 — check からは消え、席と履歴は残る
+    n_before = len(reg.covenants)
+    emoji_name = next(c.name for c in reg.covenants if "絵文字" in c.forbids)
+    reg.retire(emoji_name, quote="もう絵文字使っていいよ", turn=5)
+    after = reg.check("できました🎉")
+    emoji_still = any("絵文字" == v.get("covenant") or v.get("class_hits")
+                      for v in after["violations"])
+    seat_kept = (len(reg.covenants) == n_before
+                 and any(c.name == emoji_name and c.retired
+                         for c in reg.covenants))
+    history_kept = emoji_name in reg.history and len(reg.history[emoji_name]) > 0
+    faded = reg.fading(window=1, min_history=1)
+    retired_out_of_fading = emoji_name not in [
+        r["covenant"] for r in faded.get("fading", []) + faded.get("stable", [])]
+
+    ok = (len(born) == 2 and vague == []
+          and hit["verdict"] == "BROKEN" and glyph
+          and clean["verdict"] == "KEPT"
+          and after["verdict"] == "KEPT" and not emoji_still
+          and seat_kept and history_kept and retired_out_of_fading)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "COVENANT_LIFECYCLE",
+        "pass": bool(ok),
+        "result": {"born": len(born), "vague": len(vague),
+                   "glyph_caught": glyph,
+                   "after_retire": after["verdict"],
+                   "seat_kept": seat_kept, "history_kept": history_kept,
+                   "retired_out_of_fading": retired_out_of_fading},
+    }
+
+
+def a_promise_to_act_needs_a_witness_fork() -> Dict[str, Any]:
+    """行為の約束は証人で見る・候補は隔離席から採用される(fork 174本目)。
+
+    ①「必ずpytestを実行して」は返答の字面では執行できない(実地試験:
+    required_missing は誤検知だらけ)。やったの根拠は tool 実行の記録 —
+    attest_claim の CLAIM_UNWITNESSED と同じ線。境界より前の証人は
+    数えない(ターンを跨いだ「やった」は別のターンの証人)。判定は
+    三値で、requires の無い台帳は NO_REQUIREMENTS(証人ゼロを違反と
+    呼ばない)。②閉じた抽出規則の外は規則で追いかけず、候補は隔離席:
+    shadow で照合され verdict に混ざらず、adopt して初めて執行に入る
+    (淘汰は門)。③登録時に店の siblings を焼き込めば、書かれていない
+    禁止が字面の速さで捕まり、推論由来は弱い型(inferred)で報じられる。
+    """
+    from .covenant import Covenant, Register, bake_inferred
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+
+    # ① 証人
+    reg = Register()
+    reg.add(Covenant(name="t", quote="必ずpytestを実行して",
+                     requires=["pytest"]))
+    a0 = reg.audit()["verdict"]
+    # 2026-08-21 の再張り(PREREG3): 終了状態を伴わない実行は
+    # WITNESSED ではなく UNVERIFIED — 黙って合格に格上げしない。
+    reg.witness("Bash", detail="python3 -m pytest -q")
+    a1 = reg.audit()["verdict"]
+    reg.witness("Bash", detail="python3 -m pytest -q", ok=True)
+    a1b = reg.audit()["verdict"]
+    reg.boundary()
+    a2 = reg.audit()["verdict"]
+    empty = Register().audit()["verdict"]
+
+    # ② 隔離席
+    q = Register()
+    q.propose(Covenant(name="c", quote="!は控えめに", forbids=["!"]))
+    sh = q.check("できた!")
+    q.adopt("c")
+    en = q.check("できた!")
+
+    # ③ 焼き込み
+    st = CrossStore()
+    ingest_documents(st, [Document(source="刑法", text=(
+        "甲条は拘禁刑を科する。甲条は規定である。"
+        "乙条は罰金を科する。乙条は規定である。"
+        "丙条は拘禁刑を科する。丙条は罰金を科する。"
+        "丁条は拘禁刑を科する。丁条は罰金を科する。"))])
+    c3 = Covenant(name="k", quote="拘禁刑の話はしないで", forbids=["拘禁刑"])
+    bake_inferred(c3, st, store_name="fixture")
+    r3 = Register()
+    r3.add(c3)
+    hit = r3.check("この刑は罰金である。")
+    inf = [u for v in hit["violations"]
+           for u in v.get("inferred_forbidden_used", [])]
+
+    ok = (a0 == "REQUIRED_UNWITNESSED"
+          and a1 == "REQUIRED_WITNESSED_UNVERIFIED"
+          and a1b == "REQUIRED_WITNESSED"
+          and a2 == "REQUIRED_UNWITNESSED" and empty == "NO_REQUIREMENTS"
+          and sh["verdict"] == "KEPT"
+          and len(sh.get("shadow_violations", [])) == 1
+          and en["verdict"] == "BROKEN"
+          and "罰金" in c3.inferred_forbids and "罰金" in inf)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_PROMISE_TO_ACT_NEEDS_A_WITNESS",
+        "pass": bool(ok),
+        "result": {"audit": [a0, a1, a1b, a2, empty],
+                   "quarantine": [sh["verdict"], en["verdict"]],
+                   "baked": c3.inferred_forbids, "inferred_hit": inf},
+    }
+
+
+def a_witness_must_have_been_invoked_fork() -> Dict[str, Any]:
+    """呼ばれた道具だけが証人・推薦は採用ではない・推論は焼き直せる
+    (fork 175本目)。
+
+    ①部分文字列だけで見ると `echo pytest` が pytest の証人になる。
+    区画の先頭語(と閉じた包み表・`-m`)だけを INVOKED と認め、字の中に
+    あるだけの語は MENTIONED として別に報じる — 黙って捨てず、黙って
+    数えもしない。②終了状態は三値: 落ちた実行は「やっていない」とは
+    別の知らせ(REQUIRED_FAILED)、分からない実行はどちらでもない
+    (UNVERIFIED)。不在と否定を混ぜない。同ターンに通った回と落ちた回が
+    あれば落ちた回を報せる(記録順に依らず、証拠を隠さない)。
+    ③隔離席の候補は**推薦されるだけ**で status は candidate のまま —
+    自動採用は「過検出の番人は切られる」の罠そのもの。④焼き込みは
+    stat だけで陳腐化が分かり(check の速い道で店を読まないため)、
+    焼き直しのときだけ店を1回読む。店がもう示さない語は落とす。
+    """
+    from .covenant import (Covenant, Register, bake_inferred,
+                           invoked_programs)
+    from .cross_store import CrossStore
+    from .document_ingest import Document, ingest_documents
+
+    # ① ふりと実走
+    fake = Register()
+    fake.add(Covenant(name="t", quote="必ずpytestを実行して",
+                      requires=["pytest"]))
+    fake.witness("Bash", detail="echo pytest")
+    f = fake.audit()
+
+    real = Register()
+    real.add(Covenant(name="t", quote="必ずpytestを実行して",
+                      requires=["pytest"]))
+    real.witness("Bash", detail="python3 -m pytest -q", ok=True)
+    r_ok = real.audit()
+
+    # ② 三値
+    unk = Register()
+    unk.add(Covenant(name="t", quote="q", requires=["pytest"]))
+    unk.witness("Bash", detail="pytest -q")
+    bad = Register()
+    bad.add(Covenant(name="t", quote="q", requires=["pytest"]))
+    bad.witness("Bash", detail="pytest -q", ok=False)
+
+    # ③ 推薦は採用ではない
+    q = Register()
+    q.propose(Covenant(name="c", quote="!控えめに", forbids=["!"]))
+    for t in ["対応します", "できました", "終わりました", "確認します",
+              "直しました!", "了解です", "進めます", "完了です"]:
+        q.check(t)
+    rev = q.promotion_review()
+    still_candidate = all(c.status == "candidate" for c in q.covenants)
+
+    # ④ 焼き直し
+    import tempfile
+
+    tmp = Path(tempfile.gettempdir()) / "fork175_store.json"
+    st = CrossStore()
+    ingest_documents(st, [Document(source="刑法", text=(
+        "甲条は拘禁刑を科する。甲条は規定である。"
+        "乙条は罰金を科する。乙条は規定である。"
+        "丙条は拘禁刑を科する。丙条は罰金を科する。"
+        "丁条は拘禁刑を科する。丁条は罰金を科する。"))])
+    st.save(tmp)
+    reg = Register()
+    c = Covenant(name="k", quote="拘禁刑の話はしないで", forbids=["拘禁刑"])
+    reg.add(c)
+    bake_inferred(c, st, store_name=tmp.name, store_path=tmp)
+    first = list(c.inferred_forbids)
+    fresh = reg.stale(tmp)["verdict"]
+    ingest_documents(st, [Document(source="刑法2", text=(
+        "戊条は拘禁刑を科する。戊条は科料を科する。"
+        "己条は拘禁刑を科する。己条は科料を科する。"
+        "庚条は拘禁刑を科する。庚条は科料を科する。"))])
+    st.save(tmp)
+    stale = reg.stale(tmp)["verdict"]
+    reg.rebake(st, store_path=tmp)
+    after = list(c.inferred_forbids)
+
+    ok = (f["verdict"] == "REQUIRED_UNWITNESSED"
+          and f["rows"][0]["match"] == "MENTIONED"
+          and r_ok["verdict"] == "REQUIRED_WITNESSED"
+          and unk.audit()["verdict"] == "REQUIRED_WITNESSED_UNVERIFIED"
+          and bad.audit()["verdict"] == "REQUIRED_FAILED"
+          and invoked_programs("echo pytest") == ["echo"]
+          and rev["promotable"] == ["c"] and still_candidate
+          and fresh == "FRESH" and stale == "STALE"
+          and "科料" in after and "罰金" in after)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_WITNESS_MUST_HAVE_BEEN_INVOKED",
+        "pass": bool(ok),
+        "result": {"pretend": [f["verdict"], f["rows"][0]["match"]],
+                   "real": r_ok["verdict"],
+                   "three_valued": [unk.audit()["verdict"],
+                                    bad.audit()["verdict"]],
+                   "promotion": [rev["promotable"], still_candidate],
+                   "rebake": [first, after, fresh, stale]},
+    }
+
+
+def a_rule_a_regex_read_is_a_candidate_fork() -> Dict[str, Any]:
+    """規則が読んだ約束は候補であって執行ではない(fork 176本目)。
+
+    **なぜこの性質が要るか。** 抽出は閉じた正規表現で、読めない文からは
+    何も立てない。それは推測しないための線で、正しい。だが「読めた」と
+    「正しく読めた」は別で、そこを測ったのが 2026-08-21: 人が実際に書く
+    指示20本のうち正しく読めたのは実質3本、13本は何も立たず、**4本は
+    間違った語を捕まえた**。`No new dependencies` は forbids=["new"] に
+    なり、返答「I added a new helper function.」を **BROKEN(誤遮断)**に
+    した(実測)。誤遮断された利用者は番人を切る — そうなれば正しく
+    読めた3本も一緒に死ぬ。
+
+    直し方が**規則を足すこと**でないのは既に測ってある(否定 645/661 が
+    語彙の外)。直すのは執行の側で、この fork が釘打つのは三点:
+    ①規則が読んだ約束は隔離席に入り遮断しない、②ただし **shadow に出て
+    見えなくなっていない**(誤遮断を「見えなくする」ことで消すのは番人を
+    壊すのと同じ)、③人が明示した約束は執行のまま — 利用者自身の行為を
+    番人が勝手に弱めてよい理由はない。採用は門(adopt)で、出所は採用後も
+    台帳に残る(誰が何を根拠に執行を許したかを消すと監査が嘘になる)。
+    """
+    from .covenant import Covenant, Register, extract_covenants
+
+    reply = "I added a new helper function."
+
+    # ① 規則が読んだ約束 — 出所は候補自身が持つ(配管に依らない)
+    cands = extract_covenants("No new dependencies", turn=1)
+    read_the_wrong_word = cands and cands[0]["forbids"] == ["new"]
+    tagged = all(c.get("origin") == "regex" for c in cands)
+
+    quarantined = Register()
+    for c in cands:
+        quarantined.propose(Covenant(
+            name=c["name"], quote=c["quote"], forbids=list(c["forbids"]),
+            requires=list(c["requires"]), origin=c["origin"]))
+    q = quarantined.check(reply)
+
+    # ② 黙って捨てない — shadow に出て、何が発火したか名指されている
+    shadow_named = ([v.get("forbidden_used") for v in
+                     q.get("shadow_violations", [])] == [["new"]])
+
+    # ③ 人が明示した約束は執行のまま(origin は空)
+    explicit = Register()
+    explicit.add(Covenant(name="no-new-deps", quote="No new dependencies",
+                          forbids=["new"]))
+    e = explicit.check(reply)
+
+    # ④ 採用は門 — 通って初めて遮断に入る。出所は残る
+    before = quarantined.check(reply)["in_force"]
+    quarantined.adopt(cands[0]["name"])
+    after = quarantined.check(reply)
+    origin_kept = all(c.origin == "regex" for c in quarantined.covenants)
+
+    ok = (bool(read_the_wrong_word) and tagged
+          and q["verdict"] == "KEPT" and q["violations"] == []
+          and len(q.get("shadow_violations", [])) == 1 and shadow_named
+          and e["verdict"] == "BROKEN" and len(e["violations"]) == 1
+          and before == 0 and after["verdict"] == "BROKEN"
+          and after["in_force"] == 1
+          and not after.get("shadow_violations")
+          and origin_kept)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "A_RULE_A_REGEX_READ_IS_A_CANDIDATE",
+        "pass": bool(ok),
+        "result": {"misread": cands[0]["forbids"] if cands else [],
+                   "origin_tagged": tagged,
+                   "quarantined": [q["verdict"],
+                                   len(q.get("shadow_violations", []))],
+                   "shadow_named": shadow_named,
+                   "explicit_still_enforces": e["verdict"],
+                   "gate": [before, after["verdict"], after["in_force"]],
+                   "origin_kept_after_adopt": origin_kept},
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -4640,6 +5140,10 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         direction_invariance_fork(),
         reverse_unique_fork(),
         reverse_specific_fork(),
+        prover_three_outcomes_fork(),
+        attest_polarity_fork(),
+        transfer_reading_fork(),
+        axis_lock_fork(),
         norm_vs_record_fork(),
         quote_is_substring_fork(),
         read_at_shows_both_sides_fork(),
@@ -4709,6 +5213,10 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         promotion_pyramid_fork(),
         conversation_overflow_is_typed_fork(),
         conversation_speaker_attribution_fork(),
+        covenant_lifecycle_fork(),
+        a_promise_to_act_needs_a_witness_fork(),
+        a_witness_must_have_been_invoked_fork(),
+        a_rule_a_regex_read_is_a_candidate_fork(),
     ]
 
 

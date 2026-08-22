@@ -33,3 +33,7 @@ hf/space_static/verantyx.zip
 
 # Regenerated from the federation by export_view3d; 6MB artifact.
 viewer/view3d.json
+
+# 番人の分野コーパス実験(2026-08-21): 生成物は再現可能なので置かない
+experiments/guard/corpus/guard_store.json
+experiments/guard/corpus/_nonint_backup/

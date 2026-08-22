@@ -107,6 +107,101 @@ THRESHOLD = 0.30
 MIN_FACETS = 3
 
 
+#: 英語の否定は語の前に立つ。閉じた表 — 開いた賢さは持ち込まない。
+_EN_NEG = re.compile(r"\b(?:not|no|never|without|cannot|can't|doesn't|"
+                     r"does not|didn't|did not|isn't|is not|aren't|are not)\b",
+                     re.I)
+
+#: 共有の `polarity._JA_NEG_AFTER` は「〜していない」を覆うが、サ変の
+#: 辞書形否定「〜しない / 〜しません」を覆わない(実測: 「支給しない」が
+#: 素通りした)。共有側は取り込み経路(否定53,885件の実測履歴)に効くので
+#: 触らず、**主張を読む側にだけ**閉じた補足を置く。共有側の拡張は独自の
+#: 事前登録が要る。位置で読む点は同じ — 語の直後だけを見る。
+_JA_NEG_AFTER_SUPPL = re.compile(r"^し(?:ない|ません)(?![ぁ-ん])")
+
+
+def claim_polarity(sentence: str, terms: Sequence[str]) -> Dict[str, str]:
+    """主張側の極性: 語ごとに "+"/"-"。**位置で読む**(品詞ラベルは使わない)。
+
+    日本語は語の直後の接尾(polarity._JA_NEG_AFTER — 過去4回の失敗の後に
+    残った、唯一壊れていない読み方)。英語は同じ節の中の閉じた否定語。
+    明示的な否定が付いていない語は、断定文の中では "+" と読む —
+    detect_ja が非否定に対してしている読みと同じ。
+    """
+    from .polarity import _JA_NEG_AFTER, _standalone_index
+
+    text = sentence or ""
+    out: Dict[str, str] = {}
+    for t in terms:
+        i = _standalone_index(text, t)
+        if i < 0:
+            i = text.find(t)
+        if i < 0:
+            continue
+        tail = text[i + len(t):]
+        neg = bool(_JA_NEG_AFTER.match(tail)
+                   or _JA_NEG_AFTER_SUPPL.match(tail))
+        if not neg:
+            # 英語(または混在)は節内の否定語を見る。節の切れ目は句読点。
+            clause = re.split(r"[。．.!?;]", text)[0]
+            if _EN_NEG.search(clause) and re.search(r"[A-Za-z]", clause):
+                neg = True
+        out[t] = "-" if neg else "+"
+    return out
+
+
+def store_polarity(cross: Iterable[str], term: str) -> Optional[str]:
+    """店側の極性: aspect:value / aspect:not_value / ¬x のみを読む。
+
+    記録が無ければ None — **無いことを「肯定」と読まない**(不在と否定を
+    混ぜない)。ingest_polar_ja が実際に書く形式に合わせてある。
+    """
+    pos = neg = False
+    for f in cross:
+        if f == "\u00ac" + term or f.startswith("\u00ac" + term):
+            neg = True
+            continue
+        if ":" not in f:
+            continue
+        key, val = f.split(":", 1)
+        if val == term:
+            pos = True
+        elif val == "not_" + term:
+            neg = True
+    if pos and not neg:
+        return "+"
+    if neg and not pos:
+        return "-"
+    if pos and neg:
+        return "both"
+    return None
+
+
+def adjudicate_polarity(cross: Iterable[str], reports: Sequence["Report"]
+                        ) -> Dict[str, Any]:
+    """極性の裁定。三つの結果を混ぜない(証拠 > 判定不能 > 争点なし)。"""
+    cross = set(cross)
+    contradicted: List[Dict[str, Any]] = []
+    unjudged: List[Dict[str, Any]] = []
+    for r in reports:
+        pol = claim_polarity(r.sentence, r.linked)
+        for term, claim_pole in pol.items():
+            held = store_polarity(cross, term)
+            if held in ("+", "-") and held != claim_pole:
+                contradicted.append({
+                    "term": term, "claim": claim_pole, "corpus": held,
+                    "facet": next((f for f in cross
+                                   if f.endswith(":" + term)
+                                   or f.endswith(":not_" + term)), None),
+                    "sentence": r.sentence})
+            elif held is None and claim_pole == "-":
+                # 語は持つが極性は記録していない。支持率は肯定と否定を
+                # 同点にするので、その数字は主張できない。
+                unjudged.append({"term": term, "claim": "-",
+                                 "sentence": r.sentence})
+    return {"contradicted": contradicted, "unjudged": unjudged}
+
+
 def subject_coverage(store: Any, subject: str) -> Dict[str, Any]:
     """What the store has to judge this subject with, before judging.
 
@@ -169,6 +264,32 @@ def check_all(store: Any, subject: str, text: str) -> Dict[str, Any]:
     if not reps:
         return {"verdict": "UNKNOWN_EMPTY", "sentences": 0}
     sup = sum(r.support for r in reps) / len(reps)
+    # 極性の裁定(PREREGISTERED_2026-08-20_attest_polarity)。この経路は
+    # 漢字・カタカナの連しか見ないため、「支給する」と「支給しない」を
+    # 構成上 同点にしていた(実測 support 1.0 vs 1.0、二者独立に発見)。
+    pol = adjudicate_polarity(cov["cross"], reps)
+    if pol["contradicted"]:
+        return {
+            "verdict": "CONTRADICTED_BY_CORPUS",
+            "subject": subject, "held": "core", "facets": cov["facets"],
+            "sentences": len(reps), "support": round(sup, 3),
+            "contradictions": pol["contradicted"],
+            "note": "この主題について、店は反対の極を証拠として持つ — "
+                    "支持率ではなく極性が決めた。真偽の主張ではなく、"
+                    "この蔵書との不一致",
+            "reports": [r.as_dict() for r in reps],
+        }
+    if pol["unjudged"]:
+        return {
+            "verdict": "UNKNOWN_POLARITY_UNJUDGED",
+            "subject": subject, "held": "core", "facets": cov["facets"],
+            "sentences": len(reps), "support": round(sup, 3),
+            "unjudged": pol["unjudged"],
+            "note": "主張は否定を含むが、店はこの語の極性を記録していない。"
+                    "支持率は肯定と否定を同点にするので、この数字では"
+                    "判定できない — 黙って同点にしないための型付き拒否",
+            "reports": [r.as_dict() for r in reps],
+        }
     return {
         # The typed refusal is the point. A generation layer that gets
         # UNSUPPORTED back has been told something a fluent draft cannot

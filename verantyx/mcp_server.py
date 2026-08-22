@@ -50,12 +50,19 @@ from .module_ingest import DomainModuleQuarantine
 from .module_verify import verify_module
 
 
-def serve(store_path: str) -> int:
+def build(store_path: str):
+    """扉を全部registerした FastMCP を**走らせずに**返す。
+
+    2026-08-22: `serve` の中身をそのまま切り出しただけ(振る舞いは不変)。
+    切り出した理由は、CLI から同じ126扉に届かせるため — 扉ごとに CLI の
+    コマンドを書き写すと、二つの表面が必ずずれる。**扉は一つ、入口は
+    二つ**にする。SDK が無い環境では None を返す。
+    """
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
         print('MCP SDK not installed. Run:  pip install "mcp[cli]"')
-        return 2
+        return None
 
     path = Path(store_path)
     store = CrossStore.load(path) if path.is_file() else CrossStore()
@@ -996,6 +1003,140 @@ def serve(store_path: str) -> int:
                           ensure_ascii=False)
 
     @mcp.tool()
+    def propose_covenant(name: str, requires: str = "", forbids: str = "",
+                         topic: str = "", quote: str = "",
+                         turn: int = -1) -> str:
+        """Put a covenant CANDIDATE in quarantine. Meant for the LLM-handoff
+        path: closed extraction rules cannot read paraphrase (「絵文字は
+        控えめに」), and extending regexes never closes that gap (measured:
+        645/661 negations fell outside a 39-word vocabulary). So the model
+        may PROPOSE what it read; Vera shadow-checks the candidate on every
+        reply — violations appear as shadow_violations, never in the
+        verdict, and never block. adopt_covenant is the gate into
+        enforcement. Selection is a gate, not a merge."""
+        c = _Covenant(
+            name=name,
+            requires=[x.strip() for x in requires.split(",") if x.strip()],
+            forbids=[x.strip() for x in forbids.split(",") if x.strip()],
+            topic=[x.strip() for x in topic.split(",") if x.strip()],
+            said_at_turn=turn, quote=quote or name)
+        if not (c.forbids or c.requires):
+            return json.dumps({"verdict": "UNKNOWN_EMPTY_CANDIDATE"},
+                              ensure_ascii=False)
+        _register.propose(c)
+        _register.save(_cov_path)
+        return json.dumps({"verdict": "ANSWER", "candidate": c.as_dict()},
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def adopt_covenant(name: str, infer: bool = False) -> str:
+        """Adopt a quarantined candidate into enforcement — the gate.
+        With infer=True the store is read ONCE, here, and the siblings of
+        each listed term are baked in as inferred_forbids (the prohibition
+        nobody wrote: TypeScriptを使う catches JavaScript because the same
+        cores hold both). check() then reports inferred hits under their
+        own weaker type, at literal-match speed."""
+        from .covenant import bake_inferred as _bake
+
+        d = _register.adopt(name)
+        if d is None:
+            return json.dumps({"verdict": "UNKNOWN_NO_SUCH_CANDIDATE",
+                               "name": name}, ensure_ascii=False)
+        out = {"verdict": "ANSWER", "adopted": d}
+        if infer:
+            c = next(x for x in _register.covenants if x.name == name)
+            out["inference"] = _bake(c, store, store_name=path.name)
+            out["adopted"] = c.as_dict()
+        _register.save(_cov_path)
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def review_candidates(min_checks: int = 8,
+                          max_fire_rate: float = 0.5) -> str:
+        """Which quarantined candidates have earned adoption — a
+        RECOMMENDATION, never an adoption. Auto-adopting is the trap the
+        field named (an over-firing guard gets switched off), so the gate
+        stays with the caller. Criteria are pre-registered (PREREG3): under
+        min_checks in-scope checks abstains with UNKNOWN_TOO_FEW_CHECKS and
+        reports no rate; never fired is REFUSED_NEVER_FIRED (no evidence it
+        is needed); above max_fire_rate is REFUSED_OVERFIRING."""
+        return json.dumps(_register.promotion_review(
+            min_checks=min_checks, max_fire_rate=max_fire_rate),
+            ensure_ascii=False)
+
+    @mcp.tool()
+    def rebake_inference(dry_run: bool = False) -> str:
+        """Re-read the store ONCE and refresh baked inferred_forbids,
+        reporting what was added and what dropped. Inference is the
+        corpus's suggestion, not the user's words, so a term the store no
+        longer supports is dropped rather than kept. Covenants that were
+        never baked stay unbaked — the caller chose that. Staleness itself
+        is answered by stat alone (see the guard CLI's `stale`), because
+        check must never read the store: that is the 0.04s fast path the
+        hooks depend on."""
+        from .covenant import _store_fingerprint  # noqa: F401
+
+        out = _register.rebake(store, store_path=path, dry_run=dry_run)
+        if not dry_run and out.get("verdict") == "ANSWER":
+            _register.save(_cov_path)
+        return json.dumps(out, ensure_ascii=False)
+
+    @mcp.tool()
+    def audit_required(  # noqa: D401 — the ledger speaks
+    ) -> str:
+        """Required-side audit by WITNESS, not by wording. 「必ずテストを
+        実行して」 cannot be enforced by reading the reply — the field
+        deployment measured required_missing as mostly false positives.
+        The ground for 'it was done' is the tool-execution record
+        (same line as attest_claim's CLAIM_UNWITNESSED). Advisory only:
+        whether this turn NEEDED the execution is context this layer
+        cannot see, so it reports and never blocks. Two distinctions the
+        substring era lacked: `echo pytest` is MENTIONED, not INVOKED, and
+        only INVOKED counts; and a run that exited non-zero is
+        REQUIRED_FAILED, which is different news from never having run.
+        An execution with no exit status recorded is
+        REQUIRED_WITNESSED_UNVERIFIED — absence is not denial."""
+        return json.dumps(_register.audit(), ensure_ascii=False)
+
+    @mcp.tool()
+    def retire_covenant(name: str, quote: str = "", turn: int = -1) -> str:
+        """Retire a covenant — not delete it. 「もう絵文字使っていいよ」
+        releases the rule from check/fading, but what was promised, and
+        when and with what words it was released, stays in the ledger:
+        erasing it would make the audit lie. Found as a named limitation
+        of the first field deployment (2026-08-21): covenants survived
+        restarts but could never be taken back."""
+        r = _register.retire(name, quote=quote, turn=turn)
+        if r is None:
+            return json.dumps({"verdict": "UNKNOWN_NO_SUCH_COVENANT",
+                               "name": name}, ensure_ascii=False)
+        _register.save(_cov_path)
+        return json.dumps({"verdict": "ANSWER", "retired": r},
+                          ensure_ascii=False)
+
+    @mcp.tool()
+    def extract_covenants(text: str, turn: int = -1) -> str:
+        """Instruction text → covenant CANDIDATES, by closed surface rules
+        (ja: 〜を使わないで / 必ず〜して; en: never use X / always run X).
+        A sentence the rules cannot read yields nothing — no guessing,
+        because putting an LLM here would hand the drifting device the job
+        of writing its own leash.
+
+        These candidates carry origin="regex" and belong in
+        propose_covenant, NOT set_covenant. Measured 2026-08-21 over 20
+        instructions people actually write: 3 read correctly, 13 yielded
+        nothing, and 4 caught the wrong word — `No new dependencies` became
+        forbids=["new"] and blocked the reply "I added a new helper
+        function." Adding regexes does not close that gap (645/661
+        negations fall outside the vocabulary), so what changed is
+        enforcement: a rule a regex read is shadow-checked only, and
+        adopt_covenant remains the gate."""
+        from .covenant import extract_covenants as _extract
+
+        return json.dumps({"candidates": _extract(text, turn=turn)},
+                          ensure_ascii=False)
+
+    @mcp.tool()
     def check_reply(reply: str, asked: str = "") -> str:
         """Does this reply still honour what the user settled?
 
@@ -1812,6 +1953,109 @@ def serve(store_path: str) -> int:
 
         return json.dumps(_lookup(name), ensure_ascii=False, default=str)
 
+    @mcp.tool()
+    def vera_prove(lhs: str, rhs: str) -> str:
+        """Prove an equation, refute it with a counterexample, or refuse.
+
+        Three outcomes, never two — that division is the whole point:
+
+            PROVED    the rewriting kernel derived it (inventing the
+                      lemmas it needed), and Lean checked the claim
+                      independently. Carries the invented lemmas, the
+                      mathlib/core rules it CITED instead of inventing,
+                      and the Lean tactic that closed it
+            REFUTED   a finite ground model makes the two sides differ —
+                      the equation is false, and the **counterexample is
+                      named** so a reader can recompute it
+            REFUSED   this engine did not reach it. `needs` says what is
+                      missing. **Never read as false**: no counterexample
+                      was found, and absence is not negation
+
+        Terms are written in the closed signature (`vera_prove` with an
+        out-of-signature symbol answers UNKNOWN_ILL_TYPED and lists what
+        it holds): naturals 0/s/add/mul/monus, the boolean-valued le
+        (a ≤ b is the equation `le(a,b) = true`), lists nil/cons/app/
+        rev/len. Variables come from a closed table — a,b,c,n are
+        naturals, x,y,z,l,m are lists.
+
+            vera_prove("rev(app(x, y))", "app(rev(y), rev(x))")  -> PROVED
+            vera_prove("app(x, y)", "app(y, x)")                 -> REFUTED
+                                       x=[0], y=[1]
+
+        Measured 2026-08-20 (experiments/cross_energy_prover): 41 of 41
+        goals proved with no lemmas given, 7 of 7 false ones refuted with
+        counterexamples, every claim Lean-verified, unsound 0. The
+        invention gate killed 2,265 false candidates before any of them
+        could be promoted."""
+        from .prover import prove_equation as _prove
+
+        return json.dumps(_prove(lhs, rhs), ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_experience(state: str = "", limit: int = 20) -> str:
+        """The experience ledger, read-only: everything this system has
+        PROVED, REFUTED, failed at, refused, imported, or measured,
+        compiled from its scattered stores into nine evidence states —
+        CLAIM / EVIDENCE / GAP / FAILURE / COUNTEREXAMPLE / TRANSFER /
+        RULE / PROCEDURE / WITNESS. これは Memory ではなく経験のコン
+        パイル: 各行が出所ファイルを名指し、原本に辿れない行は台帳に
+        居られない。The stores themselves are never modified — this is
+        a view, not a merge (束ねない). Pass `state` to filter one
+        state; empty returns the counts and sources. Measured at birth
+        (2026-08-20): 1,509 rows from 27 sources, including 318
+        counterexamples that previously had no first-class home."""
+        from .experience import compile_view
+
+        v = compile_view()
+        if not state:
+            return json.dumps({k: v[k] for k in
+                               ("counts", "n_rows", "sources", "note")},
+                              ensure_ascii=False, default=str)
+        rows = [r for r in v["rows"] if r["state"] == state.upper()]
+        return json.dumps({"state": state.upper(), "total": len(rows),
+                           "rows": rows[:max(1, limit)]},
+                          ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_transfer() -> str:
+        """Which of this system's learned facts survived a change of
+        context, and which were bound to the one they were learned in.
+
+        The calibration step `transfer_outcomes` deliberately deferred
+        ("no calibration analysis ... those need real accumulated data to
+        be anything but a guess"), now that data exists. Measured
+        2026-08-20 across three local models: 9 observations fold into 3
+        facts — truncating input to 64 chars is HARMFUL in all three
+        (TRANSFERRED), while retry×3 and truncate-to-400 help only the
+        0.5B model (CONTEXT_BOUND).
+
+        The machine reports WHETHER a fact transferred, never WHY. A
+        dimension ("this is grounded in the task structure, so it should
+        transfer") is a human hypothesis and needs its own evidence; the
+        ledger carries hypotheses but does not invent them. A fact seen
+        in one context only is UNKNOWN_SINGLE_CONTEXT — no prediction —
+        and a dimension with too few observations returns
+        UNKNOWN_TOO_FEW_CONTEXTS rather than a number."""
+        from .transfer_reading import read as _read
+
+        return json.dumps(_read(), ensure_ascii=False, default=str)
+
+    @mcp.tool()
+    def vera_prove_sections(lhs: str, rhs: str) -> str:
+        """The stereo cross reading of a proof: derive from each section.
+
+        「複数の外に出ている断面から中心に向かってアクセスし、一致した
+        時に探索終了」 — each induction variable is a section, and each
+        one derives independently. What this buys is an oracle that needs
+        no answer key: if one section PROVES what another REFUTES, the
+        derivation depends on the order it was read, and that is a
+        soundness alarm rather than an answer. `conflict: true` should
+        never appear; `agree_proved` says how many sections reached the
+        same conclusion."""
+        from .prover import sections_agree as _sections
+
+        return json.dumps(_sections(lhs, rhs), ensure_ascii=False,
+                          default=str)
 
     @mcp.tool()
     def vera_explain(term: str) -> str:
@@ -1948,7 +2192,20 @@ def serve(store_path: str) -> int:
 
         It says "this corpus does not support that", NEVER "that is false".
         A subject the corpus never covered is unsupported and may be
-        perfectly true."""
+        perfectly true.
+
+        Polarity is judged separately from support, because support alone
+        cannot see it: this path reads kanji/katakana runs and Japanese
+        negation lives in the hiragana that follows them. Measured
+        2026-08-20 (found independently by a blind evaluator and by the
+        author): 「実費を支給する」 and 「実費を支給しない」 both scored
+        support 1.0 and both returned ANSWER. Now the corpus's own poles
+        decide: it answers CONTRADICTED_BY_CORPUS when the store holds the
+        opposite pole as evidence (naming the facet), and
+        UNKNOWN_POLARITY_UNJUDGED when the store holds the word but never
+        recorded its polarity — a refusal, because a support figure that
+        scores a claim and its negation identically cannot stand behind
+        either. fork 170 pins all three outcomes."""
         from .attest_llm import check_all
 
         return json.dumps(check_all(store, subject, text), ensure_ascii=False)
@@ -3306,5 +3563,171 @@ def serve(store_path: str) -> int:
         _save_tool_call_quarantine()
         return json.dumps({"ok": ok}, ensure_ascii=False)
 
+    #: CLI にしか無い機能へ IDE を届かせる橋(2026-08-22、PREREG9)。
+    #: **閉じた許可表**: 読むだけ・計算だけのものに限る。破壊的なもの
+    #: (forget)と外へ出るもの(push-store)と対話式(setup/wizard)は
+    #: 入れない — 扉は LLM が叩けるので、店を消す道と公開する道を
+    #: 開けてはいけない。取り込み系は既に扉がある(load_documents /
+    #: code_ingest / remember)ので写さない。
+    _CLI_ALLOWED = {"doctor", "lab", "lexicon", "self-audit", "simplify",
+                    "math", "stats", "placement", "audit"}
+
+    @mcp.tool()
+    def capability_index(query: str = "", limit: int = 12) -> str:
+        """**Ask this before building anything.** Does the capability
+        already exist here?
+
+        One search across every door, CLI command, module, fork, prereg and
+        result — derived from the source at call time, so it cannot go
+        stale the way a hand-written list does. With no query it returns
+        the counts.
+
+        It exists because this repository is 67,145 lines, 129 doors, 89
+        forks and 74 preregs: more than any context window holds, which is
+        why capabilities kept getting rebuilt. Ranking is term overlap
+        only, deterministic, no embeddings; a query that matches nothing
+        returns UNKNOWN_NOT_FOUND rather than the nearest name, because
+        telling someone a thing exists when it does not costs more than
+        rebuilding it.
+        """
+        from .index import build, search
+
+        if not query.strip():
+            idx = build()
+            return json.dumps({"verdict": "ANSWER", "counts": idx["counts"],
+                               "total": idx["total"]}, ensure_ascii=False)
+        return json.dumps(search(query, limit=limit), ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_doctor() -> str:
+        """この機械で今、保証が成り立つかを実演して答える。
+
+        番人(G1〜G4)・単体の装置(S1〜S4)・配線(WIRED/PARTIAL/
+        NOT_WIRED)。保証が壊れていれば BROKEN、配線だけなら DEGRADED。
+        IDE はこれ一つで健康を描ける。
+        """
+        from .doctor import full_doctor
+
+        return json.dumps(full_doctor(), ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_cli(command: str, args_json: str = "[]") -> str:
+        """CLI にしか無い機能を IDE から使う橋(閉じた許可表つき)。
+
+        扉ごとに CLI を書き写すと二つの表面が必ずずれるので、写さずに
+        呼ぶ。許可表は読むだけ・計算だけ: doctor / lab / lexicon /
+        self-audit / simplify / math / stats / placement / audit。
+        店を消すもの・外へ出るもの・対話式のものは**入れない**。
+        """
+        import subprocess
+        import sys as _sys
+
+        if command not in _CLI_ALLOWED:
+            return json.dumps({"verdict": "UNKNOWN_NOT_ALLOWED",
+                               "command": command,
+                               "allowed": sorted(_CLI_ALLOWED),
+                               "note": "破壊的・公開・対話式の命令は橋に"
+                                       "載せない"}, ensure_ascii=False)
+        try:
+            extra = json.loads(args_json or "[]")
+            extra = [str(x) for x in (extra if isinstance(extra, list)
+                                      else [extra])]
+        except Exception:
+            return json.dumps({"verdict": "UNKNOWN_BAD_ARGS"},
+                              ensure_ascii=False)
+        head = ([_sys.executable] if getattr(_sys, "frozen", False)
+                else [_sys.executable, "-m", "verantyx.cli"])
+        r = subprocess.run(head + ["--store", str(path), command] + extra,
+                           capture_output=True, text=True, timeout=1800)
+        try:
+            return json.dumps({"verdict": "ANSWER", "command": command,
+                               "result": json.loads(r.stdout)},
+                              ensure_ascii=False)
+        except Exception:
+            return json.dumps({"verdict": "ANSWER", "command": command,
+                               "stdout": r.stdout[-4000:],
+                               "stderr": r.stderr[-500:]},
+                              ensure_ascii=False)
+
+    @mcp.tool()
+    def pending_decisions(limit: int = 20) -> str:
+        """人の判断を待っているものを、**1つの窓**にまとめて返す。
+
+        欠けを隠さずに見せるための読むだけの扉(2026-08-22、PREREG8)。
+        待ち行列は既に22本の扉として在る — ここは**新しい待ち行列を
+        作らない**。数えたものは全部、既存の扉から来る(別に持つと必ず
+        ずれる)。閉じ方(どの扉を叩けばよいか)も一緒に返す。
+
+        自動で埋めにいく経路も既に在る(`heartbeat(cognition_mode=
+        "sleep")` が欠けの取得を試み、`propose_web_evidence` が
+        ウェブ抜粋を逐語で隔離する)。**装置自身は決して取りに行かない** —
+        提案は隔離席に入り、採用は人の行為のまま。オフラインの決定論は
+        そのために守られる。
+        """
+        def _count(fn, *a):
+            try:
+                v = json.loads(fn(*a))
+            except Exception as e:              # noqa: BLE001
+                return None, repr(e)
+            if isinstance(v, list):
+                return len(v), v[:3]
+            if isinstance(v, dict):
+                for key in ("pending", "rows", "gaps", "list", "items",
+                            "candidates", "modules"):
+                    if isinstance(v.get(key), list):
+                        return len(v[key]), v[key][:3]
+                return (0, v) if not v else (len(v), v)
+            return 0, v
+
+        queues = [
+            ("ai_facts", list_pending_ai_facts,
+             ["accept_ai_fact", "reject_ai_fact"]),
+            ("tool_calls", list_pending_tool_calls,
+             ["accept_tool_call", "reject_tool_call"]),
+            ("domain_modules", list_pending_domain_modules,
+             ["accept_domain_module", "reject_domain_module"]),
+            ("capacity_limits", list_pending_capacity_limits,
+             ["accept_capacity_limit", "reject_capacity_limit"]),
+            ("pack_verdicts", list_pending_pack_verdicts,
+             ["accept_pack_verdict", "reject_pack_verdict"]),
+            ("covenant_candidates", review_candidates,
+             ["adopt_covenant", "retire_covenant"]),
+            ("gaps", list_gaps, ["what_would_close", "resolve_gap"]),
+        ]
+        rows = []
+        total = 0
+        for name, fn, closers in queues:
+            n, sample = _count(fn)
+            if n is None:
+                rows.append({"kind": name, "waiting": "UNKNOWN",
+                             "error": sample, "close_with": closers})
+                continue
+            total += n
+            rows.append({"kind": name, "waiting": n,
+                         "close_with": closers,
+                         "sample": sample if n else []})
+        rows.sort(key=lambda r: (r["kind"],))
+        return json.dumps({
+            "verdict": "ANSWER",
+            "waiting_total": total,
+            "queues": rows,
+            "acquire_modes": {
+                "manual": "what_would_close(query) が、足りない文書を名指す",
+                "assisted": "propose_web_evidence(text, source) — 外で拾った"
+                            "抜粋を逐語で隔離。採用は人",
+                "autonomous": 'heartbeat(cognition_mode="sleep") — 欠けの'
+                              "取得を試みる。結果はやはり隔離席へ",
+            },
+            "note": "read-only: this window holds no state of its own; "
+                    "every number here comes from the queue that owns it",
+        }, ensure_ascii=False)
+
+    return mcp
+
+
+def serve(store_path: str) -> int:
+    mcp = build(store_path)
+    if mcp is None:
+        return 2
     mcp.run()
     return 0
