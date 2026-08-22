@@ -1067,6 +1067,12 @@ def cmd_guard(args) -> int:
                           turn=int(payload.get("turn", -1)),
                           ok=None if _ok is None else bool(_ok))
         reg.save(cov_path)
+    elif op == "prune":
+        # 台帳を有界に。**消さず書庫へ移す**(PREREG9)。
+        out = reg.prune(path=cov_path,
+                        max_history=int(payload.get("max_history", 200)),
+                        max_live=int(payload.get("max_live", 300)))
+        reg.save(cov_path)
     elif op == "promote":
         # 推薦だけ — 採用は adopt(門)のまま。保存も要らない。
         out = reg.promotion_review(
@@ -1233,7 +1239,7 @@ def main(argv: Optional[list] = None) -> int:
                    choices=["extract", "set", "check", "fading", "retire", "list",
                             "propose", "adopt", "witness", "boundary", "audit",
                             "promote", "stale", "rebake",
-                            "doctor"])
+                            "doctor", "prune"])
     p.set_defaults(fn=cmd_guard)
 
     p = sub.add_parser(

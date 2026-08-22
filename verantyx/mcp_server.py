@@ -3563,6 +3563,66 @@ def build(store_path: str):
         _save_tool_call_quarantine()
         return json.dumps({"ok": ok}, ensure_ascii=False)
 
+    #: CLI にしか無い機能へ IDE を届かせる橋(2026-08-22、PREREG9)。
+    #: **閉じた許可表**: 読むだけ・計算だけのものに限る。破壊的なもの
+    #: (forget)と外へ出るもの(push-store)と対話式(setup/wizard)は
+    #: 入れない — 扉は LLM が叩けるので、店を消す道と公開する道を
+    #: 開けてはいけない。取り込み系は既に扉がある(load_documents /
+    #: code_ingest / remember)ので写さない。
+    _CLI_ALLOWED = {"doctor", "lab", "lexicon", "self-audit", "simplify",
+                    "math", "stats", "placement", "audit"}
+
+    @mcp.tool()
+    def vera_doctor() -> str:
+        """この機械で今、保証が成り立つかを実演して答える。
+
+        番人(G1〜G4)・単体の装置(S1〜S4)・配線(WIRED/PARTIAL/
+        NOT_WIRED)。保証が壊れていれば BROKEN、配線だけなら DEGRADED。
+        IDE はこれ一つで健康を描ける。
+        """
+        from .doctor import full_doctor
+
+        return json.dumps(full_doctor(), ensure_ascii=False)
+
+    @mcp.tool()
+    def vera_cli(command: str, args_json: str = "[]") -> str:
+        """CLI にしか無い機能を IDE から使う橋(閉じた許可表つき)。
+
+        扉ごとに CLI を書き写すと二つの表面が必ずずれるので、写さずに
+        呼ぶ。許可表は読むだけ・計算だけ: doctor / lab / lexicon /
+        self-audit / simplify / math / stats / placement / audit。
+        店を消すもの・外へ出るもの・対話式のものは**入れない**。
+        """
+        import subprocess
+        import sys as _sys
+
+        if command not in _CLI_ALLOWED:
+            return json.dumps({"verdict": "UNKNOWN_NOT_ALLOWED",
+                               "command": command,
+                               "allowed": sorted(_CLI_ALLOWED),
+                               "note": "破壊的・公開・対話式の命令は橋に"
+                                       "載せない"}, ensure_ascii=False)
+        try:
+            extra = json.loads(args_json or "[]")
+            extra = [str(x) for x in (extra if isinstance(extra, list)
+                                      else [extra])]
+        except Exception:
+            return json.dumps({"verdict": "UNKNOWN_BAD_ARGS"},
+                              ensure_ascii=False)
+        head = ([_sys.executable] if getattr(_sys, "frozen", False)
+                else [_sys.executable, "-m", "verantyx.cli"])
+        r = subprocess.run(head + ["--store", str(path), command] + extra,
+                           capture_output=True, text=True, timeout=1800)
+        try:
+            return json.dumps({"verdict": "ANSWER", "command": command,
+                               "result": json.loads(r.stdout)},
+                              ensure_ascii=False)
+        except Exception:
+            return json.dumps({"verdict": "ANSWER", "command": command,
+                               "stdout": r.stdout[-4000:],
+                               "stderr": r.stderr[-500:]},
+                              ensure_ascii=False)
+
     @mcp.tool()
     def pending_decisions(limit: int = 20) -> str:
         """人の判断を待っているものを、**1つの窓**にまとめて返す。

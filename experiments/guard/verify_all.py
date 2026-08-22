@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 CONFIRMATIONS = ["run_confirm.py", "run_confirm2.py", "run_confirm3.py",
                  "run_confirm_lang.py", "run_confirm4.py",
-                 "run_confirm5.py", "run_confirm6.py", "run_confirm7.py", "run_confirm8.py"]
+                 "run_confirm5.py", "run_confirm6.py", "run_confirm7.py", "run_confirm8.py", "run_confirm9.py"]
 
 
 def main() -> int:

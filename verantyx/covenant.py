@@ -307,6 +307,9 @@ class Register:
     #: audit は最後の境界以降だけを数える(ターンを跨いだ「やった」は
     #: 別のターンの証人)。
     witnesses: List[Dict[str, Any]] = field(default_factory=list)
+    #: 間引きで落とした履歴の合計(2026-08-22)。行は消えても**数は消えない**
+    #: — 「照合した回数」「守れた回数」は監査の材料なので畳んで残す。
+    history_totals: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
     def add(self, c: Covenant) -> Covenant:
         self.covenants.append(c)
@@ -667,6 +670,83 @@ class Register:
                 return c.as_dict()
         return None
 
+    def prune(self, path: Any = None, max_history: int = 200,
+              max_live: int = 300) -> Dict[str, Any]:
+        """台帳を有界にする。**消さない — 書庫へ移す。**
+
+        月単位で使うと候補は数千に達しうる(段4以降、読めた指示は全部
+        席に着く)。だが削除は台帳の死で、「かつて何があったか」を消すと
+        監査が嘘になる。だから二段:
+
+        ①履歴は末尾 ``max_history`` 件だけ生かし、**落とした分は合計に
+        畳む**(照合回数と守れた回数の総数は残るので、数が消えない)。
+        ②生きた席が ``max_live`` を超えたら、**退役済み → 一度も発火して
+        いない候補**の順に append-only の書庫へ移す。書庫を読めば必ず
+        見つかる。
+
+        **人が採用した約束(adopted)は決して移さない** — 利用者の言葉を
+        こちらの都合で棚から降ろすことはしない。
+        """
+        moved: List[Dict[str, Any]] = []
+        trimmed = 0
+        for name, h in list(self.history.items()):
+            if len(h) > max_history:
+                drop = h[:-max_history]
+                t = self.history_totals.setdefault(
+                    name, {"checked": 0, "kept": 0})
+                t["checked"] += len(drop)
+                t["kept"] += sum(1 for k in drop if k)
+                self.history[name] = h[-max_history:]
+                trimmed += len(drop)
+
+        live = [c for c in self.covenants]
+        if len(live) > max_live:
+            # 移す順: 退役済み → 発火0の候補。adopted は対象外。
+            def _rank(c: Covenant) -> tuple:
+                fired = sum(1 for k in (self.history.get(c.name) or [])
+                            if not k)
+                fired += (self.history_totals.get(c.name, {}).get("checked", 0)
+                          - self.history_totals.get(c.name, {}).get("kept", 0))
+                if c.retired:
+                    return (0, fired, c.name)
+                if c.status == "candidate":
+                    return (1, fired, c.name)
+                return (2, fired, c.name)      # adopted は最後 = 移さない
+
+            order = sorted(self.covenants, key=_rank)
+            need = len(self.covenants) - max_live
+            for c in order:
+                if need <= 0:
+                    break
+                if not c.retired and c.status == "adopted":
+                    break                      # ここから先は利用者の言葉
+                moved.append({**c.as_dict(),
+                              "archived_reason": ("retired" if c.retired
+                                                  else "never_adopted"),
+                              "history_totals":
+                                  self.history_totals.get(c.name),
+                              "history_len": len(
+                                  self.history.get(c.name) or [])})
+                self.covenants.remove(c)
+                self.history.pop(c.name, None)
+                need -= 1
+
+        archived_to = ""
+        if moved and path is not None:
+            arch = Path(path).with_suffix(".archive.jsonl")
+            with arch.open("a", encoding="utf-8") as fh:
+                for row in moved:
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            archived_to = str(arch)
+        return {"verdict": "ANSWER", "history_trimmed": trimmed,
+                "archived": len(moved), "archive": archived_to,
+                "live_covenants": len(self.covenants),
+                "adopted_kept": len([c for c in self.covenants
+                                     if c.status == "adopted"
+                                     and not c.retired]),
+                "note": "nothing is deleted: trimmed history survives as "
+                        "totals, moved covenants survive in the archive"}
+
     def save(self, path: Path) -> Dict[str, Any]:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         # 履歴も一緒に置く — 凍結バイナリの1回呼び(guard CLI)では
@@ -674,6 +754,7 @@ class Register:
         Path(path).write_text(
             json.dumps({"covenants": [c.as_dict() for c in self.covenants],
                         "history": self.history,
+                        "history_totals": self.history_totals,
                         "witnesses": self.witnesses},
                        ensure_ascii=False), encoding="utf-8")
         return {"verdict": "ANSWER", "path": str(path),
@@ -691,6 +772,8 @@ class Register:
                 rows = data.get("covenants", [])
                 hist = data.get("history", {})
                 r.witnesses = list(data.get("witnesses", []))
+                r.history_totals = {k: dict(v) for k, v in
+                                    (data.get("history_totals") or {}).items()}
             for d in rows:
                 r.covenants.append(Covenant(**d))
             r.history = {k: list(v) for k, v in hist.items()}
