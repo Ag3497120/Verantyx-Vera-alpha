@@ -561,7 +561,11 @@ def ask(query: str, vera: Any, *, last_core: str = "",
         _ja = getattr(vera, "stores", {}).get("ja") if hasattr(vera, "stores") else None
         if _ja is not None:
             from .consensus_store import ja_consensus_ask as _core_ask
-            _c = _core_ask(_ja, q, placement_invariant=bool(observe))
+            # 巡回は census 側(_ck)にだけ渡っていて、主席のこの呼び出しは
+            # 毎回裸で構造に入っていた(2026-08-31 に配線)。種は配置のみ、
+            # 答えを変える権限を持たない — fork が到達と無害の両方を固定。
+            _c = _core_ask(_ja, q, placement_invariant=bool(observe),
+                           circulation=circulation)
             if str(_c.get("verdict")) == "ANSWER":
                 obj = dict(_c)
                 t.door = "consensus_core"

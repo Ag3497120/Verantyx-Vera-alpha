@@ -1663,7 +1663,7 @@ def build(store_path: str):
         r = _engine_ask(q, _vera(), last_core=_chat_state["last_core"],
                         store_path=path, store=store,
                         store_first=store_first,
-                        circulation=_circulation or None,
+                        circulation=_circulation,
                         observe=observe)
 
         reply = (r.get("text") or "").strip()
@@ -1689,7 +1689,19 @@ def build(store_path: str):
         # The turn's terminal arrangement goes back into the map, keyed by
         # the core it settled on, and survives a server restart.
         if r.get("core") and r.get("carry_state"):
-            _circulation[str(r["core"])] = r["carry_state"]
+            # 鍵は読み手(候補核 = core_key)と同じ側に揃える。表示名で書くと
+            # "sun_tzu#p" の配置が "sun tzu" の鍵に入り、読み手は二度と
+            # 引けない — 巡回が死んでいた三つの傷の一つ(2026-08-31)。
+            # locks は上書きせず合流させる: settled_axes の書き戻し
+            # (consensus_store)が同じ鍵に積んだものを、終端配置の丸ごと
+            # 代入で消さない。
+            _key = str(r.get("core_key") or r["core"])
+            _slot = _circulation.get(_key)
+            _cs = dict(r["carry_state"])
+            if isinstance(_slot, dict) and _slot.get("locks"):
+                _cs["locks"] = sorted(set(_cs.get("locks") or [])
+                                      | set(_slot["locks"]))
+            _circulation[_key] = _cs
             try:
                 _circ_path.write_text(
                     json.dumps(_circulation, ensure_ascii=False), "utf-8")

@@ -186,6 +186,28 @@ def candidates_for_query(
     return out[:k]
 
 
+def _seed_for(
+    circulation: Optional[Dict[str, Any]],
+    cores: List[str],
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """この問いの候補核のうち、終端配置を持つ最初のものの (種, 鍵).
+
+    巡回の読み出し(2026-08-31)。従来の読み手は `shell.center` を鍵に
+    引いていたが、center は探索の**到達点**であって入口では常に None —
+    種は一度も届かない書き込み専用の巡回だった(M1 実測:
+    experiments/circulation_center/)。鍵は書き込み側と同じ core_key。
+    候補順(決定論)の最初の一致だけを使う — 複数の配置を混ぜるのは
+    束ねる操作で、持ち越すのは一つの構造が回された状態そのもの。
+    """
+    if not circulation:
+        return None, None
+    for c in cores:
+        slot = circulation.get(c)
+        if isinstance(slot, dict) and slot:
+            return slot, c
+    return None, None
+
+
 def build_shell_from_store(
     store: CrossStore,
     cores: List[str],
@@ -295,9 +317,13 @@ def consensus_over_store(
             shell, query, carry=carry, n_layers=n_layers, masses=masses
         )
     else:
-        _seed = (circulation or {}).get(shell.center)
+        _seed, _seed_key = _seed_for(circulation, cores)
         out = run_consensus(shell, query, cfg=cfg, masses=masses,
                             seed_state=_seed).as_dict()
+        if _seed is not None:
+            # 到達の観測可能性: 種が乗らなければこの鍵は立たない(不在は
+            # 不在のまま — False を書いて否定と混ぜない)。
+            out["seeded_from"] = display_sym(_seed_key)
     out["retrieved"] = cores
     out["core_key"] = out.get("core")
     if out.get("core"):
@@ -527,15 +553,19 @@ def _apply_placement_invariance(
     if not cores:
         return
     shell = build_shell_from_store(store, list(cores), tie="desc")
+    # 逆同点崩しの再読にも、元の読みと**同じ**種を渡す — 片方だけ種を
+    # 持つと、二つの読みの差が「配置」ではなく「種の有無」になり、
+    # この門が測るものが変わってしまう。
+    _seed, _ = _seed_for(circulation, list(cores))
     if ja:
         from .lang import ja_content_runs
         alt = run_consensus(shell, query, cfg=cfg, masses=_MassView(store),
-                            seed_state=(circulation or {}).get(shell.center),
+                            seed_state=_seed,
                             qset_override=set(ja_content_runs(query))).as_dict()
         alt_core = alt.get("core")
     else:
         alt = run_consensus(shell, query, cfg=cfg, masses=_MassView(store),
-                            seed_state=(circulation or {}).get(shell.center)).as_dict()
+                            seed_state=_seed).as_dict()
         alt_core = display_sym(alt["core"]) if alt.get("core") else None
     if alt.get("verdict") == "ANSWER" and alt_core == out.get("core"):
         out["placement_invariant"] = True
@@ -671,6 +701,7 @@ def ja_consensus_ask(
     k: int = MAX_ARMS,
     cfg: Optional[ConsensusConfig] = None,
     placement_invariant: bool = False,
+    circulation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """日本語の合意分解経路: 文字種 run → qset → 多断面合意 (ゲート共通).
 
@@ -742,9 +773,17 @@ def ja_consensus_ask(
             "retrieved": [],
         }
     shell = build_shell_from_store(store, cores[:k])
+    # 巡回の種(2026-08-31)。本番の主席であるこの経路には circulation の
+    # 席そのものが無かった — engine.vera_ask は census 側にだけ渡し、
+    # 推論核は毎回裸で構造に入っていた。EN 経路と同じ読み(候補核の
+    # 決定論的な最初の一致)で、配置だけを持ち越す。
+    _seed, _seed_key = _seed_for(circulation, cores[:k])
     out = run_consensus(
-        shell, query, cfg=cfg, masses=_MassView(store), qset_override=qset
+        shell, query, cfg=cfg, masses=_MassView(store), qset_override=qset,
+        seed_state=_seed,
     ).as_dict()
+    if _seed is not None:
+        out["seeded_from"] = display_sym(_seed_key)
     out["lang"] = "ja"
     out["retrieved"] = cores[:k]
     if out.get("verdict") == "ANSWER" and out.get("core"):
@@ -753,13 +792,22 @@ def ja_consensus_ask(
         out["text"] = core + ("は" + "、".join(facets) if facets else "")
     _apply_ja_coverage_gate(store, out, runs)
     if placement_invariant:
-        _apply_placement_invariance(store, out, query, k=k, cfg=cfg, ja=True)
+        _apply_placement_invariance(store, out, query, k=k, cfg=cfg, ja=True,
+                                    circulation=circulation)
         if out.get("verdict") == "ANSWER" and out.get("placement_invariant"):
             # ja 経路は core_key を持たず、鍵は core に入る(EN 経路と
             # フィールドが違う)。core_key だけを読んで locks が常に空に
             # なる書き方を一度した — 店の性質ではなく配線の誤りだった。
             out["locks"] = settled_axes(shell, store,
                                         out.get("core_key") or out.get("core"))
+            # EN 経路(consensus_over_store)と同じ書き戻し — 単一ソブリン:
+            # 同じ門を全扉で。次の問いが同じ核に触れたとき種として効く。
+            if circulation is not None and out.get("locks"):
+                _slot_key = str(out.get("core_key") or out.get("core"))
+                slot = circulation.setdefault(_slot_key, {})
+                if isinstance(slot, dict):
+                    slot["locks"] = sorted(set(slot.get("locks", []))
+                                           | set(out["locks"]))
         # 向きの不変性も同じ observe 傘の下(単一ソブリン: 同じ門を全扉で)。
         # 被覆は枠剥がし後の主題で数える — 枠語(〜に関係する)混入は
         # 逆方向の誤答を 0→23.7% に跳ねさせた実測がある。

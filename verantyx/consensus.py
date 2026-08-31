@@ -419,6 +419,12 @@ def run_consensus(
     #
     # Determinism is preserved: seed_state is an input like the query, and
     # the same (shell, query, seed) gives the same result.
+    #
+    # 2026-08-31 の訂正: この持ち越しは 8/18 に「配線した」と記録された
+    # が、読み出しの鍵が shell.center(常に None)で、種は一度も届いて
+    # いなかった — 書き込み専用の巡回。読み出しは consensus_store 側で
+    # 候補核の鍵に直し、fork(CIRCULATION_REACHES_THE_NEXT_SEARCH)が
+    # 到達そのものに荷重をかけている。
     _seed = seed_state or {}
     state = SearchState(
         shell=shell if mutate else copy_shell(shell),
@@ -511,6 +517,14 @@ def run_consensus(
     if verdict == "ANSWER":
         active = [c for c in final.candidates if c is not None]
         core = active[0][1]
+        # 中心の占有(2026-08-31)。構想は「探索した中心となったノードを
+        # 元にして…文章を生成する」と言う — 中心は探索の到達点であって
+        # 入口の推測ではない。この行が来るまで、ShellCross.center は
+        # 読まれるだけで**代入がコードベース全体に一つも無かった**
+        # (第三者レビュー「立体十字が部分使用」の実体の片方)。
+        # 非 ANSWER では None のまま: 収束しなかった探索に中心を
+        # 発明しない(不在と否定を混ぜない)。
+        state.shell.center = core
         text, toks = compose_answer(state.shell, core)
 
     e_min = 0

@@ -5126,6 +5126,199 @@ def a_rule_a_regex_read_is_a_candidate_fork() -> Dict[str, Any]:
     }
 
 
+def circulation_reaches_the_next_search_fork() -> Dict[str, Any]:
+    """巡回は書かれるだけでなく、次の探索に届く。
+
+    2026-08-31 実測(experiments/circulation_center/ M1): 終端配置は
+    書かれていた(鍵 gadget・locks [+x])が、読み出しは3箇所すべて
+    `shell.center`(入口では常に None)を鍵に引いており、種は一度も
+    届いていなかった — 書き込み専用の巡回。construction上 axis_lock_fork は
+    これを見逃す: (a) 書き込み側だけを検査していた (b) 「ロックの有無で
+    verdict 不変」は、ロックが一度も乗らなければ空虚に真。だからここでは
+    **到達そのもの**に荷重をかける。4点:
+
+      (a) ranked 店で1問目が locks を巡回に書き、同じ核に触れる2問目が
+          seeded_from でその核を名乗る(読み出しの実在)
+      (b) 種あり・種なしで verdict・core・text が同一 — 近道は答えを
+          変える権限を持たない(fork 172 の契約の、乗った上での再検査)
+      (c) 移動が受理される店では、終端配置の再訪が moves を減らし
+          escape を未消費で残す(構想の「時間のショートカット」の実測形)
+      (d) 全 facet 同点の店では locks が書かれず種も立たない — 同点は
+          棄権。恣意的な配置を持ち越して確信を作らない
+      (e) ja 経路(本番の主席 — circulation の席自体が無かった)でも
+          (a)(b) が成り立つ。単一ソブリン: 同じ門を全扉で
+    """
+    from .consensus_store import consensus_over_store, ja_consensus_ask
+
+    # (a)(b) — ranked EN 店
+    def _ranked() -> CrossStore:
+        st = CrossStore()
+        for n, w in ((5, "heavy"), (4, "fast"), (3, "small"), (2, "quiet")):
+            for _ in range(n):
+                st.ingest_sentence(f"gadget is {w}")
+        return st
+
+    circ: Dict[str, Any] = {}
+    r1 = consensus_over_store(_ranked(), "what is gadget heavy",
+                              placement_invariant=True, circulation=circ)
+    st2 = _ranked()
+    plain = consensus_over_store(st2, "what is gadget fast",
+                                 placement_invariant=True)
+    seeded = consensus_over_store(st2, "what is gadget fast",
+                                  placement_invariant=True, circulation=circ)
+    reached = (bool(r1.get("locks"))
+               and bool((circ.get("gadget") or {}).get("locks"))
+               and seeded.get("seeded_from") == "gadget")
+    harmless = (plain.get("verdict") == seeded.get("verdict")
+                and plain.get("core") == seeded.get("core")
+                and plain.get("text") == seeded.get("text")
+                and (seeded.get("moves_used") or 0)
+                <= (plain.get("moves_used") or 0))
+
+    # (c) — 移動が受理される店: 再訪の近道
+    def _moving() -> CrossStore:
+        st = CrossStore()
+        words = ["alpha", "bravo", "carla", "delta", "echof", "foxtr"]
+        for i, c in enumerate(words):
+            for w in words:
+                if w != c:
+                    st.ingest_sentence(f"{c} has {c}{w}")
+            for _ in range(6 - i):
+                st.ingest_sentence(f"{c} has shared")
+        return st
+
+    first = consensus_over_store(_moving(), "what has shared")
+    circ_m: Dict[str, Any] = {}
+    if first.get("core_key") and first.get("carry_state"):
+        # 会話扉(mcp_server)と同形の書き込み: 鍵は core_key
+        circ_m[str(first["core_key"])] = dict(first["carry_state"])
+    re_plain = consensus_over_store(_moving(), "what has shared")
+    re_seed = consensus_over_store(_moving(), "what has shared",
+                                   circulation=circ_m)
+    shortcut = (re_plain.get("verdict") == re_seed.get("verdict") == "ANSWER"
+                and re_plain.get("core") == re_seed.get("core")
+                and re_plain.get("text") == re_seed.get("text")
+                and (re_seed.get("moves_used") or 0)
+                < (re_plain.get("moves_used") or 0)
+                and re_plain.get("escape_used") is True
+                and re_seed.get("escape_used") is False)
+
+    # (d) — 同点の店は書きも読みもしない
+    tied = CrossStore()
+    for a in ("aspa", "aspb", "aspc", "aspd"):
+        tied.ingest_sentence(f"gizmo has {a}")
+    circ_t: Dict[str, Any] = {}
+    consensus_over_store(tied, "what is gizmo aspa",
+                         placement_invariant=True, circulation=circ_t)
+    tied2 = CrossStore()
+    for a in ("aspa", "aspb", "aspc", "aspd"):
+        tied2.ingest_sentence(f"gizmo has {a}")
+    rt2 = consensus_over_store(tied2, "what is gizmo aspb",
+                               placement_invariant=True, circulation=circ_t)
+    abstains = (not any((v or {}).get("locks") for v in circ_t.values()
+                        if isinstance(v, dict))
+                and "seeded_from" not in rt2)
+
+    # (e) — ja 経路
+    def _ja() -> CrossStore:
+        st = CrossStore()
+        for n, w in ((5, "注意義務"), (4, "損害賠償"), (3, "予見可能性"),
+                     (2, "結果回避")):
+            for _ in range(n):
+                st.ingest_sentence(f"過失 has {w}")
+        return st
+
+    circ_j: Dict[str, Any] = {}
+    ja_consensus_ask(_ja(), "過失とは", placement_invariant=True,
+                     circulation=circ_j)
+    st_j = _ja()
+    jp = ja_consensus_ask(st_j, "過失 注意義務", placement_invariant=True)
+    js = ja_consensus_ask(st_j, "過失 注意義務", placement_invariant=True,
+                          circulation=circ_j)
+    ja_ok = (js.get("seeded_from") == "過失"
+             and jp.get("verdict") == js.get("verdict")
+             and jp.get("core") == js.get("core")
+             and jp.get("text") == js.get("text"))
+
+    ok = bool(reached and harmless and shortcut and abstains and ja_ok)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "CIRCULATION_REACHES_THE_NEXT_SEARCH",
+        "pass": ok,
+        "result": {
+            "reached": bool(reached),
+            "harmless": bool(harmless),
+            "shortcut": {"pass": bool(shortcut),
+                         "moves_plain": re_plain.get("moves_used"),
+                         "moves_seeded": re_seed.get("moves_used"),
+                         "escape_plain": re_plain.get("escape_used"),
+                         "escape_seeded": re_seed.get("escape_used")},
+            "tied_abstains": bool(abstains),
+            "ja_path": bool(ja_ok),
+        },
+    }
+
+
+def the_center_is_the_settled_core_fork() -> Dict[str, Any]:
+    """中心は収束した核だけが占める。
+
+    構想(これまで.pdf): 断面は外の断面から中心に向かってアクセスし、
+    「探索した中心となったノードを元にして…文章を生成する」。中心は
+    探索の**到達点**であって入口の推測ではない — のに ShellCross.center
+    は読まれるだけで、代入がコードベース全体に一つも無かった
+    (2026-08-31、第三者レビュー「立体十字が部分使用」の実体の片方)。
+    3点:
+
+      (a) ANSWER の終端状態で shell.center == 合意核。dump_volume が
+          占有ぶん 1 増える(中心は容積を持つ席になった)
+      (b) 非 ANSWER では center は None のまま — 収束しなかった探索に
+          中心を発明しない(不在と否定を混ぜない)
+      (c) 入口(build_shell_from_store の返す殻)では center は None —
+          中心は取り込みでも配置でも埋まらず、収束だけが埋める
+    """
+    from .consensus import ConsensusConfig, run_consensus
+    from .consensus_store import build_shell_from_store
+
+    st = CrossStore()
+    for s in ("apple is red", "apple is sweet"):
+        st.ingest_sentence(s)
+    shell = build_shell_from_store(st, ["apple"])
+    entry_empty = shell.center is None
+    vol_before = shell.dump_volume()
+
+    res = run_consensus(shell, "what is apple")
+    settled = (res.verdict == "ANSWER"
+               and res.state is not None
+               and res.state.shell.center == res.core
+               and res.state.shell.dump_volume() == vol_before + 1)
+    # 呼び出し側の殻は不変(mutate=False が既定) — 占有は終端状態の上
+    caller_untouched = shell.center is None
+
+    miss = run_consensus(build_shell_from_store(st, ["apple"]),
+                         "what is quantum",
+                         cfg=ConsensusConfig())
+    empty_on_refusal = (miss.verdict != "ANSWER"
+                        and (miss.state is None
+                             or miss.state.shell.center is None))
+
+    ok = bool(entry_empty and settled and caller_untouched
+              and empty_on_refusal)
+    return {
+        "experiment": "cross_geometry",
+        "fork": "THE_CENTER_IS_THE_SETTLED_CORE",
+        "pass": ok,
+        "result": {"entry_empty": bool(entry_empty),
+                   "settled_center": res.state.shell.center
+                   if res.state else None,
+                   "answer_core": res.core,
+                   "volume_counts_center": bool(settled),
+                   "caller_untouched": bool(caller_untouched),
+                   "refusal_center": (miss.state.shell.center
+                                      if miss.state else None),
+                   "refusal_verdict": miss.verdict},
+    }
+
+
 def all_cross_geometry_forks() -> List[Dict[str, Any]]:
     return [
         geometric_pole_invisibility_fork(),
@@ -5217,6 +5410,8 @@ def all_cross_geometry_forks() -> List[Dict[str, Any]]:
         a_promise_to_act_needs_a_witness_fork(),
         a_witness_must_have_been_invoked_fork(),
         a_rule_a_regex_read_is_a_candidate_fork(),
+        circulation_reaches_the_next_search_fork(),
+        the_center_is_the_settled_core_fork(),
     ]
 
 
