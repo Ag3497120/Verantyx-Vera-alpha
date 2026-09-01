@@ -1,0 +1,33 @@
+building stores (fine / coarse placement of the same corpus)…
+store: fine 18 cores / coarse 9 cores, query set 18 askable (9 shared), 20 nonsense
+
+arm                       accuracy  honesty  invented  verdicts
+flat / ring   / fine           1.0      1.0         0  ANSWER:18
+flat / geo    / fine           1.0      1.0         0  ANSWER:18
+matryoshka A  / fine           1.0      1.0         0  ANSWER:18
+matryoshka B  / fine         0.222      1.0         0  AMBIGUOUS:13, ANSWER:5
+matryoshka C  / fine           1.0      1.0         0  ANSWER:18
+flat / ring   / coarse         1.0      1.0         0  ANSWER:9
+flat / ring   / fine*          1.0      1.0         0  ANSWER:9
+
+placement effect (fine − coarse, same 9 cores): +0.0
+matryoshka A effect vs flat: accuracy +0.000, honesty +0.000
+matryoshka B effect vs flat: accuracy -0.778, honesty +0.000
+matryoshka C effect vs flat: accuracy +0.000, honesty +0.000
+geometry effect (geo − ring): accuracy +0.000, honesty +0.000
+
+facet-only battery (18 queries, no core name in the query):
+arm                        exact  defensible  answer_rate  verdicts
+flat / ring   / fine       0.056       0.167          1.0  ANSWER:18
+flat / geo    / fine       0.056       0.167          1.0  ANSWER:18
+matryoshka A  / fine       0.056       0.167          1.0  ANSWER:18
+matryoshka B  / fine       0.056       0.111        0.167  AMBIGUOUS:15, ANSWER:3
+matryoshka C  / fine       0.056       0.111        0.778  ANSWER:14, AMBIGUOUS:4
+flat / ring   / coarse       0.0       0.222          1.0  ANSWER:9
+flat / ring   / fine*        0.0       0.222          1.0  ANSWER:9
+
+facet: matryoshka A vs flat: exact +0.000, defensible +0.000
+facet: matryoshka B vs flat: exact +0.000, defensible -0.056
+facet: matryoshka C vs flat: exact +0.000, defensible -0.056
+facet: geometry (geo − ring): exact +0.000, defensible +0.000
+facet: placement (fine − coarse, 9 shared): exact +0.000, defensible +0.000

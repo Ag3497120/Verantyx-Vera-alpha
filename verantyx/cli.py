@@ -54,7 +54,8 @@ def _print(obj: Any) -> None:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
 
 
-def _route(store: CrossStore, query: str) -> Dict[str, Any]:
+def _route(store: CrossStore, query: str,
+           circulation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """math → code → knowledge, refusing rather than guessing."""
     m = math_ask(query)
     if m["verdict"] != "UNKNOWN_UNPARSED":
@@ -64,7 +65,7 @@ def _route(store: CrossStore, query: str) -> Dict[str, Any]:
     if c["verdict"] != "UNKNOWN_UNPARSED":
         c["route"] = "code"
         return c
-    out = consensus_over_store(store, query)
+    out = consensus_over_store(store, query, circulation=circulation)
     out["route"] = "knowledge"
     return out
 
@@ -123,7 +124,34 @@ def cmd_forget(args) -> int:
 
 def cmd_ask(args) -> int:
     st = _load(args.store)
-    _print(_route(st, args.query))
+    # 巡回の残り扉(2026-09-01、PREREG2)。会話扉(mcp_server)が書く
+    # 側車 <store>.circulation.json を**在るときだけ**読む — 無ければ
+    # 作らない。一発の ask が黙って状態ファイルを増やさないため。
+    # 在るときは同じ鍵規則(core_key・locks は合流)で終端配置を書き戻す。
+    # 巡回は配置のみで、答えを変える権限を持たない(fork 固定済み)。
+    circ: Optional[Dict[str, Any]] = None
+    circ_path = Path(args.store)
+    circ_path = circ_path.with_name(circ_path.stem + ".circulation.json")
+    if circ_path.is_file():
+        try:
+            circ = json.loads(circ_path.read_text("utf-8"))
+        except Exception:
+            circ = None
+    out = _route(st, args.query, circulation=circ)
+    if circ is not None and out.get("core") and out.get("carry_state"):
+        key = str(out.get("core_key") or out["core"])
+        slot = circ.get(key)
+        cs = dict(out["carry_state"])
+        if isinstance(slot, dict) and slot.get("locks"):
+            cs["locks"] = sorted(set(cs.get("locks") or [])
+                                 | set(slot["locks"]))
+        circ[key] = cs
+        try:
+            circ_path.write_text(json.dumps(circ, ensure_ascii=False),
+                                 "utf-8")
+        except Exception:
+            pass
+    _print(out)
     return 0
 
 

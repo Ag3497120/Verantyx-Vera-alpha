@@ -71,6 +71,20 @@ carry_state の形も不変(center は結果 state 上にのみ占有され、
 - mcp_server.py: 書き込み鍵を core_key に統一、locks は上書きせず合流。
   旧ファイルの表示名鍵は残るが読まれないだけで無害(削除しない)。
 
+## M3 — CLI 扉の継続性(PREREG2.md、2026-09-01 追記)
+
+実 CLI サブプロセス(`python -m verantyx.cli ask`)で測定:
+
+```
+側車なし   決定論的(2回バイト同一) / 側車は作られない / seeded_from 無し
+側車あり   seeded_from alpha / verdict・core・text 同一
+           moves 1→0 / escape 未消費 / 終端配置の書き戻し確認
+```
+
+J1(無側車の純粋さ)・J2(到達と無害)成立。会話扉が書いた
+`<store>.circulation.json` を CLI の ask が引き継ぎ、書き戻す —
+扉は一つ、入口は二つ(PREREG7 の線)。側車が無ければ何も作らない。
+
 ## 留保
 
 治具は合成の小店。実ストア(89k核)はこのリポジトリに同梱されて
