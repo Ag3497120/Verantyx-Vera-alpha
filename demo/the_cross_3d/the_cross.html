@@ -1,0 +1,268 @@
+<title>The Cross</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{--ground:#070a12;--panel:rgba(13,19,34,.86);--line:#243049;--ink:#ece7da;--dim:#8e97a8;--faint:#5a6376;--amber:#f0b64a;--teal:#5fd3c8;--red:#e0705c}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:"Source Sans 3",system-ui,sans-serif;font-size:16px;line-height:1.55;overflow:hidden}
+#c{position:fixed;inset:0;display:block;cursor:pointer}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+#eyebrow{position:fixed;left:28px;top:22px;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase;pointer-events:none}
+#eyebrow b{color:var(--amber);font-weight:500}
+#verdict{position:fixed;right:28px;top:20px;font-family:"IBM Plex Mono",monospace;font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:3px;color:var(--dim);background:var(--panel);pointer-events:none;transition:all .4s}
+#verdict.ok{color:var(--teal);border-color:var(--teal)} #verdict.no{color:var(--red);border-color:var(--red)} #verdict.amb{color:var(--amber);border-color:var(--amber)}
+#verdict[hidden]{display:none}
+#cap{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);width:min(680px,calc(100vw - 40px));background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px 22px 14px;backdrop-filter:blur(8px);pointer-events:none}
+#cap h2{font-family:"Cormorant Garamond",Georgia,serif;font-weight:600;font-size:30px;line-height:1.15;margin:0 0 8px;text-wrap:balance}
+#cap h2.title{font-size:56px;font-style:italic;font-weight:500;margin-bottom:6px}
+#cap p{margin:0 0 6px;color:var(--ink);max-width:62ch}
+#cap p.sub{color:var(--dim);font-size:14.5px}
+#cap .row{display:flex;align-items:center;gap:10px;margin-top:10px}
+#dots{display:flex;gap:5px}
+#dots i{width:14px;height:2px;background:var(--line);border-radius:1px;display:block}
+#dots i.on{background:var(--amber)}
+#hint{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.1em}
+#gen{position:fixed;left:50%;top:9%;transform:translateX(-50%);font-family:"Cormorant Garamond",serif;font-size:34px;color:var(--ink);white-space:nowrap;pointer-events:none;letter-spacing:.01em}
+#gen span{display:inline-block;opacity:0;transform:translateY(10px);transition:opacity .5s,transform .5s;margin:0 8px}
+#gen span.on{opacity:1;transform:none}
+#gen span.c{color:var(--teal)}
+#nav{position:fixed;right:28px;bottom:34px;display:flex;gap:8px}
+#nav button{font:inherit;font-size:13px;padding:8px 14px;border-radius:4px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+#nav button:hover{border-color:var(--dim)} #nav button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+#nav button.primary{background:var(--amber);color:#1a1d24;border-color:transparent;font-weight:600}
+@media (max-width:700px){#cap h2{font-size:24px}#cap h2.title{font-size:40px}#gen{font-size:22px}#nav{bottom:auto;top:56px;right:20px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<canvas id="c"></canvas>
+<div id="eyebrow">Verantyx Vera α · <b>research special</b> · <span id="chno">00</span></div>
+<div id="verdict" hidden></div>
+<div id="gen"></div>
+<div id="cap"><h2 id="h"></h2><p id="p1"></p><p id="p2" class="sub"></p><div class="row"><div id="dots"></div><span id="hint">TAP · → · SPACE TO CONTINUE · DRAG TO ORBIT</span></div></div>
+<div id="nav"><button id="prev">◀ Back</button><button id="next" class="primary">Next ▶</button></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+<script>
+const T={"ingest": [{"sentence": "defense has imminence", "core": "defense", "facet": "imminence"}, {"sentence": "defense has unlawfulness", "core": "defense", "facet": "unlawfulness"}, {"sentence": "defense has proportionality", "core": "defense", "facet": "proportionality"}], "store": {"defense": {"imminence": 5, "unlawfulness": 5, "proportionality": 4, "necessity": 3, "statute": 3, "impunity": 2, "right": 1}, "emergency": {"danger": 5, "statute": 4, "subsidiarity": 3, "life": 3, "impunity": 2}, "negligence": {"duty": 5, "foreseeability": 4, "damages": 3, "civil": 3, "statute": 1}, "assault": {"statute": 4, "injury": 4, "unlawfulness": 3, "imprisonment": 2}, "homicide": {"statute": 4, "death": 4, "intent": 3, "imprisonment": 2}, "prescription": {"invocation": 4, "completion": 3, "civil": 3, "interruption": 2}}, "answer": {"query": "what has statute unlawfulness imminence", "qset": ["imminence", "statute", "unlawfulness"], "retrieved": ["defense", "assault", "emergency", "negligence", "homicide"], "placement": {"defense": {"all": ["imminence", "unlawfulness", "proportionality", "necessity", "statute", "impunity", "right"], "counts": {"imminence": 5, "unlawfulness": 5, "proportionality": 4, "necessity": 3, "statute": 3, "impunity": 2, "right": 1}}, "assault": {"all": ["injury", "statute", "unlawfulness", "imprisonment"], "counts": {"statute": 4, "injury": 4, "unlawfulness": 3, "imprisonment": 2}}, "emergency": {"all": ["danger", "statute", "life", "subsidiarity", "impunity"], "counts": {"danger": 5, "statute": 4, "subsidiarity": 3, "life": 3, "impunity": 2}}, "negligence": {"all": ["duty", "foreseeability", "civil", "damages", "statute"], "counts": {"duty": 5, "foreseeability": 4, "damages": 3, "civil": 3, "statute": 1}}, "homicide": {"all": ["death", "statute", "intent", "imprisonment"], "counts": {"statute": 4, "death": 4, "intent": 3, "imprisonment": 2}}}, "steps": [{"rotation": 0, "widened": false, "locks": [], "energies": {"+x": 12.534, "-x": 10.917, "+y": 7.781, "-y": 3.833, "+z": 7.278}, "sections": [{"axis": "+x", "core": "defense", "energy": 12.534}, {"axis": "+x", "core": "defense", "energy": 12.534}, {"axis": "-x", "core": "assault", "energy": 10.917}, {"axis": "+y", "core": "emergency", "energy": 7.781}, {"axis": "+z", "core": "homicide", "energy": 7.278}, {"axis": "+x", "core": "defense", "energy": 12.534}], "visible": [["-z", "+x", "-x"], ["+x", "-x", "+y"], ["-x", "+y", "-y"], ["+y", "-y", "+z"], ["-y", "+z", "-z"], ["+z", "-z", "+x"]], "key": [3.0, 0.0, -0.5, -63.579], "agree_all": false, "shell": {"+x": {"tip": "defense", "north": "imminence", "south": "unlawfulness", "east": "proportionality", "west": "necessity"}, "-x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "+y": {"tip": "emergency", "north": "danger", "south": "statute", "east": "life", "west": "subsidiarity"}, "-y": {"tip": "negligence", "north": "duty", "south": "foreseeability", "east": "civil", "west": "damages"}, "+z": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}, "chosen": {"move": "swap", "arg": ["+x", "+z"]}}, {"rotation": 0, "widened": false, "locks": [], "energies": {"+x": 7.278, "-x": 10.917, "+y": 7.781, "-y": 3.833, "+z": 12.534}, "sections": [{"axis": "-x", "core": "assault", "energy": 10.917}, {"axis": "-x", "core": "assault", "energy": 10.917}, {"axis": "-x", "core": "assault", "energy": 10.917}, {"axis": "+z", "core": "defense", "energy": 12.534}, {"axis": "+z", "core": "defense", "energy": 12.534}, {"axis": "+z", "core": "defense", "energy": 12.534}], "visible": [["-z", "+x", "-x"], ["+x", "-x", "+y"], ["-x", "+y", "-y"], ["+y", "-y", "+z"], ["-y", "+z", "-z"], ["+z", "-z", "+x"]], "key": [1.0, 0.0, -0.5, -70.354], "agree_all": false, "shell": {"+x": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "-x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "+y": {"tip": "emergency", "north": "danger", "south": "statute", "east": "life", "west": "subsidiarity"}, "-y": {"tip": "negligence", "north": "duty", "south": "foreseeability", "east": "civil", "west": "damages"}, "+z": {"tip": "defense", "north": "imminence", "south": "unlawfulness", "east": "proportionality", "west": "necessity"}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}, "chosen": {"move": "escape", "arg": null}}, {"rotation": 0, "widened": true, "locks": [], "energies": {"+x": 7.278, "-x": 10.917, "+y": 7.781, "-y": 3.833, "+z": 12.534}, "sections": [{"axis": "+z", "core": "defense", "energy": 12.534}, {"axis": "+z", "core": "defense", "energy": 12.534}, {"axis": "+z", "core": "defense", "energy": 12.534}, {"axis": "+z", "core": "defense", "energy": 12.534}, {"axis": "+z", "core": "defense", "energy": 12.534}, {"axis": "+z", "core": "defense", "energy": 12.534}], "visible": [["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"]], "key": [0.0, 0.0, -1.0, -75.205], "agree_all": true, "shell": {"+x": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "-x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "+y": {"tip": "emergency", "north": "danger", "south": "statute", "east": "life", "west": "subsidiarity"}, "-y": {"tip": "negligence", "north": "duty", "south": "foreseeability", "east": "civil", "west": "damages"}, "+z": {"tip": "defense", "north": "imminence", "south": "unlawfulness", "east": "proportionality", "west": "necessity"}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}}], "final": {"verdict": "ANSWER", "core": "defense", "moves": 1, "escape": true, "tokens": ["defense", "imminence", "unlawfulness", "proportionality", "necessity"], "text": "defense imminence unlawfulness proportionality necessity", "carry": {"rotation": 0, "widened": true, "locks": []}, "center": "defense", "hypotheses": [{"axis": "+z", "core": "defense", "energy": 12.534161}, {"axis": "-x", "core": "assault", "energy": 10.917172}, {"axis": "+y", "core": "emergency", "energy": 7.780744}, {"axis": "+x", "core": "homicide", "energy": 7.278115}, {"axis": "-y", "core": "negligence", "energy": 3.833213}]}, "shell0": {"+x": {"tip": "defense", "north": "imminence", "south": "unlawfulness", "east": "proportionality", "west": "necessity"}, "-x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "+y": {"tip": "emergency", "north": "danger", "south": "statute", "east": "life", "west": "subsidiarity"}, "-y": {"tip": "negligence", "north": "duty", "south": "foreseeability", "east": "civil", "west": "damages"}, "+z": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}}, "refuse": {"query": "what is quantumflux", "qset": ["quantumflux"], "retrieved": [], "placement": {}, "steps": [], "final": {"verdict": "UNKNOWN_NO_EVIDENCE", "text": ""}}, "tie": {"query": "what has imprisonment", "qset": ["imprisonment"], "retrieved": ["assault", "homicide"], "placement": {"assault": {"all": ["injury", "statute", "unlawfulness", "imprisonment"], "counts": {"statute": 4, "injury": 4, "unlawfulness": 3, "imprisonment": 2}}, "homicide": {"all": ["death", "statute", "intent", "imprisonment"], "counts": {"statute": 4, "death": 4, "intent": 3, "imprisonment": 2}}}, "steps": [{"rotation": 0, "widened": false, "locks": [], "energies": {"+x": 7.278, "-x": 7.278}, "sections": [{"axis": "+x", "core": "assault", "energy": 7.278}, {"axis": "+x", "core": "assault", "energy": 7.278}, {"axis": "-x", "core": "homicide", "energy": 7.278}, null, null, {"axis": "+x", "core": "assault", "energy": 7.278}], "visible": [["-z", "+x", "-x"], ["+x", "-x", "+y"], ["-x", "+y", "-y"], ["+y", "-y", "+z"], ["-y", "+z", "-z"], ["+z", "-z", "+x"]], "key": [1.0, 0.0, -0.75, -29.112], "agree_all": false, "shell": {"+x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "-x": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "+y": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "-y": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "+z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}, "chosen": {"move": "escape", "arg": null}}, {"rotation": 0, "widened": true, "locks": [], "energies": {"+x": 7.278, "-x": 7.278}, "sections": [{"axis": "+x", "core": "assault", "energy": 7.278}, {"axis": "+x", "core": "assault", "energy": 7.278}, {"axis": "+x", "core": "assault", "energy": 7.278}, {"axis": "+x", "core": "assault", "energy": 7.278}, {"axis": "+x", "core": "assault", "energy": 7.278}, {"axis": "+x", "core": "assault", "energy": 7.278}], "visible": [["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"]], "key": [0.0, 0.0, -1.0, -43.669], "agree_all": true, "shell": {"+x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "-x": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "+y": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "-y": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "+z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}}], "final": {"verdict": "AMBIGUOUS", "core": null, "moves": 0, "escape": true, "tokens": [], "text": "", "carry": {"rotation": 0, "widened": true, "locks": []}, "center": null, "hypotheses": [{"axis": "+x", "core": "assault", "energy": 7.278115}, {"axis": "-x", "core": "homicide", "energy": 7.278115}]}, "shell0": {"+x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "-x": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "+y": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "-y": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "+z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}}, "revisit": {"query": "what has statute unlawfulness imminence", "qset": ["imminence", "statute", "unlawfulness"], "retrieved": ["defense", "assault", "emergency", "negligence", "homicide"], "placement": {"defense": {"all": ["imminence", "unlawfulness", "proportionality", "necessity", "statute", "impunity", "right"], "counts": {"imminence": 5, "unlawfulness": 5, "proportionality": 4, "necessity": 3, "statute": 3, "impunity": 2, "right": 1}}, "assault": {"all": ["injury", "statute", "unlawfulness", "imprisonment"], "counts": {"statute": 4, "injury": 4, "unlawfulness": 3, "imprisonment": 2}}, "emergency": {"all": ["danger", "statute", "life", "subsidiarity", "impunity"], "counts": {"danger": 5, "statute": 4, "subsidiarity": 3, "life": 3, "impunity": 2}}, "negligence": {"all": ["duty", "foreseeability", "civil", "damages", "statute"], "counts": {"duty": 5, "foreseeability": 4, "damages": 3, "civil": 3, "statute": 1}}, "homicide": {"all": ["death", "statute", "intent", "imprisonment"], "counts": {"statute": 4, "death": 4, "intent": 3, "imprisonment": 2}}}, "steps": [{"rotation": 0, "widened": true, "locks": [], "energies": {"+x": 12.534, "-x": 10.917, "+y": 7.781, "-y": 3.833, "+z": 7.278}, "sections": [{"axis": "+x", "core": "defense", "energy": 12.534}, {"axis": "+x", "core": "defense", "energy": 12.534}, {"axis": "+x", "core": "defense", "energy": 12.534}, {"axis": "+x", "core": "defense", "energy": 12.534}, {"axis": "+x", "core": "defense", "energy": 12.534}, {"axis": "+x", "core": "defense", "energy": 12.534}], "visible": [["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"], ["+x", "-x", "+y", "-y", "+z", "-z"]], "key": [0.0, 0.0, -1.0, -75.205], "agree_all": true, "shell": {"+x": {"tip": "defense", "north": "imminence", "south": "unlawfulness", "east": "proportionality", "west": "necessity"}, "-x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "+y": {"tip": "emergency", "north": "danger", "south": "statute", "east": "life", "west": "subsidiarity"}, "-y": {"tip": "negligence", "north": "duty", "south": "foreseeability", "east": "civil", "west": "damages"}, "+z": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}}], "final": {"verdict": "ANSWER", "core": "defense", "moves": 0, "escape": false, "tokens": ["defense", "imminence", "unlawfulness", "proportionality", "necessity"], "text": "defense imminence unlawfulness proportionality necessity", "carry": {"rotation": 0, "widened": true, "locks": []}, "center": "defense", "hypotheses": [{"axis": "+x", "core": "defense", "energy": 12.534161}, {"axis": "-x", "core": "assault", "energy": 10.917172}, {"axis": "+y", "core": "emergency", "energy": 7.780744}, {"axis": "+z", "core": "homicide", "energy": 7.278115}, {"axis": "-y", "core": "negligence", "energy": 3.833213}]}, "shell0": {"+x": {"tip": "defense", "north": "imminence", "south": "unlawfulness", "east": "proportionality", "west": "necessity"}, "-x": {"tip": "assault", "north": "injury", "south": "statute", "east": "unlawfulness", "west": "imprisonment"}, "+y": {"tip": "emergency", "north": "danger", "south": "statute", "east": "life", "west": "subsidiarity"}, "-y": {"tip": "negligence", "north": "duty", "south": "foreseeability", "east": "civil", "west": "damages"}, "+z": {"tip": "homicide", "north": "death", "south": "statute", "east": "intent", "west": "imprisonment"}, "-z": {"tip": null, "north": null, "south": null, "east": null, "west": null}, "center": null}}};
+const AXES=["+x","-x","+y","-y","+z","-z"];
+const DIRV={"+x":[1,0,0],"-x":[-1,0,0],"+y":[0,1,0],"-y":[0,-1,0],"+z":[0,0,1],"-z":[0,0,-1]};
+const FACES=["north","south","east","west"];
+const COL={amber:0xf0b64a,teal:0x5fd3c8,red:0xe0705c,dim:0x3a4560,arm:0x6f7a94,face:0x1a2438,ink:0xece7da};
+const L=3.2;
+
+// ---------- three.js scene -------------------------------------------------
+const canvas=document.getElementById("c");
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x070a12);
+scene.fog=new THREE.Fog(0x070a12,18,38);
+const camera=new THREE.PerspectiveCamera(38,1,0.1,100);
+const rig=new THREE.Group(); scene.add(rig);          // orbit rig
+let yaw=0.7,pitch=0.42,dist=17,autoSpin=true;
+rig.position.y=1.1;
+scene.add(new THREE.AmbientLight(0xbfc7dd,0.55));
+const key=new THREE.DirectionalLight(0xfff2dc,1.1); key.position.set(6,9,5); scene.add(key);
+const fill=new THREE.DirectionalLight(0x9fc4ff,0.4); fill.position.set(-6,-3,-6); scene.add(fill);
+// faint floor grid for depth
+const grid=new THREE.GridHelper(24,24,0x1a2438,0x121a2c); grid.position.y=-4.2; scene.add(grid);
+
+function textSprite(text,{color="#ece7da",size=44,bg=null,mono=false,weight="600"}={}){
+  const c=document.createElement("canvas"),ctx=c.getContext("2d");
+  const font=`${weight} ${size}px ${mono?'"IBM Plex Mono",monospace':'"Source Sans 3",system-ui,sans-serif'}`;
+  ctx.font=font; const w=Math.ceil(ctx.measureText(text).width)+40; c.width=w; c.height=size+30;
+  ctx.font=font; if(bg){ctx.fillStyle=bg;ctx.beginPath();ctx.roundRect(4,4,w-8,c.height-8,8);ctx.fill();ctx.strokeStyle="rgba(240,182,74,.0)";}
+  ctx.fillStyle=color; ctx.textBaseline="middle"; ctx.textAlign="center"; ctx.fillText(text,w/2,c.height/2);
+  const tex=new THREE.CanvasTexture(c); tex.anisotropy=4;
+  const m=new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:!!arguments[1].depth});
+  const s=new THREE.Sprite(m); const k=0.0058; s.scale.set(w*k,c.height*k,1); s.userData.base=[w*k,c.height*k]; return s;
+}
+
+// centre cube
+const center=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshStandardMaterial({color:0x121a2c,emissive:0x000000,roughness:.5,metalness:.1}));
+const centerEdges=new THREE.LineSegments(new THREE.EdgesGeometry(center.geometry),new THREE.LineBasicMaterial({color:0x5fd3c8,transparent:true,opacity:.35}));
+center.add(centerEdges); rig.add(center);
+let centerLabel=null;
+
+// arms
+const arms={};
+AXES.forEach(a=>{
+  const d=new THREE.Vector3(...DIRV[a]);
+  const g=new THREE.Group(); rig.add(g);
+  const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.11,L,18),new THREE.MeshStandardMaterial({color:COL.arm,emissive:0x000000,roughness:.45,transparent:true,opacity:1}));
+  // orient cylinder along d
+  bar.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d); bar.position.copy(d.clone().multiplyScalar(L/2+0.45)); g.add(bar);
+  const tip=new THREE.Mesh(new THREE.SphereGeometry(0.34,28,20),new THREE.MeshStandardMaterial({color:0x2a3552,emissive:0x000000,roughness:.4}));
+  tip.position.copy(d.clone().multiplyScalar(L+0.45)); g.add(tip);
+  // four face plates around the outer half of the arm
+  const plates=[]; const perp=Math.abs(d.y)>.5?[new THREE.Vector3(1,0,0),new THREE.Vector3(0,0,1)]:[new THREE.Vector3(0,1,0),d.clone().cross(new THREE.Vector3(0,1,0)).normalize()];
+  const offs=[perp[0],perp[0].clone().negate(),perp[1],perp[1].clone().negate()];
+  FACES.forEach((f,i)=>{
+    const p=new THREE.Mesh(new THREE.PlaneGeometry(1.05,0.36),new THREE.MeshStandardMaterial({color:COL.face,emissive:0x000000,side:THREE.DoubleSide,transparent:true,opacity:0.95,roughness:.7}));
+    const along=d.clone().multiplyScalar(0.95+0.62*i+0.45); const out=offs[i].clone().multiplyScalar(0.38);
+    p.position.copy(along.add(out)); p.lookAt(p.position.clone().add(offs[i])); g.add(p);
+    const edge=new THREE.LineSegments(new THREE.EdgesGeometry(p.geometry),new THREE.LineBasicMaterial({color:0x2c3a58})); p.add(edge);
+    plates.push({mesh:p,label:null,word:null,offset:offs[i]});
+  });
+  arms[a]={g,bar,tip,plates,d,label:null,elabel:null,ghosts:[]};
+});
+
+// sections (six eyes) on a ring around the cross
+const ring=new THREE.Group(); rig.add(ring);
+const R=7.2; const eyes=[];
+for(let i=0;i<6;i++){
+  const eye=new THREE.Mesh(new THREE.ConeGeometry(0.22,0.5,16),new THREE.MeshStandardMaterial({color:0x2a3552,emissive:0x000000}));
+  const lab=textSprite(`section ${i+1}`,{color:"#8e97a8",size:30,mono:true,weight:"400"}); lab.position.y=-0.55;
+  const opinion=textSprite("",{color:"#ece7da",size:32}); opinion.position.y=0.62; opinion.visible=false;
+  const grp=new THREE.Group(); grp.add(eye); grp.add(lab); grp.add(opinion); ring.add(grp);
+  eyes.push({grp,eye,opinion,lines:[]});
+}
+// position eyes on a tilted ring (so they see the whole solid)
+function placeEyes(rot){
+  eyes.forEach((e,i)=>{
+    const ang=(i+rot)*Math.PI/3+Math.PI/6; // rotation shifts home
+    const p=new THREE.Vector3(Math.cos(ang)*R,Math.sin(ang*2)*1.6,Math.sin(ang)*R);
+    e.target=p;
+  });
+}
+placeEyes(0); eyes.forEach(e=>{e.grp.position.copy(e.target)});
+const lineMat=(c,o)=>new THREE.LineBasicMaterial({color:c,transparent:true,opacity:o});
+function setSight(i,axes,chosen){
+  const e=eyes[i]; e.lines.forEach(l=>ring.remove(l)); e.lines=[];
+  axes.forEach(a=>{
+    const to=arms[a].tip.position.clone();
+    const geo=new THREE.BufferGeometry().setFromPoints([e.grp.position.clone(),to]);
+    const ln=new THREE.Line(geo,lineMat(a===chosen?COL.amber:0x2c3a58,a===chosen?0.9:0.45)); ring.add(ln); e.lines.push(ln);
+  });
+}
+function clearSight(){eyes.forEach((e,i)=>{e.lines.forEach(l=>ring.remove(l));e.lines=[];e.opinion.visible=false;e.eye.material.emissive.setHex(0);})}
+
+// ---------- state application ----------------------------------------------------
+const tw=[]; // tweens: {obj,prop,to,dur,t}
+function tween(o,prop,to,dur=600){ tw.push({o,prop,from:o[prop],to,dur,t:0}); }
+function setWord(a,i,word,hi){
+  const P=arms[a].plates[i];
+  if(P.label){P.mesh.remove(P.label);P.label=null}
+  if(word){P.label=textSprite(word,{color:hi?"#f0b64a":"#ece7da",size:34,weight:hi?"600":"400",depth:true});P.label.position.set(0,0,0.02);P.mesh.add(P.label);}
+  P.word=word; P.mesh.visible=!!word;
+  P.mesh.material.emissive.setHex(hi?0x6b4a10:0x000000);
+}
+function setTip(a,core,{hi=false,energy=null}={}){
+  const A=arms[a];
+  if(A.label){A.g.remove(A.label);A.label=null} if(A.elabel){A.g.remove(A.elabel);A.elabel=null}
+  A.g.visible=!!core; if(!core) return;
+  A.label=textSprite(core,{color:hi?"#f0b64a":"#ece7da",size:46,weight:"600"}); A.label.position.copy(A.d.clone().multiplyScalar(L+1.25)); A.g.add(A.label);
+  if(energy!=null){A.elabel=textSprite(`E = ${energy.toFixed(2)}`,{color:"#f0b64a",size:28,mono:true,weight:"400"});A.elabel.position.copy(A.d.clone().multiplyScalar(L+1.25)).add(new THREE.Vector3(0,-0.5,0));A.g.add(A.elabel);}
+  A.tip.material.emissive.setHex(hi?0xb8771a:0x000000);
+  A.bar.material.emissive.setHex(hi?0x4a3208:0x000000);
+}
+function applyShell(shell,{energies={},qset=[],hi={},only=null}={}){
+  const emax=Math.max(1,...Object.values(energies));
+  AXES.forEach(a=>{
+    const f=shell[a]||{}; const core=f.tip;
+    const show=core && (!only||only.includes(a));
+    setTip(a,show?core:null,{hi:!!hi[a],energy:energies[a]});
+    FACES.forEach((fc,i)=>{const w=show?f[fc]:null; const on=w&&qset.some(q=>w.includes(q)||q.includes(w)); setWord(a,i,w,on)});
+    const e=energies[a]||0, s=core?0.6+1.6*(e/emax):1;
+    tween(arms[a].bar.scale,"x",s,500); tween(arms[a].bar.scale,"z",s,500);
+  });
+}
+function applyCenter(core){
+  if(centerLabel){center.remove(centerLabel);centerLabel=null}
+  center.material.emissive.setHex(core?0x1f6b66:0x000000); centerEdges.material.opacity=core?1:.35;
+  if(core){centerLabel=textSprite(core,{color:"#5fd3c8",size:48,weight:"600"});centerLabel.position.set(0,-0.95,0);center.add(centerLabel);}
+}
+function applySections(step,{show=true}={}){
+  clearSight(); if(!show||!step) return;
+  placeEyes(step.rotation);
+  step.sections.forEach((s,i)=>{ setSight(i,step.visible[i],s?s.axis:null);
+    const e=eyes[i]; e.eye.material.emissive.setHex(s?0xb8771a:0x000000);
+    if(s){ ring.remove(e.opinion); e.grp.remove(e.opinion); e.opinion=textSprite(s.core,{color:"#ece7da",size:32}); e.opinion.position.y=0.62; e.grp.add(e.opinion); e.opinion.visible=true; }
+  });
+}
+function clearGhosts(){AXES.forEach(a=>{arms[a].ghosts.forEach(g=>rig.remove(g));arms[a].ghosts=[]})}
+function ghosts(a,words){
+  clearGhosts(); const A=arms[a];
+  words.forEach((w,k)=>{const s=textSprite(w,{color:"#5a6376",size:34,weight:"400"});
+    s.position.copy(A.d.clone().multiplyScalar(L+0.45)).add(new THREE.Vector3(0,1.0+k*0.55,0.8)); s.material.opacity=0.0; rig.add(s); A.ghosts.push(s);
+    tween(s.material,"opacity",0.9,900); tween(s.position,"y",s.position.y+0.9,3000);});
+}
+function setGen(tokens,coreIdx=0){
+  const g=document.getElementById("gen"); g.innerHTML="";
+  if(!tokens){return}
+  tokens.forEach((t,k)=>{const s=document.createElement("span");s.textContent=(k>0?"· ":"")+t;if(k===coreIdx)s.className="c";g.appendChild(s);setTimeout(()=>s.classList.add("on"),350+k*420)});
+}
+function verdict(v){const el=document.getElementById("verdict"); if(!v){el.hidden=true;return} el.hidden=false; el.textContent=v; el.className=v==="ANSWER"?"ok":v==="AMBIGUOUS"?"amb":"no";}
+function cam(y,p,d){tween(camState,"yaw",y,1400);tween(camState,"pitch",p,1400);tween(camState,"dist",d,1400)}
+const camState={yaw,pitch,dist};
+
+// ---------- the script (scenes) ----------------------------------------------------
+const A=T.answer, S0=A.steps[0], S1=A.steps[1], S2=A.steps[2], TIE=T.tie, RV=T.revisit;
+const empty={}; AXES.forEach(a=>empty[a]={});
+const scenes=[
+ {ch:"00",title:true,h:"The Cross",p1:"A research special on a knowledge engine that has no neural network, no probabilities, and no way to invent a word it was never taught.",p2:"Everything you are about to see is a replay of the engine's own search log — the same store, the same questions, step by step. Tap to begin.",
+  run(){applyShell(A.shell0,{});applyCenter(null);applySections(null);setGen(null);verdict(null);cam(0.7,0.42,17);autoSpin=true}},
+ {ch:"01",h:"One concept, one cross",p1:"Every concept the engine knows is a cross: a core meaning at the tip of an arm, and facets — things that were said about it — on the arm's four faces.",p2:`Here six concepts from a small legal store share one shell: ${A.retrieved.join(", ")}. Nothing here is generated; each word arrived in a sentence.`,
+  run(){applyShell(A.shell0,{});applyCenter(null);applySections(null);setGen(null);verdict(null);cam(0.9,0.35,15);autoSpin=true}},
+ {ch:"02",h:"A sentence becomes facets",p1:`“${T.ingest[0].sentence}.”  The first word is the core, the last is a facet. Each time another sentence names the same core, the facet's mass grows.`,p2:`defense now carries ${Object.keys(T.store.defense).length} facets with masses ${Object.entries(T.store.defense).sort((x,y)=>y[1]-x[1]).map(([f,c])=>`${f} ${c}`).join(", ")}. Nothing is ever deleted — retirement is an appended note.`,
+  run(){applyShell(A.shell0,{hi:{"+x":1}});applyCenter(null);applySections(null);setGen(null);verdict(null);cam(0.35,0.3,12);autoSpin=false}},
+ {ch:"03",h:"Four faces. Seven facets.",p1:"An arm has exactly four faces. defense has seven facets, so three cannot ride. Which four make it decides the sentence the engine can say — measured on real queries: 120 of 120 answers changed with placement.",p2:"Default rule: the heaviest facets first. Among equal masses the order is alphabetical — an accident, not evidence. The engine remembers that, and later refuses answers that depended on it.",
+  run(){applyShell(A.shell0,{hi:{"+x":1}});ghosts("+x",A.placement.defense.all.slice(4));applyCenter(null);applySections(null);setGen(null);verdict(null);cam(0.35,0.3,12);autoSpin=false}},
+ {ch:"04",h:"A question enters at the edge",p1:`“${A.query}” — three content words, none of them a core's name. Each arm's energy is  mass × (1 + 2·core-match + 1·face-overlap).  Arms whose faces carry the question's words light up.`,p2:`Energies: ${Object.entries(S0.energies).map(([a,e])=>`${a} ${e.toFixed(2)}`).join(" · ")}. The thicker the arm, the more of the question it holds.`,
+  run(){clearGhosts();applyShell(S0.shell,{energies:S0.energies,qset:A.qset});applyCenter(null);applySections(null);setGen(null);verdict(null);cam(0.7,0.42,17);autoSpin=true}},
+ {ch:"05",h:"Six sections look in from outside",p1:"Six frontiers stand around the solid. Each sees only its own arm and two neighbours (a window of one), and names the strongest core it can see. Right now their opinions disagree.",p2:`Opinions: ${S0.sections.map((s,i)=>s?`section ${i+1} → ${s.core}`:`section ${i+1} → nothing`).join(", ")}. Disagreement is not an answer.`,
+  run(){applyShell(S0.shell,{energies:S0.energies,qset:A.qset});applySections(S0);applyCenter(null);setGen(null);verdict(null);cam(0.55,0.62,19);autoSpin=false}},
+ {ch:"06",h:"No move improves — so, one escape",p1:"The search tries every rotation of the viewpoint and every swap of two arms, accepting only moves that improve a lexicographic key: contradiction, then evidence deficit, then disagreement, then relevance. Never a weighted sum.",p2:`Key now [${S0.key.join(", ")}]. No move improves it, yet the sections disagree — so the one-shot escape: locks off, every section sees every arm.`,
+  run(){applyShell(S0.shell,{energies:S0.energies,qset:A.qset});applySections(S0);applyCenter(null);setGen(null);verdict(null);cam(0.55,0.62,19);autoSpin=false}},
+ {ch:"07",h:"Widened, the sections agree",p1:`With full visibility every section names the same core: ${S1.sections.filter(Boolean)[0].core}. Key [${S1.key.join(", ")}] — the disagreement term has gone to its floor.`,p2:"Agreement alone still isn't enough: the winning arm must carry evidence on its faces, the evidence must touch the question, and no second evidenced hypothesis may tie it.",
+  run(){applyShell(S1.shell,{energies:S1.energies,qset:A.qset,hi:{[S1.sections.filter(Boolean)[0].axis]:1}});applySections(S1);applyCenter(null);setGen(null);verdict(null);cam(0.55,0.62,19);autoSpin=false}},
+ {ch:"08",h:"The settled core takes the centre",p1:`All four halt conditions hold. ${A.final.core} moves into the centre — the seat that stays empty whenever a search does not converge. ${A.final.moves} move, escape ${A.final.escape?"spent":"unspent"}.`,p2:"Absence and negation are kept apart: an empty centre means “nothing converged”, never “the answer is no”.",
+  run(){const last=A.steps[A.steps.length-1];applyShell(last.shell,{energies:last.energies,qset:A.qset,hi:{[last.sections.filter(Boolean)[0].axis]:1}});applySections(last);applyCenter(A.final.core);setGen(null);verdict("ANSWER");cam(0.8,0.3,14);autoSpin=true}},
+ {ch:"09",h:"Words, read off the axis",p1:"Generation is a reading order, not a language model: tip, then north, south, east, west. The answer is the arm's own words in that order.",p2:"Because every token is a stored facet, the sentence is citable to the sentences that built it — and it cannot contain a word the store never saw.",
+  run(){const last=A.steps[A.steps.length-1];applyShell(last.shell,{energies:last.energies,qset:A.qset,hi:{[last.sections.filter(Boolean)[0].axis]:1}});applySections(null);applyCenter(A.final.core);setGen(A.final.tokens,0);verdict("ANSWER");cam(0.35,0.28,12);autoSpin=false}},
+ {ch:"10",h:"A word it never learned",p1:`“${T.refuse.query}” retrieves no cross at all. The shell stays empty and the engine says so, by type: ${T.refuse.final.verdict}.`,p2:"It does not reach for the nearest known word. Splitting the unknown into pieces that happen to exist was measured as the main source of fabrication — and was closed on both the ingest side and the query side.",
+  run(){applyShell(empty,{});applySections(null);applyCenter(null);setGen(null);verdict(T.refuse.final.verdict);cam(0.7,0.42,17);autoSpin=true}},
+ {ch:"11",h:"A tie is an abstention",p1:`“${TIE.query}” — assault and homicide both carry it with equal mass. After the escape every section agrees on the first arm it sees, but two evidenced hypotheses sit at exactly the same energy.`,p2:`Verdict ${TIE.final.verdict}. A deterministic system could break the tie alphabetically. Measured: doing so manufactures agreement (73.3% → 23.7% accuracy). So ties abstain — it is the house rule.`,
+  run(){const last=TIE.steps[TIE.steps.length-1];applyShell(last.shell,{energies:last.energies,qset:TIE.qset,hi:{"+x":1,"-x":1}});applySections(last);applyCenter(null);setGen(null);verdict(TIE.final.verdict);cam(0.55,0.55,17.5);autoSpin=false}},
+ {ch:"12",h:"The structure remembers how it was turned",p1:`Ask the first question again and the shell re-enters where it stopped: rotation ${A.final.carry.rotation}, widened ${A.final.carry.widened}, locks [${A.final.carry.locks.join(", ")}]. Moves ${A.final.moves} → ${RV.final.moves}, escape ${RV.final.escape?"spent":"unspent"}.`,p2:"Only the arrangement travels — never the previous words or energies, which would be two ballots in one election. And the answer is byte-identical: circulation is a shortcut, not a vote.",
+  run(){const last=RV.steps[RV.steps.length-1];applyShell(last.shell,{energies:last.energies,qset:RV.qset,hi:{[last.sections.filter(Boolean)[0].axis]:1}});applySections(last);applyCenter(RV.final.center);setGen(null);verdict(RV.final.verdict);cam(0.8,0.3,14);autoSpin=true}},
+ {ch:"13",title:true,h:"Honest by construction",p1:"Answer when several independent views of the same facts converge; refuse, by type, when they do not; never speak a word that was not stored. That is the whole engine.",p2:"This model store holds 6 concepts. The public federation holds 89,369. The mechanism is the same; the numbers are not — every figure quoted here comes from a script in the repository.",
+  run(){applyShell(A.shell0,{});applySections(null);applyCenter(null);setGen(null);verdict(null);cam(0.7,0.42,17);autoSpin=true}},
+];
+
+// ---------- navigation ----------------------------------------------------------------
+let idx=0; const dots=document.getElementById("dots");
+scenes.forEach((_,i)=>{const d=document.createElement("i");dots.appendChild(d)});
+function go(i){
+  idx=Math.max(0,Math.min(scenes.length-1,i)); const s=scenes[idx];
+  document.getElementById("chno").textContent=s.ch;
+  const h=document.getElementById("h"); h.textContent=s.h; h.className=s.title?"title":"";
+  document.getElementById("p1").textContent=s.p1; document.getElementById("p2").textContent=s.p2;
+  [...dots.children].forEach((d,k)=>d.classList.toggle("on",k<=idx));
+  document.getElementById("prev").disabled=idx===0;
+  document.getElementById("next").textContent=idx===scenes.length-1?"Replay ↺":"Next ▶";
+  s.run();
+}
+document.getElementById("next").onclick=e=>{e.stopPropagation();go(idx===scenes.length-1?0:idx+1)};
+document.getElementById("prev").onclick=e=>{e.stopPropagation();go(idx-1)};
+addEventListener("keydown",e=>{if(e.key==="ArrowRight"||e.key===" "){e.preventDefault();go(idx+1)}if(e.key==="ArrowLeft")go(idx-1)});
+// tap (not drag) advances; drag orbits
+let down=null,moved=false;
+canvas.addEventListener("pointerdown",e=>{down=[e.clientX,e.clientY];moved=false;canvas.setPointerCapture(e.pointerId)});
+canvas.addEventListener("pointermove",e=>{if(!down)return;const dx=e.clientX-down[0],dy=e.clientY-down[1];if(Math.hypot(dx,dy)>4)moved=true;if(moved){camState.yaw+=dx*0.006;camState.pitch=Math.max(-1.2,Math.min(1.2,camState.pitch+dy*0.004));down=[e.clientX,e.clientY];autoSpin=false}});
+canvas.addEventListener("pointerup",e=>{if(down&&!moved)go(idx===scenes.length-1?0:idx+1);down=null});
+canvas.addEventListener("wheel",e=>{camState.dist=Math.max(6,Math.min(24,camState.dist+e.deltaY*0.01))},{passive:true});
+
+// ---------- loop -----------------------------------------------------------------------
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
+addEventListener("resize",resize); resize();
+let last=performance.now();
+function frame(now){
+  const dt=now-last; last=now;
+  for(let i=tw.length-1;i>=0;i--){const t=tw[i];t.t+=dt;const k=Math.min(1,t.t/t.dur),e=1-Math.pow(1-k,3);t.o[t.prop]=t.from+(t.to-t.from)*e;if(k>=1)tw.splice(i,1)}
+  if(autoSpin)camState.yaw+=dt*0.00008;
+  eyes.forEach((e,i)=>{if(e.target){e.grp.position.lerp(e.target,0.08);e.lines.forEach(l=>{const p=l.geometry.attributes.position;p.setXYZ(0,e.grp.position.x,e.grp.position.y,e.grp.position.z);p.needsUpdate=true})}});
+  camera.position.set(Math.sin(camState.yaw)*Math.cos(camState.pitch)*camState.dist,Math.sin(camState.pitch)*camState.dist,Math.cos(camState.yaw)*Math.cos(camState.pitch)*camState.dist);
+  camera.lookAt(0,0,0);
+  renderer.render(scene,camera); requestAnimationFrame(frame);
+}
+go(0); requestAnimationFrame(frame);
+</script>
