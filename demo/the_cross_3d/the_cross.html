@@ -5,7 +5,8 @@
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:"Source Sans 3",system-ui,sans-serif;font-size:16px;line-height:1.55;overflow:hidden}
-#c{position:fixed;inset:0;display:block;cursor:pointer}
+#c{position:fixed;inset:0;display:block;cursor:pointer;touch-action:none;-webkit-tap-highlight-color:transparent}
+body{touch-action:none;-webkit-user-select:none;user-select:none}
 .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
 #eyebrow{position:fixed;left:28px;top:22px;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase;pointer-events:none}
 #eyebrow b{color:var(--amber);font-weight:500}
@@ -17,7 +18,8 @@ body{margin:0;background:var(--ground);color:var(--ink);font-family:"Source Sans
 #cap h2.title{font-size:56px;font-style:italic;font-weight:500;margin-bottom:6px}
 #cap p{margin:0 0 6px;color:var(--ink);max-width:62ch}
 #cap p.sub{color:var(--dim);font-size:14.5px}
-#cap .row{display:flex;align-items:center;gap:10px;margin-top:10px}
+#cap .row{display:flex;align-items:center;gap:10px;margin-top:10px;min-width:0}
+#cap .row>*{min-width:0}
 #dots{display:flex;gap:5px}
 #dots i{width:14px;height:2px;background:var(--line);border-radius:1px;display:block}
 #dots i.on{background:var(--amber)}
@@ -30,14 +32,40 @@ body{margin:0;background:var(--ground);color:var(--ink);font-family:"Source Sans
 #nav button{font:inherit;font-size:13px;padding:8px 14px;border-radius:4px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
 #nav button:hover{border-color:var(--dim)} #nav button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 #nav button.primary{background:var(--amber);color:#1a1d24;border-color:transparent;font-weight:600}
-@media (max-width:700px){#cap h2{font-size:24px}#cap h2.title{font-size:40px}#gen{font-size:22px}#nav{bottom:auto;top:56px;right:20px}}
+#hint .long{display:inline} #hint .short{display:none}
+#cap .navin{display:none}
+@media (max-width:700px){
+  #eyebrow{left:16px;top:14px;font-size:10px} #eyebrow .brand{display:none}
+  #verdict{right:16px;top:12px;font-size:11px;padding:3px 8px}
+  #cap{bottom:12px;left:12px;right:12px;width:auto;transform:none;padding:14px 16px 10px;border-radius:8px;max-width:none}
+  #cap p{max-width:none}
+  #hint{display:none}
+  #cap .row{justify-content:space-between}
+  #cap h2{font-size:21px;margin-bottom:6px} #cap h2.title{font-size:34px}
+  #cap p{font-size:14.5px;line-height:1.45;margin-bottom:4px} #cap p.sub{font-size:13px}
+  #hint .long{display:none} #hint .short{display:inline}
+  #gen{top:52px;font-size:20px;white-space:normal;width:calc(100vw - 32px);text-align:center;line-height:1.3}
+  #nav{display:none}
+  #cap .navin{display:flex;gap:6px;pointer-events:auto}
+  #cap .navin button{font:inherit;font-size:12px;padding:5px 10px;border-radius:4px;border:1px solid var(--line);background:transparent;color:var(--ink)}
+  #cap .navin button.primary{background:var(--amber);color:#1a1d24;border-color:transparent;font-weight:600}
+}
+@media (max-height:520px) and (min-aspect-ratio:3/2){
+  #cap{left:12px;right:auto;bottom:12px;width:min(46vw,440px);transform:none;padding:10px 14px 8px;max-width:none}
+  #cap p{max-width:none;font-size:13.5px;line-height:1.4} #cap p.sub{display:none} #cap h2{font-size:20px;margin-bottom:4px} #cap h2.title{font-size:30px}
+  #hint{display:none} #nav{display:none} #cap .navin{display:flex;gap:6px;pointer-events:auto} #cap .row{justify-content:space-between}
+  #cap .navin button{font:inherit;font-size:12px;padding:4px 10px;border-radius:4px;border:1px solid var(--line);background:transparent;color:var(--ink)}
+  #cap .navin button.primary{background:var(--amber);color:#1a1d24;border-color:transparent;font-weight:600}
+  #gen{top:10px;left:auto;right:12px;transform:none;font-size:20px;white-space:normal;width:48vw;text-align:right;line-height:1.3}
+  #eyebrow{top:10px;left:14px} #verdict{top:38px;right:12px}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 <canvas id="c"></canvas>
-<div id="eyebrow">Verantyx Vera α · <b>research special</b> · <span id="chno">00</span></div>
+<div id="eyebrow"><span class="brand">Verantyx Vera α · </span><b>research special</b> · <span id="chno">00</span></div>
 <div id="verdict" hidden></div>
 <div id="gen"></div>
-<div id="cap"><h2 id="h"></h2><p id="p1"></p><p id="p2" class="sub"></p><div class="row"><div id="dots"></div><span id="hint">TAP · → · SPACE TO CONTINUE · DRAG TO ORBIT</span></div></div>
+<div id="cap"><h2 id="h"></h2><p id="p1"></p><p id="p2" class="sub"></p><div class="row"><div id="dots"></div><span id="hint"><span class="long">TAP · → · SPACE TO CONTINUE · DRAG TO ORBIT</span><span class="short">TAP TO CONTINUE · DRAG TO ORBIT</span></span><div class="navin"><button id="prev2">◀</button><button id="next2" class="primary">Next ▶</button></div></div></div>
 <div id="nav"><button id="prev">◀ Back</button><button id="next" class="primary">Next ▶</button></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
@@ -52,7 +80,7 @@ const L=3.2;
 // ---------- three.js scene -------------------------------------------------
 const canvas=document.getElementById("c");
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, innerWidth<700?1.5:2));
 const scene=new THREE.Scene(); scene.background=new THREE.Color(0x070a12);
 scene.fog=new THREE.Fog(0x070a12,18,38);
 const camera=new THREE.PerspectiveCamera(38,1,0.1,100);
@@ -237,18 +265,27 @@ function go(i){
   const h=document.getElementById("h"); h.textContent=s.h; h.className=s.title?"title":"";
   document.getElementById("p1").textContent=s.p1; document.getElementById("p2").textContent=s.p2;
   [...dots.children].forEach((d,k)=>d.classList.toggle("on",k<=idx));
-  document.getElementById("prev").disabled=idx===0;
+  document.getElementById("prev").disabled=idx===0; document.getElementById("prev2").disabled=idx===0;
   document.getElementById("next").textContent=idx===scenes.length-1?"Replay ↺":"Next ▶";
+  document.getElementById("next2").textContent=idx===scenes.length-1?"Replay ↺":"Next ▶";
   s.run();
 }
 document.getElementById("next").onclick=e=>{e.stopPropagation();go(idx===scenes.length-1?0:idx+1)};
 document.getElementById("prev").onclick=e=>{e.stopPropagation();go(idx-1)};
+document.getElementById("next2").onclick=e=>{e.stopPropagation();go(idx===scenes.length-1?0:idx+1)};
+document.getElementById("prev2").onclick=e=>{e.stopPropagation();go(idx-1)};
 addEventListener("keydown",e=>{if(e.key==="ArrowRight"||e.key===" "){e.preventDefault();go(idx+1)}if(e.key==="ArrowLeft")go(idx-1)});
 // tap (not drag) advances; drag orbits
-let down=null,moved=false;
-canvas.addEventListener("pointerdown",e=>{down=[e.clientX,e.clientY];moved=false;canvas.setPointerCapture(e.pointerId)});
-canvas.addEventListener("pointermove",e=>{if(!down)return;const dx=e.clientX-down[0],dy=e.clientY-down[1];if(Math.hypot(dx,dy)>4)moved=true;if(moved){camState.yaw+=dx*0.006;camState.pitch=Math.max(-1.2,Math.min(1.2,camState.pitch+dy*0.004));down=[e.clientX,e.clientY];autoSpin=false}});
-canvas.addEventListener("pointerup",e=>{if(down&&!moved)go(idx===scenes.length-1?0:idx+1);down=null});
+const ptrs=new Map(); let down=null,moved=false,pinch0=null;
+canvas.addEventListener("pointerdown",e=>{ptrs.set(e.pointerId,[e.clientX,e.clientY]);canvas.setPointerCapture(e.pointerId);
+  if(ptrs.size===1){down=[e.clientX,e.clientY];moved=false}
+  else{moved=true;const a=[...ptrs.values()];pinch0=Math.hypot(a[0][0]-a[1][0],a[0][1]-a[1][1])}});
+canvas.addEventListener("pointermove",e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size>=2&&pinch0){const a=[...ptrs.values()];const d=Math.hypot(a[0][0]-a[1][0],a[0][1]-a[1][1]);camState.dist=Math.max(6,Math.min(28,camState.dist*(pinch0/d)));pinch0=d;autoSpin=false;return}
+  if(!down)return;const dx=e.clientX-down[0],dy=e.clientY-down[1];if(Math.hypot(dx,dy)>6)moved=true;
+  if(moved){camState.yaw+=dx*0.006;camState.pitch=Math.max(-1.2,Math.min(1.2,camState.pitch+dy*0.004));down=[e.clientX,e.clientY];autoSpin=false}});
+const up=e=>{ptrs.delete(e.pointerId);if(ptrs.size<2)pinch0=null;if(ptrs.size===0){if(down&&!moved)go(idx===scenes.length-1?0:idx+1);down=null}};
+canvas.addEventListener("pointerup",up);canvas.addEventListener("pointercancel",up);
 canvas.addEventListener("wheel",e=>{camState.dist=Math.max(6,Math.min(24,camState.dist+e.deltaY*0.01))},{passive:true});
 
 // ---------- loop -----------------------------------------------------------------------
@@ -260,8 +297,14 @@ function frame(now){
   for(let i=tw.length-1;i>=0;i--){const t=tw[i];t.t+=dt;const k=Math.min(1,t.t/t.dur),e=1-Math.pow(1-k,3);t.o[t.prop]=t.from+(t.to-t.from)*e;if(k>=1)tw.splice(i,1)}
   if(autoSpin)camState.yaw+=dt*0.00008;
   eyes.forEach((e,i)=>{if(e.target){e.grp.position.lerp(e.target,0.08);e.lines.forEach(l=>{const p=l.geometry.attributes.position;p.setXYZ(0,e.grp.position.x,e.grp.position.y,e.grp.position.z);p.needsUpdate=true})}});
-  camera.position.set(Math.sin(camState.yaw)*Math.cos(camState.pitch)*camState.dist,Math.sin(camState.pitch)*camState.dist,Math.cos(camState.yaw)*Math.cos(camState.pitch)*camState.dist);
-  camera.lookAt(0,0,0);
+  const asp=camera.aspect, shortLand=innerHeight<520&&asp>1.5;
+  const fit=asp<1?Math.min(1.75,1/asp*0.85):(asp<1.4?1.15:(shortLand?1.25:1));
+  const dd=camState.dist*fit;
+  scene.fog.near=dd*1.05; scene.fog.far=dd*2.3;
+  rig.position.y=asp<1?2.4:(asp<1.4?1.8:(shortLand?0.2:1.1));
+  rig.position.x=shortLand?3.2:0;
+  camera.position.set(Math.sin(camState.yaw)*Math.cos(camState.pitch)*dd,Math.sin(camState.pitch)*dd+rig.position.y*0.35,Math.cos(camState.yaw)*Math.cos(camState.pitch)*dd);
+  camera.lookAt(0,rig.position.y*0.55,0);
   renderer.render(scene,camera); requestAnimationFrame(frame);
 }
 go(0); requestAnimationFrame(frame);
